@@ -1,0 +1,19 @@
+# Keep proprietary binaries and anything extracted from macOS out of the repo
+build/
+guest/
+*.app
+*.dylib
+launcher/App.entitlements
+*.framework/
+!launcher/**/*.framework/
+SURFACE.raw/
+*.ipa
+*.crash
+*.ips
+logs/
+.DS_Store
+xcuserdata/
+DerivedData/
+local.env
+__pycache__/
+Tolkara.xcodeproj/

@@ -1,0 +1,120 @@
+name: Tolkara
+options:
+  bundleIdPrefix: local.tolkara
+  deploymentTarget: { iOS: "17.0" }
+settings:
+  base:
+    # Signing identity and identifiers come from your ignored local.env through
+    # tools/generate.sh. Nothing personal is committed. See docs/BUILDING.md.
+    DEVELOPMENT_TEAM: ${DEVELOPMENT_TEAM}
+    TOLKARA_BUNDLE_ID: ${TOLKARA_BUNDLE_ID}
+    TOLKARA_KEYCHAIN_GROUP: ${TOLKARA_KEYCHAIN_GROUP}
+    CODE_SIGN_STYLE: Automatic
+    CURRENT_PROJECT_VERSION: 1
+    MARKETING_VERSION: "0.1"
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    TARGETED_DEVICE_FAMILY: "2"
+    CLANG_ENABLE_OBJC_ARC: YES
+    GUEST_RUNTIME: emulated
+    HEADER_SEARCH_PATHS: "$(SRCROOT)/runtime"
+targetTemplates:
+  AppBase:
+    type: application
+    platform: iOS
+    sources:
+      - path: launcher
+        excludes: [Info.plist]
+      - path: runtime
+    entitlements:
+      path: launcher/App.entitlements
+      properties:
+        com.apple.developer.kernel.increased-memory-limit: true
+        com.apple.developer.kernel.extended-virtual-addressing: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(TOLKARA_BUNDLE_ID)
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: launcher/Info.plist
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIRequiresFullScreen: NO
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown"
+        INFOPLIST_KEY_UIFileSharingEnabled: YES
+        INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: YES
+    postBuildScripts:
+      - name: Package guest runtime
+        basedOnDependencyAnalysis: false
+        script: |
+          set -e
+          if [ "$GUEST_RUNTIME" != emulated ]; then echo "error: unknown GUEST_RUNTIME: $GUEST_RUNTIME"; exit 1; fi
+          "$SRCROOT/tools/build_emulated_guest.sh" "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH" "$GUEST_EXE"
+targets:
+  TolkaraDiagnostics:
+    templates: [AppBase]
+  Tolkara:
+    templates: [AppBase]
+    sources: [authorization/App, authorization/Diagnostics, authorization/Control, authorization/Storage, authorization/Pairing/PairingWire.swift, authorization/Pairing/PairingIdentity.swift]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(TOLKARA_BUNDLE_ID)
+        GCC_PREPROCESSOR_DEFINITIONS: "$(inherited) TOLKARA_INTEGRATED_AUTH=1"
+        INFOPLIST_FILE: authorization/App/Integrated-Info.plist
+        SWIFT_VERSION: "5.0"
+        HEADER_SEARCH_PATHS: "$(inherited) $(SRCROOT)/authorization $(SRCROOT)/authorization/App"
+    entitlements:
+      path: authorization/App/Integrated.entitlements
+      properties:
+        com.apple.developer.kernel.increased-memory-limit: true
+        com.apple.developer.kernel.extended-virtual-addressing: true
+        com.apple.developer.networking.networkextension: [packet-tunnel-provider]
+        keychain-access-groups: ["$(AppIdentifierPrefix)$(TOLKARA_KEYCHAIN_GROUP)"]
+    dependencies:
+      - sdk: NetworkExtension.framework
+      - target: LocalAuthorizationTunnel
+        embed: true
+  LocalAuthorizationTunnel:
+    type: app-extension
+    platform: iOS
+    sources: [authorization/Tunnel, authorization/Diagnostics, authorization/Control, authorization/LocalRoute.c, authorization/DebugWire.c, authorization/Pairing, authorization/Transport, authorization/Storage, authorization/Debugger]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(TOLKARA_BUNDLE_ID).authorization
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: authorization/Tunnel/Info.plist
+        HEADER_SEARCH_PATHS: "$(inherited) $(SRCROOT)/authorization"
+        APPLICATION_EXTENSION_API_ONLY: YES
+        SKIP_INSTALL: YES
+        SWIFT_VERSION: "5.0"
+        # The helper processes every byte of the local TCP/TLS and RSP streams.
+        # Keep this path optimized even in a development-signed diagnostic app.
+        SWIFT_OPTIMIZATION_LEVEL: "-O"
+        SWIFT_COMPILATION_MODE: wholemodule
+        GCC_OPTIMIZATION_LEVEL: "2"
+        SWIFT_OBJC_BRIDGING_HEADER: "$(SRCROOT)/authorization/Transport/TransportBridge.h"
+    entitlements:
+      path: authorization/Tunnel/LocalTunnel.entitlements
+      properties:
+        com.apple.developer.networking.networkextension: [packet-tunnel-provider]
+        keychain-access-groups: ["$(AppIdentifierPrefix)$(TOLKARA_KEYCHAIN_GROUP)"]
+    dependencies:
+      - sdk: NetworkExtension.framework
+
+  StorageProbe:
+    type: application
+    platform: iOS
+    sources: [tools/StorageProbe, authorization/Storage, authorization/Pairing/PairingWire.swift, authorization/Pairing/PairingIdentity.swift]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(TOLKARA_BUNDLE_ID).storageprobe
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_FILE: tools/StorageProbe/Info.plist
+        STORAGE_PROBE_GROUP: "$(AppIdentifierPrefix)$(TOLKARA_KEYCHAIN_GROUP).probe"
+        SWIFT_VERSION: "5.0"
+    entitlements:
+      path: tools/StorageProbe/Probe.entitlements
+      properties:
+        keychain-access-groups: ["$(STORAGE_PROBE_GROUP)"]
+    dependencies:
+      - sdk: Security.framework

@@ -1,0 +1,8 @@
+{
+  "id": "wow-classic-era",
+  "name": "World of Warcraft Classic",
+  "workingDirectory": "World of Warcraft/_classic_era_",
+  "executable": "World of Warcraft Classic.app/Contents/MacOS/World of Warcraft Classic",
+  "tested": "Classic Era 1.15.x, macOS arm64 client, iPad Pro M5",
+  "notes": "Copy your own installed 'World of Warcraft' folder into the app's Documents. Log in inside the game. See profiles/README.md."
+}
