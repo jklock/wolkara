@@ -122,6 +122,17 @@ int main(void) {
         assert([TKLocalSigningContainerPath(home) isEqualToString:[home stringByAppendingString:@"/Documents/LocalSigning/page-container.dylib"]]);
         assert([TKLocalSigningContainerPath([home stringByAppendingString:@"/"]) isEqualToString:TKLocalSigningContainerPath(home)]);
         assert([TKHomeDisplayPath(TKLocalSigningContainerPath(home),home) isEqualToString:@"~/Documents/LocalSigning/page-container.dylib"]);
+        // Per-application containers are named after the executable's SHA-256.
+        NSString *sha=[@"" stringByPaddingToLength:64 withString:@"0123456789abcdef" startingAtIndex:0];
+        NSString *ownDisplay=[@"Documents/LocalSigning/" stringByAppendingFormat:@"%@.dylib",sha];
+        NSString *ownPath=[home stringByAppendingPathComponent:ownDisplay];
+        assert([TKLocalSigningAppContainerDisplayPath(sha) isEqualToString:ownDisplay]);
+        assert([TKLocalSigningAppContainerPath(home,sha) isEqualToString:ownPath]);
+        for (NSString *bad in @[@"",@"../x",[sha uppercaseString],[sha substringToIndex:63],[sha stringByAppendingString:@"0"],
+                                [[sha substringToIndex:63] stringByAppendingString:@"/"]]) {
+            assert(!TKLocalSigningAppContainerDisplayPath(bad) && !TKLocalSigningAppContainerPath(home,bad));
+        }
+        assert(!TKLocalSigningAppContainerDisplayPath((NSString *)(id)@42));
 
         // --signed-image validation.
         NSString *(^signedImage)(NSArray *)=^NSString *(NSArray *arguments) {
@@ -161,7 +172,21 @@ int main(void) {
         assert([TKHomeDisplayPath([home stringByAppendingString:@"/"],home) isEqualToString:@"~"]);
         assert([TKHomeDisplayPath(@"/usr/lib/libobjc.dylib",home) isEqualToString:@"libobjc.dylib"]);
         assert([TKHomeDisplayPath([home stringByAppendingString:@"-OTHER/x.dylib"],home) isEqualToString:@"x.dylib"]);
-        printf("PASS: execution mode names, summaries, availability (%s), saved choice, resolution precedence, container path, --signed-image validation\n",
+        // Container lookup: the app's own, else the single-application one, else none.
+        NSString *root=[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
+        NSString *folder=[root stringByAppendingPathComponent:@"Documents/LocalSigning"];
+        assert([NSFileManager.defaultManager createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:NULL]);
+        assert(!TKLocalSigningFindContainer(root,sha) && !TKLocalSigningFindContainer(root,nil));
+        assert([NSData.data writeToFile:TKLocalSigningContainerPath(root) atomically:YES]);
+        assert([TKLocalSigningFindContainer(root,sha) isEqualToString:TKLocalSigningContainerPath(root)]);
+        assert([TKLocalSigningFindContainer(root,@"not-a-hash") isEqualToString:TKLocalSigningContainerPath(root)]);
+        assert([NSData.data writeToFile:TKLocalSigningAppContainerPath(root,sha) atomically:YES]);
+        assert([TKLocalSigningFindContainer(root,sha) isEqualToString:TKLocalSigningAppContainerPath(root,sha)]);
+        assert([NSFileManager.defaultManager removeItemAtPath:TKLocalSigningContainerPath(root) error:NULL]);
+        NSString *other=[@"" stringByPaddingToLength:64 withString:@"f" startingAtIndex:0];
+        assert(!TKLocalSigningFindContainer(root,other));
+        assert([NSFileManager.defaultManager removeItemAtPath:root error:NULL]);
+        printf("PASS: execution mode names, summaries, availability (%s), saved choice, resolution precedence, container paths and lookup, --signed-image validation\n",
             TOLKARA_INTEGRATED_AUTH?"Tolkara":"TolkaraDiagnostics");
     }
     return 0;

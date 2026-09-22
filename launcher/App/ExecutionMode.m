@@ -110,6 +110,22 @@ NSString *TKLocalSigningContainerPath(NSString *home) {
     return [home.stringByStandardizingPath stringByAppendingPathComponent:TKLocalSigningContainerDisplayPath()];
 }
 
+NSString *TKLocalSigningAppContainerDisplayPath(NSString *sha256) {
+    if(![sha256 isKindOfClass:NSString.class] || sha256.length!=64 ||
+        [sha256 rangeOfCharacterFromSet:[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdef"].invertedSet].location!=NSNotFound) return nil;
+    return [NSString stringWithFormat:@"Documents/LocalSigning/%@.dylib",sha256];
+}
+NSString *TKLocalSigningAppContainerPath(NSString *home, NSString *sha256) {
+    NSString *relative=TKLocalSigningAppContainerDisplayPath(sha256);
+    return relative ? [home.stringByStandardizingPath stringByAppendingPathComponent:relative] : nil;
+}
+NSString *TKLocalSigningFindContainer(NSString *home, NSString *sha256) {
+    NSFileManager *files=NSFileManager.defaultManager;
+    NSString *own=TKLocalSigningAppContainerPath(home,sha256), *shared=TKLocalSigningContainerPath(home);
+    if(own && [files fileExistsAtPath:own]) return own;
+    return [files fileExistsAtPath:shared] ? shared : nil;
+}
+
 NSString *TKSignedImagePath(NSArray<NSString *> *arguments, NSString *home, NSString **reason) {
     if(reason) *reason=nil;
     NSString *value=nil; NSUInteger given=0;

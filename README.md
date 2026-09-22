@@ -55,7 +55,7 @@ was obtained with.
 | [`runtime/`](runtime) | Mach-O loader: maps the original image, applies dyld rebases and binds, sets up TLS and Objective-C metadata, and enters the original initializers and `main`. For Local signing it validates the page container against the executable and maps its signed pages (`SignedImage`). Also a software MMU and a small interpreter used for testing. |
 | [`translation/`](translation) | The macOS API layer: AppKit on UIKit, Metal device/shader-library adaptation, CoreAudio/AudioToolbox, Carbon keyboard, CoreGraphics displays, Security. One library per macOS framework; anything not hand-written gets a generated logging stub. |
 | [`authorization/`](authorization) | Developer service. iPadOS only lets a development-signed app run code it did not sign after a debugger has prepared that memory. This module does that on the iPad itself: a bundled packet-tunnel extension reaches the device's own developer service, prepares the memory, and detaches before any application code runs. No Mac is needed after the one-time enrollment. |
-| [`launcher/`](launcher) | The UIKit app: import, the execution-mode choice, diagnostics, and the Play button. |
+| [`launcher/`](launcher) | The UIKit app: the app library, the execution-mode choice, starting apps, and a separate Diagnostics menu. |
 | [`profiles/`](profiles) | Small data files that describe a tested application: its name and where its files live. No code. |
 
 More detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and the protocol notes
@@ -90,7 +90,7 @@ With `TOLKARA_MODE=local-signing`, `tools/install.sh` also builds, signs and
 copies the page container. Copy your application's files to the iPad (for the
 WoW Classic profile,
 [`profiles/wow-classic-era/install.py`](profiles/wow-classic-era)), open Tolkara
-on the iPad and press Play.
+on the iPad and tap the app in its library.
 
 To check a change without a device:
 

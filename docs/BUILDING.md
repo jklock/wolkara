@@ -50,8 +50,11 @@ xcrun devicectl list devices
 ```
 
 - `GUEST_EXE`: the executable inside the macOS app you own, for example
-  `/Applications/Example.app/Contents/MacOS/Example`.
-- `TOLKARA_PROFILE` (optional): a profile from [`profiles/`](../profiles).
+  `/Applications/Example.app/Contents/MacOS/Example`. To run several apps,
+  list all their executables separated by `:` (like `PATH`); the compatibility
+  libraries are built for all of them.
+- `TOLKARA_PROFILE` (optional): your own profile, if it is not in
+  [`profiles/`](../profiles). Every profile there is included automatically.
 - `TOLKARA_MODE` (optional): `developer-service` or `local-signing`, see step 4.
   Without it the app asks on first launch.
 
@@ -96,7 +99,7 @@ Tolkara app over the Mac's existing trusted USB session and stores it in the
 app's device-only Keychain. Approve the prompt on the iPad. The temporary file
 is deleted from the Mac afterwards.
 
-The first time you press Play, iPadOS asks permission to add a VPN
+The first time you start an app, iPadOS asks permission to add a VPN
 configuration. This is Tolkara's own on-device packet tunnel. It routes one
 private address to the iPad's own developer service and carries no other
 traffic; nothing leaves the device. How it works is documented in
@@ -132,6 +135,14 @@ Copy the container into the Tolkara app's Documents as
 LocalSigning). `tools/install.sh` with `TOLKARA_MODE=local-signing` copies it
 for you.
 
+With several apps, each needs its own container, named after the SHA-256 of
+its executable file: `LocalSigning/<sha256>.dylib` (`shasum -a 256` prints it;
+an app's details in the library show it too). `tools/install.sh` builds and
+copies one per `GUEST_EXE` entry; give `TOLKARA_CAPTURE` one entry per
+executable, in the same order, separated by `:` (empty for the on-disk code,
+`skip` for none). An app without its own container uses `page-container.dylib`
+if present, and the runtime refuses it unless it belongs to that executable.
+
 Without `--capture`, the container holds the executable's code as it is on
 disk. That is right only for applications that do not rewrite their own code at
 launch. For one that does, such as the tested World of Warcraft client, the
@@ -153,15 +164,20 @@ launcher expects them. For the tested profile:
 python3 profiles/wow-classic-era/install.py
 ```
 
-For anything else, copy the application's folder with Finder or the Files app
-and write a profile: see [profiles/README.md](../profiles/README.md).
+An app whose profile is in `profiles/` appears in Tolkara's library by itself
+once its files are there. For anything else, copy the application's folder with
+Finder or the Files app, then tap **+** in Tolkara and choose its executable (or
+its `.app`). Tolkara remembers it; you do not pick it again. Optionally write a
+profile: see [profiles/README.md](../profiles/README.md).
 
 ## 6. Run
 
-Open Tolkara on the iPad, choose the execution mode if it asks, and press
-**Play**. With Developer service, keep the app in the foreground while it
-prepares memory (currently about 80 seconds). Runtime output goes to
-`Documents/native-guest.log`.
+Open Tolkara on the iPad, choose the execution mode if it asks, and tap the
+app in the library. With Developer service, keep Tolkara in the foreground
+while it prepares memory (currently about 80 seconds). One app can start per
+session: to start another, close Tolkara in the app switcher and open it again.
+Runtime output goes to `Documents/native-guest.log`; the Diagnostics menu
+(stethoscope) shows it and the other logs, and holds the development checks.
 
 ## Developing without a device
 

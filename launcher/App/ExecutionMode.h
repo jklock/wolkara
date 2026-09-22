@@ -42,6 +42,15 @@ TKExecutionMode TKExecutionModeResolve(NSArray<NSString *> *arguments, NSUserDef
 // "Documents/LocalSigning/page-container.dylib".
 NSString *TKLocalSigningContainerPath(NSString *home);
 NSString *TKLocalSigningContainerDisplayPath(void);
+// One application's own container, named after the SHA-256 of its executable
+// file: "Documents/LocalSigning/<sha256>.dylib" (tools/install.sh names it so).
+// nil unless sha256 is 64 lowercase hex digits.
+NSString *TKLocalSigningAppContainerDisplayPath(NSString *sha256);
+NSString *TKLocalSigningAppContainerPath(NSString *home, NSString *sha256);
+// The container to try for that executable: its own if it exists, else the
+// single-application page-container.dylib if it exists, else nil. The runtime
+// still refuses a container that does not belong to the executable.
+NSString *TKLocalSigningFindContainer(NSString *home, NSString *sha256);
 
 // --signed-image=<container>: exactly one non-empty value, relative values
 // resolved against home, no '..' component, and the standardized path must

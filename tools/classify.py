@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Classify a macOS binary's import surface against the iPhoneOS SDK.
 
-usage: classify.py <macOS executable> [--sdk PATH] [--out SURFACE.md] [--map build/guest-map.json]
+usage: classify.py <macOS executable>... [--sdk PATH] [--out SURFACE.md] [--map build/guest-map.json]
                    [--raw build/surface.json]
+
+With several executables the surface is their union, so one set of
+compatibility libraries serves every application in the launcher's library.
 
 Per symbol:   present | elsewhere (exported on iOS, but by a different library) | missing
 Per library:  system  (all symbols present -> only the path layout is rewritten)
@@ -101,7 +104,7 @@ def linked(exe):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("exe"); ap.add_argument("--sdk", default=DEFAULT_SDK)
+    ap.add_argument("exe", nargs="+"); ap.add_argument("--sdk", default=DEFAULT_SDK)
     ap.add_argument("--out", default="SURFACE.md"); ap.add_argument("--map", default="build/guest-map.json")
     ap.add_argument("--raw", default="build/surface.json")
     a = ap.parse_args()
@@ -120,30 +123,36 @@ def main():
         for x in syms:
             if x not in provider or len(name) < len(provider[x]):
                 provider[x] = name
-    lazy = lazy_symbols(a.exe)
+    per_lib, plan_syms, seen = collections.OrderedDict(), {}, set()
+    for exe in a.exe:
+        lazy = lazy_symbols(exe)
 
-    def kind(sym):
-        if sym.startswith("_OBJC_CLASS_$_"): return "class"
-        if sym.startswith("_OBJC_METACLASS_$_"): return "metaclass"
-        if lazy is not None: return "func" if sym in lazy else "data"
-        return "data" if re.match(r"_(k[A-Z]|g[A-Z]|NS\w+(Key|Notification|Mode|Name|Type|Number)$|NSApp$)", sym) else "func"
+        def kind(sym):
+            if sym.startswith("_OBJC_CLASS_$_"): return "class"
+            if sym.startswith("_OBJC_METACLASS_$_"): return "metaclass"
+            if lazy is not None: return "func" if sym in lazy else "data"
+            return "data" if re.match(r"_(k[A-Z]|g[A-Z]|NS\w+(Key|Notification|Mode|Name|Type|Number)$|NSApp$)", sym) else "func"
 
-    libs = linked(a.exe)
-    leaf_of = {}
-    for l in libs:
-        leaf_of[re.sub(r"\.(\w+\.)?dylib$", "", lib_key(l))] = l   # dyld_info prints 'libSystem', 'AppKit'
-    plan_syms = {}
-    per_lib = collections.OrderedDict((l, {"present": [], "elsewhere": [], "missing": []}) for l in libs)
-    for sym, frm, weak in imports(a.exe):
-        l = leaf_of.get(frm) or next((x for x in libs if lib_key(x).startswith(frm)), None)
-        if l is None:
-            per_lib.setdefault(frm, {"present": [], "elsewhere": [], "missing": []}); l = frm
-        have = by_leaf.get(lib_key(l), set())
-        # Umbrella frameworks on iOS re-export sub-libraries not modelled here; "elsewhere" is the safety net.
-        cls = "present" if sym in have else "elsewhere" if sym in everything else "missing"
-        per_lib[l][cls].append(sym + (" (weak)" if weak else ""))
-        if cls != "present":
-            plan_syms.setdefault(l, []).append([sym, kind(sym), provider.get(sym)])
+        exe_libs = linked(exe)
+        for l in exe_libs:
+            if l not in per_lib:
+                per_lib[l] = {"present": [], "elsewhere": [], "missing": []}
+        leaf_of = {}
+        for l in exe_libs:
+            leaf_of[re.sub(r"\.(\w+\.)?dylib$", "", lib_key(l))] = l   # dyld_info prints 'libSystem', 'AppKit'
+        for sym, frm, weak in imports(exe):
+            l = leaf_of.get(frm) or next((x for x in exe_libs if lib_key(x).startswith(frm)), None)
+            if l is None:
+                per_lib.setdefault(frm, {"present": [], "elsewhere": [], "missing": []}); l = frm
+            if (l, sym) in seen:
+                continue   # the first executable importing a symbol decides its kind
+            seen.add((l, sym))
+            have = by_leaf.get(lib_key(l), set())
+            # Umbrella frameworks on iOS re-export sub-libraries not modelled here; "elsewhere" is the safety net.
+            cls = "present" if sym in have else "elsewhere" if sym in everything else "missing"
+            per_lib[l][cls].append(sym + (" (weak)" if weak else ""))
+            if cls != "present":
+                plan_syms.setdefault(l, []).append([sym, kind(sym), provider.get(sym)])
 
     mapping, rows, tot, plan = {}, [], collections.Counter(), {}
     shim_name = lambda leaf: "@rpath/ak" + re.sub(r"\.dylib$", "", leaf) + ".dylib"

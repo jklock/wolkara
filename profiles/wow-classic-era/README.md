@@ -10,7 +10,6 @@ In `local.env`:
 
 ```
 GUEST_EXE="/Applications/World of Warcraft/_classic_era_/World of Warcraft Classic.app/Contents/MacOS/World of Warcraft Classic"
-TOLKARA_PROFILE=profiles/wow-classic-era/profile.json
 ```
 
 Build, install and set up your execution mode as described in
@@ -26,8 +25,9 @@ It copies only your region and language settings, not account settings, saved
 credentials or add-ons. Pass `--source` if the game is installed elsewhere, and
 `--skip-data` to refresh the client without copying `Data` again.
 
-Open Tolkara, choose an execution mode if it asks, press Play, and log in
-inside the game as usual.
+Open Tolkara, choose an execution mode if it asks, tap World of Warcraft Classic
+in the library (it appears once the files are copied), and log in inside the
+game as usual.
 
 **Execution mode.** Both modes are described in the
 [README](../../README.md#two-ways-to-run-code); choose one. This client has been

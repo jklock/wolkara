@@ -43,7 +43,7 @@ unknown status after helper loss remains uncertain and preserves the arena.
 - Our bounded packet routine checks IPv4/header/total lengths and exact address
   pairs. ASan/UBSan tests verify payload and IP/TCP checksum preservation,
   unrelated-traffic rejection and malformed input bounds.
-- The Developer service diagnostics UI (formerly "Local launch setup") can check
+- The Diagnostics menu's Developer service section (formerly "Local launch setup") can check
   TCP reachability of 127.0.0.1:49152 or request or stop our optional route.
   Starting it is an explicit action that may require iPadOS's VPN
   configuration consent. It never starts automatically at launch.

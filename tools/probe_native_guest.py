@@ -27,6 +27,7 @@ def main():
     parser.add_argument('--sample-native', action='store_true')
     parser.add_argument('--measure-native', action='store_true', help='Log frame timing without screenshots or memory samples')
     parser.add_argument('--seconds', type=int, default=20)
+    parser.add_argument('--app', help='library app identifier (Details in the app library); default: most recently started')
     args = parser.parse_args()
     os.environ.setdefault('DEVELOPER_DIR','/Applications/Xcode.app/Contents/Developer')
     run_id = uuid.uuid4().hex
@@ -34,7 +35,7 @@ def main():
     output.mkdir(parents=True)
     result = subprocess.run(['xcrun','devicectl','device','process','launch','--terminate-existing',
         '--device',args.device,'--start-stopped','--json-output',str(output/'launch.json'),
-        BUNDLE_ID,'--execution-mode=developer-service','--native-startup' if args.full_startup else '--native-initializer','--probe-run-id='+run_id, *(['--sample-native'] if args.sample_native else []), *(['--measure-native'] if args.measure_native else []), *(['--translate-shaders'] if args.translate_shaders else [])],capture_output=True,text=True,timeout=60)
+        BUNDLE_ID,'--execution-mode=developer-service','--native-startup' if args.full_startup else '--native-initializer','--probe-run-id='+run_id, *(['--sample-native'] if args.sample_native else []), *(['--measure-native'] if args.measure_native else []), *(['--translate-shaders'] if args.translate_shaders else []), *(['--app='+args.app] if args.app else [])],capture_output=True,text=True,timeout=60)
     (output/'launch.log').write_text(result.stdout+result.stderr)
     if result.returncode: print(result.stdout+result.stderr); return 1
     data=json.loads((output/'launch.json').read_text())['result']; pid=data['process']['processIdentifier']

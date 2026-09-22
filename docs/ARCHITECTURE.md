@@ -128,11 +128,33 @@ are remapped. No debugger is involved.
 
 ## launcher/ and profiles/
 
-The launcher is a small UIKit app: import an executable, choose the execution
-mode (asked on first launch, changed with Execution mode…), run diagnostics,
-press Play. A profile (`profiles/<id>/profile.json`) is packaged at build time
-and supplies the application's display name and the folder and executable path
-under Documents. Profiles are data; they cannot carry code or patches.
+The launcher is a small UIKit app built around a library of applications
+(`launcher/App/AppLibrary.m`). Adding an executable records it once; afterwards
+it starts with one tap. An executable inside Tolkara's Documents folder runs in
+place, with the folder containing its `.app` bundle as the working directory, so
+it finds its resources. One picked from elsewhere is copied, verified, into
+`Documents/GuestModules/<sha256>` (executable only). The library itself lives in
+`Library/Application Support/Tolkara/apps.json`, outside the user-visible folder,
+with paths relative to Documents; each start re-checks that the executable is a
+regular file inside Documents, or that a copy still matches its hash.
+
+Every profile in `profiles/` is packaged at build time. When a profile's files
+are present in Documents the library adds that app under the profile's name,
+so a profile's install script is enough to make an app appear. Profiles are
+data; they cannot carry code or patches.
+
+The execution mode is chosen once for all apps (asked on first launch, changed
+with the mode button in the library). With Local signing each app uses its own
+page container, `Documents/LocalSigning/<SHA-256 of its executable>.dylib`,
+falling back to the single-application `page-container.dylib`; the runtime
+refuses a container that does not match the executable.
+
+Development checks, the Developer service route controls and the runtime logs
+are in a separate Diagnostics menu. Checks that load compatibility libraries or may be
+terminated by the system end the session: iPadOS allows one guest startup per
+process, so Tolkara must be reopened before starting an app. Launch arguments
+used by `tools/` keep their plain status screen; `--app=<identifier>` selects a
+library app for `--native-startup` and friends.
 
 ## Testing
 

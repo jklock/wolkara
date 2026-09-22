@@ -69,39 +69,47 @@ NSString *guest_module_selected(NSString *root,NSError **error) {
     if (!valid_hash(hash)) { module_error(error,@"Import the original game executable to begin."); return nil; }
     return verify(root,hash,error);
 }
+NSString *guest_module_hash(NSString *path,uint64_t *size,NSError **error) { return hash_file(path,size,error); }
+NSString *guest_module_path(NSString *root,NSString *hash,NSError **error) {
+    if (!valid_hash(hash)) { module_error(error,@"Invalid module identifier."); return nil; }
+    return verify(root,hash,error);
+}
 BOOL guest_module_import(NSString *source,NSString *root,NSError **error) {
+    return guest_module_import_hash(source,root,error)!=nil;
+}
+NSString *guest_module_import_hash(NSString *source,NSString *root,NSError **error) {
     NSFileManager *fm=NSFileManager.defaultManager;
-    if (![fm createDirectoryAtPath:root withIntermediateDirectories:YES attributes:nil error:error]) return NO;
+    if (![fm createDirectoryAtPath:root withIntermediateDirectories:YES attributes:nil error:error]) return nil;
     NSString *stage=[root stringByAppendingPathComponent:[@".import-" stringByAppendingString:NSUUID.UUID.UUIDString]];
-    if (![fm createDirectoryAtPath:stage withIntermediateDirectories:NO attributes:nil error:error]) return NO;
-    BOOL success=NO;
+    if (![fm createDirectoryAtPath:stage withIntermediateDirectories:NO attributes:nil error:error]) return nil;
+    NSString *success=nil;
     @try {
         NSString *target=[stage stringByAppendingPathComponent:@"OriginalExecutable.bin"];
         uint64_t sourceSize=0,copySize=0;
         NSString *before=hash_file(source,&sourceSize,error);
-        if (!before || ![fm copyItemAtPath:source toPath:target error:error]) return NO;
+        if (!before || ![fm copyItemAtPath:source toPath:target error:error]) return nil;
         NSString *copied=hash_file(target,&copySize,error);
         if (![before isEqual:copied] || sourceSize!=copySize || ![before isEqual:hash_file(source,NULL,error)])
-            return module_error(error,@"The executable changed during import. Please retry.");
+            { module_error(error,@"The executable changed during import. Please retry."); return nil; }
         GuestImage image={0}; char reason[2048];
         if (!gi_load(target.fileSystemRepresentation,&image,reason,sizeof reason))
-            return module_error(error,[NSString stringWithFormat:@"Unsupported executable: %s",reason]);
+            { module_error(error,[NSString stringWithFormat:@"Unsupported executable: %s",reason]); return nil; }
         gi_destroy(&image);
-        if (chmod(target.fileSystemRepresentation,0600)) return module_error(error,@"Cannot set module data permissions.");
+        if (chmod(target.fileSystemRepresentation,0600)) { module_error(error,@"Cannot set module data permissions."); return nil; }
         if (!write_json(@{@"format":@2,@"runtime":@"data-module",@"source_name":source.lastPathComponent,
-            @"sha256":copied,@"size":@(copySize),@"modified":@NO},[stage stringByAppendingPathComponent:@"manifest.json"],error)) return NO;
+            @"sha256":copied,@"size":@(copySize),@"modified":@NO},[stage stringByAppendingPathComponent:@"manifest.json"],error)) return nil;
         NSString *final=[root stringByAppendingPathComponent:copied];
         if ([fm fileExistsAtPath:final]) {
             if (!verify(root,copied,NULL)) {
                 NSString *damaged=[root stringByAppendingPathComponent:[@".damaged-" stringByAppendingString:NSUUID.UUID.UUIDString]];
-                if (![fm moveItemAtPath:final toPath:damaged error:error]) return NO;
+                if (![fm moveItemAtPath:final toPath:damaged error:error]) return nil;
                 if (![fm moveItemAtPath:stage toPath:final error:error]) {
                     [fm moveItemAtPath:damaged toPath:final error:NULL];
-                    return NO;
+                    return nil;
                 }
             }
-        } else if (![fm moveItemAtPath:stage toPath:final error:error]) return NO;
-        success=write_json(@{@"sha256":copied},[root stringByAppendingPathComponent:@"current.json"],error);
+        } else if (![fm moveItemAtPath:stage toPath:final error:error]) return nil;
+        if (write_json(@{@"sha256":copied},[root stringByAppendingPathComponent:@"current.json"],error)) success=copied;
     } @finally { [fm removeItemAtPath:stage error:NULL]; }
     return success;
 }
