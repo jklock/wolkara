@@ -7,7 +7,24 @@ import sys
 import tempfile
 import unittest
 
-PROBE = pathlib.Path(sys.argv.pop(1)).resolve()
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+
+def probe_path():
+    # tools/test_emulation.sh passes its sanitized probe. Under
+    # `python3 -m unittest discover -s tests`, build a fresh one.
+    if __name__ == '__main__' and len(sys.argv) > 1:
+        return pathlib.Path(sys.argv.pop(1)).resolve()
+    path = ROOT / 'build/emulation/guest_probe_unittest'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(['xcrun', 'clang', '-std=c11', '-D_DARWIN_C_SOURCE', '-Wall', '-Wextra', '-Werror', '-O1', '-g',
+                    '-fsanitize=address,undefined', '-fno-omit-frame-pointer', '-Iruntime',
+                    'runtime/GuestMemory.c', 'runtime/GuestImage.c', 'runtime/GuestFixups.c', 'tools/guest_probe.c',
+                    '-o', str(path)], cwd=ROOT, check=True)
+    return path
+
+
+PROBE = probe_path()
 BASE = 0x100000000
 PAGE = 16384
 
