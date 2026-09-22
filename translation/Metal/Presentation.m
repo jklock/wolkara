@@ -56,11 +56,16 @@ static id<CAMetalDrawable> observedNextDrawable(id layer, SEL selector) {
                 if(!timing) { timing=[AKFrameTiming new]; objc_setAssociatedObject(layer,&timingMarker,timing,OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
             }
         }
+#if !TARGET_OS_SIMULATOR
+        // Presentation timestamps are diagnostics; the simulator SDK lacks them.
         [drawable addPresentedHandler:^(id<MTLDrawable> frame) {
             [timing presentedAt:frame.presentedTime];
             uint64_t count=atomic_fetch_add(&presented,1)+1;
             if(count==1 || count==60 || count==600 || count==1800) AKLog(@"Metal frame %llu presented at %.6f",(unsigned long long)count,frame.presentedTime);
         }];
+#else
+        (void)timing;
+#endif
     }
     return drawable;
 }
