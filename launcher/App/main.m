@@ -7,10 +7,14 @@
 #import "NativeGuest.h"
 #import "ShaderPauseProbe.h"
 #import "SignedCodeProbe.h"
+#import "SignedFileProbe.h"
 #import "LocalShaderProbe.h"
 #import "GuestModule.h"
 #import "CPUProbe.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#include <errno.h>
+#include <stdint.h>
+#include <stdlib.h>
 #include <unistd.h>
 #if TOLKARA_INTEGRATED_AUTH
 #import "LocalAuthorization.h"
@@ -198,6 +202,8 @@ static NSString *AppDisplayName(void) { return ProfileString(@"name")?:@"importe
     for (NSString *argument in arguments) if ([argument hasPrefix:@"--probe-run-id="]) fprintf(log,"%s\n",argument.UTF8String);
     NSString *path = guest_module_selected(self.moduleRoot,NULL);
     NSString *map = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"Guest/libraries.json"];
+    // Executable selection is identical for both backends: the runtime rejects a
+    // signed container that does not match the executable it is remapped over.
     if (fullStartup) {
         NSString *relativeDirectory=ProfileString(@"workingDirectory"), *relativeExecutable=ProfileString(@"executable");
         NSString *game = relativeDirectory ? [directory stringByAppendingPathComponent:relativeDirectory] : nil;
@@ -213,6 +219,55 @@ static NSString *AppDisplayName(void) { return ProfileString(@"name")?:@"importe
         UIApplication.sharedApplication.idleTimerDisabled=NO;
         self.importButton.hidden=NO;
         return;
+    }
+    // Local signing backend. Accept exactly one non-empty container, resolve a
+    // relative value under the app home, and require the standardized path to
+    // stay inside the home (no '..' escape, no absolute path elsewhere) so the
+    // log and the runtime only ever see a path this app owns.
+    NSArray<NSString *> *signedImageArguments=[arguments filteredArrayUsingPredicate:
+        [NSPredicate predicateWithBlock:^BOOL(NSString *argument,NSDictionary *bindings){
+            (void)bindings; return [argument hasPrefix:@"--signed-image="]; }]];
+    if (signedImageArguments.count) {
+        if (signedImageArguments.count>1) {
+            fprintf(log,"[host] signed-image rejected: --signed-image given %lu times\n",(unsigned long)signedImageArguments.count); fflush(log);
+            self.status.text=@"Pass --signed-image at most once.";
+            UIApplication.sharedApplication.idleTimerDisabled=NO;
+            return;
+        }
+        NSString *value=[signedImageArguments.firstObject substringFromIndex:15];
+        if(!value.length) {
+            fprintf(log,"[host] signed-image rejected: empty container path\n"); fflush(log);
+            self.status.text=@"Signed-image container path is empty.";
+            UIApplication.sharedApplication.idleTimerDisabled=NO;
+            return;
+        }
+        // Reject '..' components up front: -stringByStandardizingPath may leave
+        // them unresolved when a preceding component is a symlink, so the prefix
+        // check below cannot be relied on alone to keep the path inside home.
+        if([value.pathComponents containsObject:@".."]) {
+            fprintf(log,"[host] signed-image rejected: container path contains '..'\n"); fflush(log);
+            self.status.text=@"Signed-image container path must not contain '..'.";
+            UIApplication.sharedApplication.idleTimerDisabled=NO;
+            return;
+        }
+        NSString *home=NSHomeDirectory().stringByStandardizingPath;
+        NSString *homePrefix=[home stringByAppendingString:@"/"];
+        NSString *container=(value.isAbsolutePath?value:[home stringByAppendingPathComponent:value]).stringByStandardizingPath;
+        if(![container isEqualToString:home] && ![container hasPrefix:homePrefix]) {
+            fprintf(log,"[host] signed-image rejected: container escapes the app home\n"); fflush(log);
+            self.status.text=@"Signed-image container must stay inside the app home.";
+            UIApplication.sharedApplication.idleTimerDisabled=NO;
+            return;
+        }
+        NSString *shown=[container hasPrefix:homePrefix]?[@"~/" stringByAppendingString:[container substringFromIndex:homePrefix.length]]:@"~";
+        char reason[256]={0};
+        if(!ng_use_signed_image(container.fileSystemRepresentation,reason,sizeof reason)) {
+            fprintf(log,"[host] signed-image rejected: %s (container=%s)\n",reason[0]?reason:"backend unavailable",shown.UTF8String); fflush(log);
+            self.status.text=[NSString stringWithFormat:@"Signed-image backend unavailable: %s",reason[0]?reason:"see runtime log"];
+            UIApplication.sharedApplication.idleTimerDisabled=NO;
+            return;
+        }
+        fprintf(log,"[host] signed-image container=%s\n",shown.UTF8String); fflush(log);
     }
     BOOL ok = ng_initialize(path.fileSystemRepresentation, NSBundle.mainBundle.privateFrameworksPath.fileSystemRepresentation, map.fileSystemRepresentation, log, fullStartup);
     self.status.text = ok ? (fullStartup ? @"App closed." : @"Original client first initializer returned.") : @"Native startup stopped. See runtime log.";
@@ -393,6 +448,36 @@ static NSString *AppDisplayName(void) { return ProfileString(@"name")?:@"importe
                 self.status.text=[NSString stringWithFormat:@"CPU interpreter probe %@\n\n%@",ok?@"passed":@"failed",report?:@""];
             });
         });
+        return;
+    }
+    NSString *signedFilePath=nil, *signedFileMode=@"exec";
+    unsigned signedFileExpect=0x12345678; BOOL signedFileExpectBad=NO;
+    for (NSString *argument in arguments) {
+        if ([argument hasPrefix:@"--signed-file-probe="]) signedFilePath=[argument substringFromIndex:20];
+        if ([argument hasPrefix:@"--signed-file-probe-mode="]) signedFileMode=[argument substringFromIndex:25];
+        if ([argument hasPrefix:@"--signed-file-probe-expect="]) {
+            // Strict: reject garbage and values above UINT32_MAX instead of
+            // silently probing against a wrong (or 0) expected value. Require a
+            // leading digit: strtoul otherwise silently accepts a sign or
+            // leading whitespace ('+5', '-0', ' 5'). A leading '0' still admits
+            // hex 0x...; the errno/end/UINT32_MAX checks stay.
+            const char *text=[argument substringFromIndex:27].UTF8String; char *end=NULL;
+            errno=0; unsigned long parsed=strtoul(text,&end,0);
+            if(text[0]>='0'&&text[0]<='9' && !*end && !errno && parsed<=UINT32_MAX) signedFileExpect=(unsigned)parsed;
+            else signedFileExpectBad=YES;
+        }
+    }
+    if(signedFilePath) {
+        self.importButton.hidden=YES;
+        if(signedFileExpectBad) { self.status.text=@"--signed-file-probe-expect must be an integer in [0, 0xFFFFFFFF]."; return; }
+        if(![signedFilePath isAbsolutePath]) signedFilePath=[NSHomeDirectory() stringByAppendingPathComponent:signedFilePath];
+        NSString *path=[NSHomeDirectory() stringByAppendingPathComponent:@"Documents/signed-file-probe.log"];
+        FILE *log=fopen(path.fileSystemRepresentation,"w");
+        if(!log) { self.status.text=@"Cannot open signed-file probe log.";return; }
+        for (NSString *argument in arguments) if ([argument hasPrefix:@"--probe-run-id="]) fprintf(log,"%s\n",argument.UTF8String);
+        BOOL ok=HostSignedFileProbe(signedFilePath.fileSystemRepresentation,signedFileMode.UTF8String,signedFileExpect,log);
+        fclose(log);
+        self.status.text=ok?@"Signed file-mapped code executed natively.":@"Signed file probe failed. See probe log.";
         return;
     }
     if([arguments containsObject:@"--signed-cache-probe"]) {

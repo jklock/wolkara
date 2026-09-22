@@ -8,6 +8,7 @@ static NativeCodeMemory local_quarantine;
 #include "GuestFixups.h"
 #include "GuestTLS.h"
 #include "GuestWait.h"
+#include "SignedImage.h"
 #include <dlfcn.h>
 #include <mach-o/loader.h>
 #import <objc/objc-exception.h>
@@ -27,9 +28,37 @@ static atomic_bool initialization_attempted;
 #if TOLKARA_INTEGRATED_AUTH
 static atomic_bool use_local_authorization;
 #endif
+// Local signing: a page container signed with the user's own identity carries
+// the guest's final (post-unpack) __TEXT. It is dlopened so dyld establishes
+// kernel-validated executable pages; those pages are then vm_remap'd into the
+// guest arena at their preferred addresses. No debugger or JIT is involved.
+static char signed_container_path[1024];
+static atomic_bool use_signed_image;
+static bool refuse(char *error, size_t error_size, const char *reason) {
+    if (error && error_size) snprintf(error,error_size,"%s",reason);
+    return false;
+}
+bool ng_use_signed_image(const char *container_path, char *error, size_t error_size) {
+    if (atomic_load(&initialization_attempted)) return refuse(error,error_size,"startup was already attempted; restart the app");
+#if TOLKARA_INTEGRATED_AUTH
+    if (atomic_load(&use_local_authorization)) return refuse(error,error_size,"Developer service is already selected");
+#endif
+    if (!container_path || !container_path[0]) return refuse(error,error_size,"no container path");
+    if (strlen(container_path) >= sizeof signed_container_path) return refuse(error,error_size,"container path is too long");
+    strcpy(signed_container_path, container_path);
+    atomic_store(&use_signed_image,true);
+    return true;
+}
+static struct {
+    bool active, shadow;        // shadow: the rewritten range is still anonymous
+    bool verified_write;        // a guest write into signed pages already matched
+    void *handle;
+    SIImage image;              // container's final __TEXT; arena offset 0 is guest.base
+    uintptr_t shadow_size;      // leading __TEXT bytes held anonymously during unpack
+} signed_image;
 bool ng_use_local_authorization(void) {
 #if TOLKARA_INTEGRATED_AUTH
-    if(atomic_load(&initialization_attempted)) return false;
+    if(atomic_load(&initialization_attempted) || atomic_load(&use_signed_image)) return false;
     atomic_store(&use_local_authorization,true);return true;
 #else
     return false;
@@ -168,17 +197,90 @@ static CFBundleRef guest_cf_main_bundle(void) {
     if (guest_cf_bundle) return guest_cf_bundle;
     return CFBundleGetMainBundle();
 }
+// A guest write into signed __TEXT pages must reproduce the baked bytes
+// exactly: the guest's unpacking initializer re-derives the same unpacked code
+// every launch. Any mismatch proves non-determinism (or a stale container) and
+// is logged with the exact address before the hook aborts.
+static void explain_exec_mismatch(void) {
+    if (signed_image.shadow_size || signed_image.verified_write) return;
+    LOG("[signed-image] FATAL: the container holds this guest's on-disk __TEXT, but the guest rewrites its code at startup; "
+        "build the container from a capture of the final pages\n");
+}
+static bool verify_exec_write(const void *destination, const void *source, size_t size) {
+    const unsigned char *d=destination,*s=source;
+    for (size_t i=0;i<size;i++) if (d[i]!=s[i]) {
+        uintptr_t offset=(uintptr_t)destination-(uintptr_t)guest.arena.executable+i;
+        LOG("[signed-image] FATAL: regenerated code mismatch at preferred=%#llx baked=%02x regenerated=%02x (write size=%zu)\n",
+            (unsigned long long)(guest.base+offset),d[i],s[i],size);
+        explain_exec_mismatch();
+        return false;
+    }
+    if (size) signed_image.verified_write=true;
+    return true;
+}
+static bool inside_exec(const void *address, size_t size) {
+    if (!signed_image.active || !inside(address,size)) return false;
+    uintptr_t offset=(uintptr_t)address-(uintptr_t)guest.arena.executable;
+    return offset<signed_image.image.size && size<=signed_image.image.size-offset;
+}
+// The leading [0, shadow_size) __TEXT pages hold the packed bytes on writable
+// anonymous memory while the unpacking initializer runs; the remaining pages
+// are already the kernel-validated signed ones.
+static bool inside_shadow(const void *address, size_t size) {
+    if (!signed_image.shadow || !inside_exec(address,size)) return false;
+    uintptr_t offset=(uintptr_t)address-(uintptr_t)guest.arena.executable;
+    return offset<signed_image.shadow_size && size<=signed_image.shadow_size-offset;
+}
+// Leading bytes of a __TEXT write that land in the still-anonymous shadow.
+static size_t shadow_part(const void *destination, size_t size) {
+    uintptr_t offset=(uintptr_t)destination-(uintptr_t)guest.arena.executable;
+    if (!signed_image.shadow || offset>=signed_image.shadow_size) return 0;
+    return signed_image.shadow_size-offset<size ? signed_image.shadow_size-offset : size;
+}
+// Guest memcpy/memmove into __TEXT: shadow bytes are written, signed bytes must
+// regenerate identically. The signed part is verified first, before the shadow
+// write can overwrite its overlapping source; memmove handles overlap.
+static bool final_image_write(void *destination, const void *source, size_t size) {
+    size_t shadow=shadow_part(destination,size);
+    if (shadow<size && !verify_exec_write((char *)destination+shadow,(const char *)source+shadow,size-shadow)) return false;
+    if (shadow) memmove(destination,source,shadow);
+    return true;
+}
+static bool final_image_memset(void *destination, int value, size_t size) {
+    size_t shadow=shadow_part(destination,size);
+    const unsigned char *d=destination;
+    for (size_t i=shadow;i<size;i++) if (d[i]!=(unsigned char)value) {
+        uintptr_t at=(uintptr_t)destination-(uintptr_t)guest.arena.executable+i;
+        LOG("[signed-image] FATAL: memset verification mismatch at preferred=%#llx baked=%02x value=%02x\n",
+            (unsigned long long)(guest.base+at),d[i],(unsigned)value&0xff);
+        explain_exec_mismatch();
+        return false;
+    }
+    if (shadow<size) signed_image.verified_write=true;
+    if (shadow) memset(destination,value,shadow);
+    return true;
+}
 static void *write_view(void *destination, size_t size) {
+    // Local signing: the mem* hooks shadow or verify writes into __TEXT.
+    if (signed_image.active) return destination;
     if (inside(destination, size)) return (char *)guest.arena.writable + ((uintptr_t)destination - (uintptr_t)guest.arena.executable);
     return destination;
 }
 static void *guest_memcpy(void *destination, const void *source, size_t size) {
+    if (inside_exec(destination,size)) {
+        if (!final_image_write(destination,source,size)) abort();
+        return destination;
+    }
     void *alias = write_view(destination, size);
     memcpy(alias, source, size);
     if (alias != destination) { sys_dcache_flush(alias,size); sys_icache_invalidate(destination,size); }
     return destination;
 }
 static void *guest_memmove(void *destination, const void *source, size_t size) {
+    if (inside_exec(destination,size)) {
+        if (!final_image_write(destination,source,size)) abort();
+        return destination;
+    }
     void *alias = write_view(destination, size);
     // Use the same view for overlapping guest source and destination.
     if (alias != destination && inside(source,size)) source = write_view((void *)source,size);
@@ -187,6 +289,10 @@ static void *guest_memmove(void *destination, const void *source, size_t size) {
     return destination;
 }
 static void *guest_memset(void *destination, int value, size_t size) {
+    if (inside_exec(destination,size)) {
+        if (!final_image_memset(destination,value,size)) abort();
+        return destination;
+    }
     void *alias = write_view(destination,size); memset(alias,value,size);
     if (alias != destination) { sys_dcache_flush(alias,size); sys_icache_invalidate(destination,size); }
     return destination;
@@ -200,6 +306,12 @@ static int guest_dladdr(const void *address, Dl_info *info) {
 }
 static int guest_mprotect(void *address, size_t size, int prot) {
     LOG("[native] mprotect(%p,%#zx,%d)\n",address,size,prot);
+    // Local signing: shadow pages are plain writable anonymous memory; signed
+    // pages already have their final protection by construction.
+    if (inside_exec(address,size)) {
+        if (inside_shadow(address,size)) return mprotect(address,size,PROT_READ|PROT_WRITE);
+        return 0;
+    }
     // Keep executable backing RX; imported stores/copies use its shared RW view.
     if (inside(address,size) && (prot & PROT_EXEC)) prot &= ~PROT_WRITE;
     int result = mprotect(address,size,prot);
@@ -208,6 +320,11 @@ static int guest_mprotect(void *address, size_t size, int prot) {
 }
 static int guest_munmap(void *address, size_t size) {
     LOG("[native] munmap(%p,%#zx)\n",address,size);
+    // Local signing: keep validated pages; shadow pages stay mapped+writable.
+    if (inside_exec(address,size)) {
+        if (inside_shadow(address,size)) return mprotect(address,size,PROT_READ|PROT_WRITE);
+        return 0;
+    }
     // Reserve the runtime arena so a later fixed/hinted remap preserves the RX
     // backing established before guest execution. Inaccessible until remapped.
     if (inside(address,size)) return mprotect(address,size,PROT_NONE);
@@ -215,6 +332,18 @@ static int guest_munmap(void *address, size_t size) {
 }
 static void *guest_mmap(void *address, size_t size, int prot, int flags, int fd, off_t offset) {
     LOG("[native] mmap(%p,%#zx,%d,%#x,%d,%lld)\n",address,size,prot,flags,fd,(long long)offset);
+    if (inside_exec(address,size) && (flags & MAP_ANON) && (flags & MAP_PRIVATE) &&
+        fd == -1 && offset == 0 && !((uintptr_t)address % GM_PAGE_SIZE) && size && !(size % GM_PAGE_SIZE)) {
+        if (inside_shadow(address,size)) {
+            memset(address,0,size);
+            return address;
+        }
+        // The unpacker's MAP_JIT re-map of a signed range is a no-op: the
+        // signed pages already hold the final bytes and the following memcpy
+        // verifies them.
+        LOG("[signed-image] MAP_JIT remap of signed range satisfied in place\n");
+        return address;
+    }
     if (inside(address,size) && (flags & MAP_ANON) && (flags & MAP_PRIVATE) && fd == -1 && offset == 0 &&
         !((uintptr_t)address % GM_PAGE_SIZE) && size && !(size % GM_PAGE_SIZE)) {
         void *alias = write_view(address,size); memset(alias,0,size);
@@ -274,6 +403,78 @@ static void *guest_dlsym(void *handle, const char *name) {
     void *value = hook(name); if (!value) value = dlsym(handle,name);
     LOG("[native] dlsym(%s) -> %p\n",name,value); return value;
 }
+// Logs leave the device: show app-container paths relative to the home
+// directory, whose absolute form carries a per-install UUID.
+static void home_relative(const char *text, char *out, size_t size) {
+    NSString *home=NSHomeDirectory(), *value=text?[NSString stringWithUTF8String:text]:nil;
+    if (value && home.length>1) {
+        value=[value stringByReplacingOccurrencesOfString:[@"/private" stringByAppendingString:home] withString:@"~"];
+        value=[value stringByReplacingOccurrencesOfString:home withString:@"~"];
+    }
+    snprintf(out,size,"%s",value?value.UTF8String:"(unavailable)");
+}
+static void loggable_path(const char *path, char *out, size_t size) {
+    home_relative(path,out,size);
+    const char *name=strrchr(path,'/');
+    if (out[0]=='/') snprintf(out,size,".../%s",name?name+1:path);
+}
+// dlopen the signed container (dyld validates its CodeDirectory and maps its
+// pages), check its layout and bind it to this guest before anything is
+// mapped, then reserve the guest arena anonymously. Pages after the rewritten
+// range equal the original ones and are remapped from the container at once.
+// The rewritten range is remapped only AFTER the unpacking initializer has
+// re-derived its bytes on the anonymous pages (the shadow phase): an anonymous
+// overwrite of validated pages is rejected by the kernel, while the reverse
+// direction, validated pages over anonymous, is allowed.
+static bool signed_image_prepare(uint64_t end, char *error, size_t error_size) {
+    char shown[1024];
+    loggable_path(signed_container_path, shown, sizeof shown);
+    LOG("[signed-image] container %s\n", shown);
+    void *handle = dlopen(signed_container_path, RTLD_NOW | RTLD_LOCAL);
+    if (!handle) {
+        home_relative(dlerror(), shown, sizeof shown);
+        snprintf(error, error_size, "container dlopen failed: %s", shown); return false;
+    }
+    size_t span = (size_t)(end - guest.base);
+    void *arena = MAP_FAILED;
+    SIImage image = {0};
+    uint64_t shadow_size = 0;
+    Dl_info info = {0};
+    uintptr_t v1 = (uintptr_t)dlsym(handle, "tolkara_container_v1"), final = (uintptr_t)dlsym(handle, "tolkara_container_final");
+    // No mapping changes and no guest code until the container matches.
+    if (v1 && !dladdr((void *)v1, &info)) { snprintf(error, error_size, "container marker lies outside any loaded image"); goto fail; }
+    if (!si_locate_image(info.dli_fbase, v1, final, &image, error, error_size) ||
+        !si_match_guest(&image, &guest.image, error, error_size) ||
+        !si_shadow_size(&image, &guest.image, &shadow_size, error, error_size)) goto fail;
+    LOG("[signed-image] container matches the guest: %llu __TEXT pages, header and load commands identical\n",
+        (unsigned long long)(image.size / GM_PAGE_SIZE));
+    arena = mmap(NULL, span, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
+    if (arena == MAP_FAILED) { snprintf(error, error_size, "arena reservation failed errno=%d", errno); goto fail; }
+    guest.arena = (NativeCodeMemory){ .executable = arena, .writable = arena, .size = span, .published = true };
+    LOG("[signed-image] dlopen ok; shadow region %llu pages, signed suffix %llu pages\n",
+        (unsigned long long)(shadow_size / GM_PAGE_SIZE),
+        (unsigned long long)((image.size - shadow_size) / GM_PAGE_SIZE));
+    if (shadow_size < image.size) {
+        vm_address_t target = (vm_address_t)arena + shadow_size;
+        vm_prot_t current = VM_PROT_READ | VM_PROT_EXECUTE, maximum = current;
+        kern_return_t result = vm_remap_new(mach_task_self(), &target, image.size - shadow_size, 0,
+            VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE, mach_task_self(), (vm_address_t)image.bytes + shadow_size, false,
+            &current, &maximum, VM_INHERIT_NONE);
+        LOG("[signed-image] signed suffix remap result=%d protection=%d\n", result, current);
+        if (result != KERN_SUCCESS || target != (vm_address_t)arena + shadow_size ||
+            !(current & VM_PROT_EXECUTE) || (current & VM_PROT_WRITE)) {
+            snprintf(error, error_size, "signed suffix remap failed kr=%d", result); goto fail;
+        }
+    }
+    signed_image = (typeof(signed_image)){ .active = true, .shadow = shadow_size != 0, .handle = handle,
+        .image = image, .shadow_size = shadow_size };
+    return true;
+fail:
+    if (arena != MAP_FAILED) munmap(arena, span);
+    guest.arena = (NativeCodeMemory){0};
+    dlclose(handle);
+    return false;
+}
 static bool resolve(const char *symbol, int ordinal, bool weak, uint64_t *value, void *context) {
     (void)context;
     const char *name = symbol[0]=='_' ? symbol+1 : symbol;
@@ -315,13 +516,18 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
         GISegment *s=&guest.image.segments[i]; if(s->prot && s->address+s->size>end) end=s->address+s->size;
     }
     bool arena_ready;
+    bool signed_backend=atomic_load(&use_signed_image);
+    if (signed_backend)
+        arena_ready=signed_image_prepare(end,error,sizeof error);
+    else {
 #if TOLKARA_INTEGRATED_AUTH
     if(atomic_load(&use_local_authorization) || [NSProcessInfo.processInfo.arguments containsObject:@"--local-native-authorization"])
         arena_ready=nc_create_managed(&guest.arena,(size_t)(end-guest.base),TKPrepareLocalArena,NULL,&local_quarantine);
     else
 #endif
         arena_ready=nc_create(&guest.arena,(size_t)(end-guest.base),publish,NULL);
-    if (!arena_ready) { LOG("[native] arena preparation failed errno=%d; guest entry blocked\n",errno); goto done; }
+    }
+    if (!arena_ready) { LOG("[native] arena preparation failed errno=%d %s; guest entry blocked\n",errno,signed_backend?error:""); goto done; }
     guest.slide=(uintptr_t)guest.arena.executable-guest.base;
     LOG("[native] arena ready base=%p slide=%#llx\n",guest.arena.executable,(unsigned long long)guest.slide);
     {
@@ -355,17 +561,36 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
         if (!ready) { LOG("[native] TLS template setup failed\n"); goto done; }
         LOG("[native] TLS template size=%zu alignment=%zu descriptors=%zu\n",guest.tls.size,guest.tls.alignment,guest.tls.descriptors_size/24);
     }
+    size_t signed_pages_skipped=0;
     for(size_t i=0;i<guest.image.memory.count;i++) {
         GMPage *page=&guest.image.memory.pages[i];
-        if(page->bytes && !nc_write(&guest.arena,(size_t)(page->address-guest.base),page->bytes,GM_PAGE_SIZE)) goto done;
+        if(!page->bytes) continue;
+        size_t offset=(size_t)(page->address-guest.base);
+        if (signed_image.active) {
+            // __TEXT pages after the rewritten range are already backed by the
+            // signed container: never overwrite validated pages. Only the
+            // rewritten range (original packed bytes) is staged onto anonymous
+            // pages, with the bounds check nc_write applies in the other backend.
+            if (offset>=signed_image.shadow_size && offset<signed_image.image.size) { signed_pages_skipped++; continue; }
+            if (offset>guest.arena.size || GM_PAGE_SIZE>guest.arena.size-offset) {
+                LOG("[signed-image] staged page %#llx lies outside the arena\n",(unsigned long long)page->address); goto done;
+            }
+            memcpy((char *)guest.arena.executable+offset,page->bytes,GM_PAGE_SIZE);
+        }
+        else if(!nc_write(&guest.arena,offset,page->bytes,GM_PAGE_SIZE)) goto done;
     }
+    if (signed_image.active) LOG("[signed-image] %zu staged executable pages left to the signed container\n",signed_pages_skipped);
     for(size_t i=0;i<guest.image.segment_count;i++) {
         GISegment *s=&guest.image.segments[i]; if(!s->prot) continue;
+        if (signed_image.active && (s->prot & GM_EXEC)) continue;  // remap already established RX
         if (mprotect((void *)(s->address+guest.slide),s->size,s->prot & ((s->prot&GM_EXEC)?~GM_WRITE:~0u))) {
             LOG("[native] segment protection failed: %s errno=%d\n",s->name,errno); goto done;
         }
     }
     {
+        // The unpacking initializer runs in both backends. With Local signing
+        // its code-writing operations verify the signed pages byte-for-byte
+        // instead of writing through an RW alias.
         uintptr_t initializer=guest.image.first_initializer+guest.slide;
         gm_destroy(&guest.image.memory);
         LOG("[native] entering original initializer preferred=%#llx native=%p\n",(unsigned long long)guest.image.first_initializer,(void *)initializer);
@@ -375,6 +600,32 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
         int argc=1;
         ((void (*)(int,const char **,const char **,const char **))initializer)(argc,argv,env,apple);
         LOG("[native] first original initializer returned\n"); ok=true;
+        if (signed_image.active && !signed_image.shadow)
+            LOG("[signed-image] no rewritten range: every __TEXT page was signed before the initializer; no unpack verification or restore needed\n");
+        if (signed_image.shadow) {
+            // Determinism evidence: the regenerated range must equal the signed
+            // container before its pages replace it. Any difference means the
+            // container came from another capture: stop before running more code.
+            size_t first=0, mismatched=si_count_mismatches(guest.arena.executable,signed_image.image.bytes,signed_image.shadow_size,&first);
+            if (mismatched) {
+                const unsigned char *regenerated=guest.arena.executable, *baked=signed_image.image.bytes;
+                LOG("[signed-image] FATAL: unpack verification: %zu differing bytes of %zu; first at preferred=%#llx regenerated=%02x baked=%02x\n",
+                    mismatched,(size_t)signed_image.shadow_size,(unsigned long long)(guest.base+first),regenerated[first],baked[first]);
+                LOG("[signed-image] FATAL: the container was built from a different capture of this executable; rebuild it. Guest entry blocked.\n");
+                ok=false; goto done;
+            }
+            LOG("[signed-image] unpack verification: regenerated shadow image identical to the signed container (%zu bytes)\n",
+                (size_t)signed_image.shadow_size);
+            signed_image.shadow=false;
+            // Restore the kernel-validated signed pages for execution.
+            vm_address_t target=(vm_address_t)guest.arena.executable;
+            vm_prot_t current=VM_PROT_READ|VM_PROT_EXECUTE,maximum=current;
+            kern_return_t result=vm_remap_new(mach_task_self(),&target,signed_image.shadow_size,0,
+                VM_FLAGS_FIXED|VM_FLAGS_OVERWRITE,mach_task_self(),(vm_address_t)signed_image.image.bytes,false,&current,&maximum,VM_INHERIT_NONE);
+            LOG("[signed-image] signed pages restored result=%d protection=%d\n",result,current);
+            if (result!=KERN_SUCCESS || target!=(vm_address_t)guest.arena.executable ||
+                !(current&VM_PROT_EXECUTE) || (current&VM_PROT_WRITE)) { LOG("[signed-image] restore failed\n"); ok=false; goto done; }
+        }
         if (full_startup) {
             // Apple's ObjC SPI explicitly supports images created outside dyld.
             // Invoke after the client's unpacking initializer restores its code.

@@ -86,6 +86,10 @@ for test in tunnel_manager developer_session; do
 done
 "${CC[@]}" runtime/NativeCodeMemory.c tests/test_native_memory.c -o build/emulation/test_native_memory
 build/emulation/test_native_memory
+"${CC[@]}" runtime/GuestMemory.c runtime/SignedImage.c tests/test_signed_image.c -o build/emulation/test_signed_image
+build/emulation/test_signed_image
+"${CC[@]}" -Ilauncher/App launcher/App/SignedFileProbe.c tests/test_signed_file_probe.c -o build/emulation/test_signed_file_probe
+build/emulation/test_signed_file_probe
 xcrun clang -fobjc-arc -Wall -Wextra -Werror -g -fsanitize=address,undefined \
     -Iruntime -Iauthorization -Iauthorization/App -framework Foundation \
     runtime/NativeCodeMemory.c authorization/Control/ArenaControl.c \
@@ -130,6 +134,7 @@ xcrun clang -fobjc-arc -Wall -Wextra -Werror -Wno-deprecated-declarations -g -fs
     -o build/emulation/test_library_container
 build/emulation/test_library_container build/emulation/container-fixture.metallib
 python3 tests/test_shader_translation.py
+python3 -m unittest tests.test_sign_guest_local
 
 "${CC[@]}" runtime/GuestMemory.c runtime/GuestImage.c runtime/GuestFixups.c tests/test_fixups.c -o build/emulation/test_fixups
 build/emulation/test_fixups
