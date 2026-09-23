@@ -9,6 +9,9 @@ settings:
     DEVELOPMENT_TEAM: ${DEVELOPMENT_TEAM}
     TOLKARA_BUNDLE_ID: ${TOLKARA_BUNDLE_ID}
     TOLKARA_KEYCHAIN_GROUP: ${TOLKARA_KEYCHAIN_GROUP}
+    # Optional execution-mode preselection (developer-service or local-signing),
+    # read once into Info.plist. Empty: the app asks on first launch.
+    TOLKARA_MODE: ${TOLKARA_MODE}
     CODE_SIGN_STYLE: Automatic
     CURRENT_PROJECT_VERSION: 1
     MARKETING_VERSION: "0.1"

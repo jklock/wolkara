@@ -11,6 +11,7 @@
 #import "LocalShaderProbe.h"
 #import "GuestModule.h"
 #import "CPUProbe.h"
+#import "ExecutionMode.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #include <errno.h>
 #include <stdint.h>
@@ -26,9 +27,12 @@
 @property(nonatomic, strong) UILabel *status;
 @property(nonatomic, strong) UIButton *importButton;
 @property(nonatomic) BOOL consumedImportArgument;
+// This launch's execution mode and where it came from (logged; never a path).
+@property(nonatomic) TKExecutionMode executionMode;
+@property(nonatomic,copy) NSString *executionModeSource;
 #if TOLKARA_INTEGRATED_AUTH
 @property(nonatomic,strong) TKLocalAuthorization *localAuthorization;
-@property(nonatomic,strong) UIButton *playButton;
+@property(nonatomic,strong) UIButton *playButton, *modeButton;
 @property(nonatomic) BOOL localGameAttempted;
 #endif
 @end
@@ -51,7 +55,103 @@ static NSString *ProfileString(NSString *key) {
     if(![value isKindOfClass:NSString.class] || ![value length] || [value hasPrefix:@"/"] || [[value pathComponents] containsObject:@".."]) return nil;
     return value;
 }
+#if TOLKARA_INTEGRATED_AUTH
 static NSString *AppDisplayName(void) { return ProfileString(@"name")?:@"imported app"; }
+#endif
+static const char *ModeIdentifier(TKExecutionMode mode) { return (TKExecutionModeIdentifier(mode)?:@"none").UTF8String; }
+// Files shows the app's Documents under its bundle name (Tolkara or TolkaraDiagnostics).
+static NSString *FilesFolderName(void) {
+    NSDictionary *info=NSBundle.mainBundle.infoDictionary; id name=info[@"CFBundleDisplayName"]?:info[@"CFBundleName"];
+    return [name isKindOfClass:NSString.class] && [name length] ? name : @"this app";
+}
+static NSString *LocalSigningNeeds(void) {
+    return [NSString stringWithFormat:@"Local signing needs its page container at %@ (visible in Files > On My iPad > %@ > LocalSigning). "
+        "Build it on a Mac with tools/build_signed_container.py and copy it there; see docs/BUILDING.md.",TKLocalSigningContainerDisplayPath(),FilesFolderName()];
+}
+// Show the folder in Files so the user can put the container there.
+static void PrepareLocalSigningFolder(void) {
+    [NSFileManager.defaultManager createDirectoryAtPath:TKLocalSigningContainerPath(NSHomeDirectory()).stringByDeletingLastPathComponent
+        withIntermediateDirectories:YES attributes:nil error:NULL];
+}
+
+// Explicit execution-mode choice: two equal buttons, neither highlighted nor
+// recommended. The first choice cannot be dismissed without choosing.
+@interface TKExecutionModeChooser : UIViewController
+- (instancetype)initWithApp:(NSString *)app current:(TKExecutionMode)current cancellable:(BOOL)cancellable chosen:(void (^)(TKExecutionMode))chosen;
+@end
+@implementation TKExecutionModeChooser {
+    NSString *_app; TKExecutionMode _current; BOOL _cancellable; void (^_chosen)(TKExecutionMode);
+}
+- (instancetype)initWithApp:(NSString *)app current:(TKExecutionMode)current cancellable:(BOOL)cancellable chosen:(void (^)(TKExecutionMode))chosen {
+    if (!(self=[super initWithNibName:nil bundle:nil])) return nil;
+    _app=app;_current=current;_cancellable=cancellable;_chosen=[chosen copy];
+    self.modalPresentationStyle=UIModalPresentationFormSheet;
+    self.modalInPresentation=!cancellable;
+    return self;
+}
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.view.backgroundColor=UIColor.systemBackgroundColor;
+    UILabel *title=[UILabel new], *line=[UILabel new];
+    title.text=[NSString stringWithFormat:@"How should Tolkara run %@?",_app];
+    title.font=[UIFont preferredFontForTextStyle:UIFontTextStyleTitle1];
+    line.text=@"Choose one. You can change it later with Execution mode.";
+    line.font=[UIFont preferredFontForTextStyle:UIFontTextStyleBody];
+    line.textColor=UIColor.secondaryLabelColor;
+    for (UILabel *label in @[title,line]) { label.numberOfLines=0; label.adjustsFontForContentSizeCategory=YES; }
+    UIStackView *stack=[[UIStackView alloc] initWithArrangedSubviews:@[title,line]];
+    stack.axis=UILayoutConstraintAxisVertical; stack.spacing=16;
+    [stack setCustomSpacing:28 afterView:line];
+    __weak TKExecutionModeChooser *weakSelf=self;
+    for (NSNumber *each in @[@(TKExecutionModeDeveloperService),@(TKExecutionModeLocalSigning)]) {
+        TKExecutionMode mode=each.integerValue; NSString *unavailable=nil;
+        BOOL available=TKExecutionModeAvailable(mode,&unavailable);
+        NSString *subtitle=TKExecutionModeSummary(mode);
+        if (_cancellable && mode==_current) subtitle=[@"Current. " stringByAppendingString:subtitle];
+        if (!available) subtitle=[subtitle stringByAppendingFormat:@"\n%@",unavailable];
+        UIButtonConfiguration *configuration=UIButtonConfiguration.grayButtonConfiguration;
+        configuration.title=TKExecutionModeName(mode); configuration.subtitle=subtitle;
+        configuration.titleAlignment=UIButtonConfigurationTitleAlignmentLeading;
+        configuration.titlePadding=8;
+        configuration.contentInsets=NSDirectionalEdgeInsetsMake(20,20,20,20);
+        configuration.titleTextAttributesTransformer=^NSDictionary<NSAttributedStringKey,id> *(NSDictionary<NSAttributedStringKey,id> *attributes) {
+            NSMutableDictionary *result=attributes.mutableCopy; result[NSFontAttributeName]=[UIFont preferredFontForTextStyle:UIFontTextStyleTitle2]; return result;
+        };
+        configuration.subtitleTextAttributesTransformer=^NSDictionary<NSAttributedStringKey,id> *(NSDictionary<NSAttributedStringKey,id> *attributes) {
+            NSMutableDictionary *result=attributes.mutableCopy; result[NSFontAttributeName]=[UIFont preferredFontForTextStyle:UIFontTextStyleBody]; return result;
+        };
+        UIButton *button=[UIButton buttonWithConfiguration:configuration primaryAction:[UIAction actionWithHandler:^(UIAction *action) {
+            (void)action;[weakSelf choose:mode];
+        }]];
+        button.enabled=available;
+        [stack addArrangedSubview:button];
+    }
+    if (_cancellable) {
+        UIButtonConfiguration *configuration=UIButtonConfiguration.plainButtonConfiguration; configuration.title=@"Cancel";
+        [stack addArrangedSubview:[UIButton buttonWithConfiguration:configuration primaryAction:[UIAction actionWithHandler:^(UIAction *action) {
+            (void)action;[weakSelf.presentingViewController dismissViewControllerAnimated:YES completion:nil];
+        }]]];
+    }
+    UIScrollView *scroll=[UIScrollView new];
+    scroll.translatesAutoresizingMaskIntoConstraints=NO; stack.translatesAutoresizingMaskIntoConstraints=NO;
+    [self.view addSubview:scroll]; [scroll addSubview:stack];
+    UILayoutGuide *safe=self.view.safeAreaLayoutGuide;
+    [NSLayoutConstraint activateConstraints:@[
+        [scroll.topAnchor constraintEqualToAnchor:safe.topAnchor],
+        [scroll.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor],
+        [scroll.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor],
+        [scroll.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor],
+        [stack.topAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.topAnchor constant:32],
+        [stack.bottomAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.bottomAnchor constant:-32],
+        [stack.leadingAnchor constraintEqualToAnchor:scroll.frameLayoutGuide.leadingAnchor constant:32],
+        [stack.trailingAnchor constraintEqualToAnchor:scroll.frameLayoutGuide.trailingAnchor constant:-32],
+    ]];
+}
+- (void)choose:(TKExecutionMode)mode {
+    if (_chosen) _chosen(mode);
+    [self.presentingViewController dismissViewControllerAnimated:YES completion:nil];
+}
+@end
 
 @implementation AKHostSceneDelegate
 - (UISceneWindowingControlStyle *)preferredWindowingControlStyleForScene:(UIWindowScene *)scene API_AVAILABLE(ios(26.0)) {
@@ -62,6 +162,15 @@ static NSString *AppDisplayName(void) { return ProfileString(@"name")?:@"importe
     static BOOL started;
     if (started) return;
     started = YES;
+    // --execution-mode=<id> > saved choice > TOLKARA_MODE preselection > ask.
+    NSString *source=nil;
+    self.executionMode=TKExecutionModeResolve(NSProcessInfo.processInfo.arguments,NSUserDefaults.standardUserDefaults,
+        [NSBundle.mainBundle objectForInfoDictionaryKey:TKExecutionModePreselectionKey],&source);
+    self.executionModeSource=source;
+    fprintf(stderr,"[host] execution mode=%s source=%s\n",ModeIdentifier(self.executionMode),source.UTF8String);
+    // Any Local signing launch makes the container folder, so a fresh install
+    // can receive the container (tools/install.sh launches once if needed).
+    if (self.executionMode==TKExecutionModeLocalSigning) PrepareLocalSigningFolder();
     self.window = [[UIWindow alloc] initWithWindowScene:(UIWindowScene *)scene];
     UIViewController *controller = [UIViewController new];
     controller.view.backgroundColor = UIColor.systemBackgroundColor;
@@ -89,17 +198,25 @@ static NSString *AppDisplayName(void) { return ProfileString(@"name")?:@"importe
     self.localAuthorization=[TKLocalAuthorization new];
     self.playButton=[UIButton buttonWithType:UIButtonTypeSystem];
     [self.playButton setTitle:[@"Play " stringByAppendingString:AppDisplayName()] forState:UIControlStateNormal];
-    [self.playButton addTarget:self action:@selector(launchLocalGame) forControlEvents:UIControlEventTouchUpInside];
+    [self.playButton addTarget:self action:@selector(play) forControlEvents:UIControlEventTouchUpInside];
     self.playButton.translatesAutoresizingMaskIntoConstraints=NO;
     self.playButton.hidden=YES;
     [controller.view addSubview:self.playButton];
+    self.modeButton=[UIButton buttonWithType:UIButtonTypeSystem];
+    [self.modeButton setTitle:@"Execution mode…" forState:UIControlStateNormal];
+    [self.modeButton addTarget:self action:@selector(changeExecutionMode) forControlEvents:UIControlEventTouchUpInside];
+    self.modeButton.translatesAutoresizingMaskIntoConstraints=NO;
+    self.modeButton.hidden=YES;
+    [controller.view addSubview:self.modeButton];
     [NSLayoutConstraint activateConstraints:@[
         [self.playButton.topAnchor constraintEqualToAnchor:self.importButton.bottomAnchor constant:24],
         [self.playButton.centerXAnchor constraintEqualToAnchor:controller.view.centerXAnchor],
+        [self.modeButton.topAnchor constraintEqualToAnchor:self.playButton.bottomAnchor constant:16],
+        [self.modeButton.centerXAnchor constraintEqualToAnchor:controller.view.centerXAnchor],
     ]];
     UIButton *setup=[UIButton buttonWithType:UIButtonTypeSystem];
-    [setup setTitle:@"Local launch setup…" forState:UIControlStateNormal];
-    [setup addTarget:self action:@selector(localLaunchSetup) forControlEvents:UIControlEventTouchUpInside];
+    [setup setTitle:@"Developer service diagnostics…" forState:UIControlStateNormal];
+    [setup addTarget:self action:@selector(developerServiceDiagnostics) forControlEvents:UIControlEventTouchUpInside];
     setup.translatesAutoresizingMaskIntoConstraints=NO;
     [controller.view addSubview:setup];
     [NSLayoutConstraint activateConstraints:@[
@@ -113,6 +230,70 @@ static NSString *AppDisplayName(void) { return ProfileString(@"name")?:@"importe
     [self performSelector:@selector(startGuest) withObject:nil afterDelay:0];
 }
 #if TOLKARA_INTEGRATED_AUTH
+// Tolkara's main screen: the app, its execution mode and Play. Without a mode
+// the user must choose one first; nothing is chosen for them.
+- (void)showMainScreen {
+    NSString *source=self.executionModeSource;
+    if ([source hasPrefix:TKExecutionModeSourceInvalidArgument]) {
+        self.status.text=[NSString stringWithFormat:@"%@\nCannot start: %@.",AppDisplayName(),source];return;
+    }
+    NSString *text=[NSString stringWithFormat:@"%@\nExecution mode: %@",AppDisplayName(),TKExecutionModeName(self.executionMode)?:@"not chosen"];
+    if ([source isEqualToString:TKExecutionModeSourceArgument]) text=[text stringByAppendingString:@" (this launch only)"];
+    if (TKExecutionModeSourceIsInvalid(source)) text=[text stringByAppendingFormat:@"\nNot preselected: %@.",source];
+    if (self.executionMode==TKExecutionModeLocalSigning) PrepareLocalSigningFolder();
+    // One startup attempt per process: after it, only a restart can play or change mode.
+    if (self.localGameAttempted) {
+        self.status.text=[text stringByAppendingString:@"\nClose and reopen the app to start a new session."];
+        self.playButton.hidden=YES; self.modeButton.hidden=YES; return;
+    }
+    self.status.text=text;
+    self.playButton.hidden=!self.executionMode;
+    // Always reachable: if the chooser below cannot be presented, this still is.
+    self.modeButton.hidden=NO;
+    if (!self.executionMode) [self chooseExecutionMode:NO];
+}
+- (void)chooseExecutionMode:(BOOL)cancellable {
+    if ([self.window.rootViewController.presentedViewController isKindOfClass:TKExecutionModeChooser.class]) return;
+    __weak AKHostSceneDelegate *weakSelf=self;
+    TKExecutionModeChooser *chooser=[[TKExecutionModeChooser alloc] initWithApp:ProfileString(@"name")?:@"the imported app"
+        current:self.executionMode cancellable:cancellable chosen:^(TKExecutionMode mode) {
+        TKExecutionModeSave(NSUserDefaults.standardUserDefaults,mode);
+        weakSelf.executionMode=mode;weakSelf.executionModeSource=@"chosen";
+        [weakSelf showMainScreen];
+    }];
+    [self.window.rootViewController presentViewController:chooser animated:YES completion:nil];
+}
+// Cancellable once a mode is chosen; the first choice cannot be skipped.
+- (void)changeExecutionMode { [self chooseExecutionMode:self.executionMode!=TKExecutionModeNone]; }
+// Play in the chosen mode. Either way, a process gets one startup attempt.
+- (void)play {
+    NSString *unavailable=nil;
+    if (!self.executionMode) { [self chooseExecutionMode:NO];return; }
+    if (!TKExecutionModeAvailable(self.executionMode,&unavailable)) { self.status.text=unavailable;return; }
+    if (self.executionMode==TKExecutionModeLocalSigning) { [self launchLocalSigning];return; }
+    self.modeButton.hidden=YES;
+    [self launchLocalGame];
+}
+// Local signing: the page container holds the guest's final code pages, signed
+// with the user's own identity. Without it, say what is needed; Play stays.
+- (void)launchLocalSigning {
+    if(self.localGameAttempted) {self.status.text=@"Close and reopen the app to start a new session.";return;}
+    NSString *container=TKLocalSigningContainerPath(NSHomeDirectory());
+    if(![NSFileManager.defaultManager fileExistsAtPath:container]) {
+        PrepareLocalSigningFolder();
+        self.status.text=[NSString stringWithFormat:@"%@\nExecution mode: Local signing\n\n%@",AppDisplayName(),LocalSigningNeeds()];
+        return;
+    }
+    self.localGameAttempted=YES;
+    // As for Developer service: an uncached shader waits instead of failing.
+    setenv("TOLKARA_WAIT_FOR_MISSING_SHADERS","1",1);
+    self.playButton.hidden=YES;self.importButton.hidden=YES;self.modeButton.hidden=YES;
+    UIApplication.sharedApplication.idleTimerDisabled=YES;
+    self.status.text=[NSString stringWithFormat:@"Starting %@…\nKeep the app open. Startup currently takes a few minutes.",AppDisplayName()];
+    // Guest main must enter from a timer callout, never a dispatch block.
+    [self performSelector:@selector(startSignedGame:) withObject:container afterDelay:0];
+}
+- (void)startSignedGame:(NSString *)container { [self runNativeGame:YES container:container]; }
 - (void)launchLocalGame {
     if(self.localGameAttempted) {self.status.text=@"Close and reopen the app to start a new session.";return;}
     self.localGameAttempted=YES;
@@ -136,10 +317,10 @@ static NSString *AppDisplayName(void) { return ProfileString(@"name")?:@"importe
         [self performSelector:@selector(startLocalGame) withObject:nil afterDelay:0];
     }];
 }
-- (void)startLocalGame { [self runNativeGame:YES]; }
-- (void)localLaunchSetup {
-    UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Local launch development"
-        message:@"The local route connects this app to the iPad’s development service. New shader translation is still under development."
+- (void)startLocalGame { [self runNativeGame:YES container:nil]; }
+- (void)developerServiceDiagnostics {
+    UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Developer service diagnostics"
+        message:@"The local route connects this app to the iPad’s developer service. New shader translation is still under development."
         preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"Check direct access" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         (void)action;[TKLocalAuthorization probeDirectAccess:^(NSString *result) {self.status.text=result;}];
@@ -188,18 +369,78 @@ static NSString *AppDisplayName(void) { return ProfileString(@"name")?:@"importe
         });
     });
 }
-- (void)runNativeGame:(BOOL)fullStartup {
-    NSArray<NSString *> *arguments=NSProcessInfo.processInfo.arguments;
-    self.importButton.hidden=YES;
-    UIApplication.sharedApplication.idleTimerDisabled = YES;
+// Documents/native-guest.log, this launch's runtime log. stdout and stderr
+// follow it; the run id and the execution mode come first, never a path.
+- (FILE *)openRuntimeLog {
     NSString *directory = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
-    NSString *logPath = [directory stringByAppendingPathComponent:@"native-guest.log"];
-    FILE *log = fopen(logPath.fileSystemRepresentation, "w");
-    if (!log) { self.status.text = @"Cannot open native runtime log."; return; }
+    FILE *log = fopen([directory stringByAppendingPathComponent:@"native-guest.log"].fileSystemRepresentation, "w");
+    if (!log) return NULL;
     dup2(fileno(log), STDERR_FILENO);
     dup2(fileno(log), STDOUT_FILENO);
     setvbuf(stdout, NULL, _IOLBF, 0);
-    for (NSString *argument in arguments) if ([argument hasPrefix:@"--probe-run-id="]) fprintf(log,"%s\n",argument.UTF8String);
+    for (NSString *argument in NSProcessInfo.processInfo.arguments) if ([argument hasPrefix:@"--probe-run-id="]) fprintf(log,"%s\n",argument.UTF8String);
+    fprintf(log,"[host] execution mode=%s source=%s\n",ModeIdentifier(self.executionMode),self.executionModeSource.UTF8String); fflush(log);
+    return log;
+}
+// Refuse a native startup before it begins; the runtime log says why.
+- (void)refuseNativeGame:(NSString *)reason {
+    FILE *log=[self openRuntimeLog];
+    if (log) { fprintf(log,"[host] native startup refused: %s\n",reason.UTF8String); fclose(log); }
+    self.status.text=reason;
+}
+// Only an unusable --execution-mode stops a diagnostic launch. An invalid
+// TOLKARA_MODE preselection just means no mode: the launch flags decide.
+- (BOOL)refuseInvalidModeArgument {
+    if (![self.executionModeSource hasPrefix:TKExecutionModeSourceInvalidArgument]) return NO;
+    [self refuseNativeGame:[NSString stringWithFormat:@"Cannot start: %@.",self.executionModeSource]];
+    return YES;
+}
+// A launch flag that decides the mode by itself. It replaces a saved choice or
+// a preselection (the log keeps what it replaced), but a --execution-mode that
+// says otherwise is refused: two explicit flags that disagree are not settled.
+- (BOOL)forceExecutionMode:(TKExecutionMode)mode by:(NSString *)flag {
+    NSString *source=self.executionModeSource;
+    if (self.executionMode!=mode && [source isEqualToString:TKExecutionModeSourceArgument]) {
+        [self refuseNativeGame:[NSString stringWithFormat:@"--execution-mode=%s conflicts with %@, which uses %@. Pass only one of them.",
+            ModeIdentifier(self.executionMode),flag,TKExecutionModeName(mode)]];
+        return NO;
+    }
+    self.executionModeSource=self.executionMode!=mode && ![source isEqualToString:TKExecutionModeSourceNone] ?
+        [NSString stringWithFormat:@"%@ (overrides %s from %@)",flag,ModeIdentifier(self.executionMode),source] : flag;
+    self.executionMode=mode;
+    fprintf(stderr,"[host] execution mode=%s source=%s\n",ModeIdentifier(mode),self.executionModeSource.UTF8String);
+    return YES;
+}
+// --native-initializer / --native-startup: the container from --signed-image=
+// if given, else Local signing's default container when that is the mode,
+// else the Developer-service/debugger path exactly as before modes existed.
+- (void)startNativeDiagnostic:(BOOL)fullStartup {
+    if ([self refuseInvalidModeArgument]) return;
+    NSString *problem=nil, *container=TKSignedImagePath(NSProcessInfo.processInfo.arguments,NSHomeDirectory(),&problem);
+    if (problem) { [self refuseNativeGame:[NSString stringWithFormat:@"--signed-image rejected: %@.",problem]];return; }
+    if (container) { if (![self forceExecutionMode:TKExecutionModeLocalSigning by:@"--signed-image"]) return; }
+    else if (self.executionMode==TKExecutionModeLocalSigning) {
+        container=TKLocalSigningContainerPath(NSHomeDirectory());
+        if (![NSFileManager.defaultManager fileExistsAtPath:container]) {
+            PrepareLocalSigningFolder();
+            // A saved choice or preselection is shared with the Tolkara app; say how to override it.
+            NSString *reason=LocalSigningNeeds();
+            if (![self.executionModeSource isEqualToString:TKExecutionModeSourceArgument])
+                reason=[reason stringByAppendingFormat:@" (Local signing is the %@ execution mode; pass --execution-mode=developer-service for the debugger path.)",
+                    [self.executionModeSource isEqualToString:TKExecutionModeSourceSaved]?@"saved":@"preselected"];
+            [self refuseNativeGame:reason];return;
+        }
+    }
+    [self runNativeGame:fullStartup container:container];
+}
+// container: Local signing's validated page container, or nil for the
+// Developer-service/debugger path. Callers choose it; this only applies it.
+- (void)runNativeGame:(BOOL)fullStartup container:(NSString *)container {
+    self.importButton.hidden=YES;
+    UIApplication.sharedApplication.idleTimerDisabled = YES;
+    NSString *directory = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+    FILE *log = [self openRuntimeLog];
+    if (!log) { self.status.text = @"Cannot open native runtime log."; UIApplication.sharedApplication.idleTimerDisabled=NO; return; }
     NSString *path = guest_module_selected(self.moduleRoot,NULL);
     NSString *map = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"Guest/libraries.json"];
     // Executable selection is identical for both backends: the runtime rejects a
@@ -211,7 +452,7 @@ static NSString *AppDisplayName(void) { return ProfileString(@"name")?:@"importe
         if (original && [NSFileManager.defaultManager fileExistsAtPath:original]) {
             path = original;
             if (chdir(game.fileSystemRepresentation)) fprintf(log,"[host] app working directory failed: %s\n",strerror(errno));
-            else fprintf(log,"[host] app working directory=%s\n",game.fileSystemRepresentation);
+            else fprintf(log,"[host] app working directory=%s\n",TKHomeDisplayPath(game,NSHomeDirectory()).UTF8String);
         }
     }
     if (!path) {
@@ -220,56 +461,28 @@ static NSString *AppDisplayName(void) { return ProfileString(@"name")?:@"importe
         self.importButton.hidden=NO;
         return;
     }
-    // Local signing backend. Accept exactly one non-empty container, resolve a
-    // relative value under the app home, and require the standardized path to
-    // stay inside the home (no '..' escape, no absolute path elsewhere) so the
-    // log and the runtime only ever see a path this app owns.
-    NSArray<NSString *> *signedImageArguments=[arguments filteredArrayUsingPredicate:
-        [NSPredicate predicateWithBlock:^BOOL(NSString *argument,NSDictionary *bindings){
-            (void)bindings; return [argument hasPrefix:@"--signed-image="]; }]];
-    if (signedImageArguments.count) {
-        if (signedImageArguments.count>1) {
-            fprintf(log,"[host] signed-image rejected: --signed-image given %lu times\n",(unsigned long)signedImageArguments.count); fflush(log);
-            self.status.text=@"Pass --signed-image at most once.";
-            UIApplication.sharedApplication.idleTimerDisabled=NO;
-            return;
-        }
-        NSString *value=[signedImageArguments.firstObject substringFromIndex:15];
-        if(!value.length) {
-            fprintf(log,"[host] signed-image rejected: empty container path\n"); fflush(log);
-            self.status.text=@"Signed-image container path is empty.";
-            UIApplication.sharedApplication.idleTimerDisabled=NO;
-            return;
-        }
-        // Reject '..' components up front: -stringByStandardizingPath may leave
-        // them unresolved when a preceding component is a symlink, so the prefix
-        // check below cannot be relied on alone to keep the path inside home.
-        if([value.pathComponents containsObject:@".."]) {
-            fprintf(log,"[host] signed-image rejected: container path contains '..'\n"); fflush(log);
-            self.status.text=@"Signed-image container path must not contain '..'.";
-            UIApplication.sharedApplication.idleTimerDisabled=NO;
-            return;
-        }
-        NSString *home=NSHomeDirectory().stringByStandardizingPath;
-        NSString *homePrefix=[home stringByAppendingString:@"/"];
-        NSString *container=(value.isAbsolutePath?value:[home stringByAppendingPathComponent:value]).stringByStandardizingPath;
-        if(![container isEqualToString:home] && ![container hasPrefix:homePrefix]) {
-            fprintf(log,"[host] signed-image rejected: container escapes the app home\n"); fflush(log);
-            self.status.text=@"Signed-image container must stay inside the app home.";
-            UIApplication.sharedApplication.idleTimerDisabled=NO;
-            return;
-        }
-        NSString *shown=[container hasPrefix:homePrefix]?[@"~/" stringByAppendingString:[container substringFromIndex:homePrefix.length]]:@"~";
+    // Local signing: the runtime validates the container against this
+    // executable and refuses it after Developer service was selected.
+    if (container) {
+        NSString *shown=TKHomeDisplayPath(container,NSHomeDirectory());
         char reason[256]={0};
         if(!ng_use_signed_image(container.fileSystemRepresentation,reason,sizeof reason)) {
             fprintf(log,"[host] signed-image rejected: %s (container=%s)\n",reason[0]?reason:"backend unavailable",shown.UTF8String); fflush(log);
-            self.status.text=[NSString stringWithFormat:@"Signed-image backend unavailable: %s",reason[0]?reason:"see runtime log"];
+            // One startup attempt per process, as for Developer service. Only
+            // Play (Tolkara's main screen) has an Execution mode chooser.
+            NSString *retry=@"Close and reopen the app to retry.";
+#if TOLKARA_INTEGRATED_AUTH
+            if(self.localGameAttempted) retry=@"Close and reopen the app to retry or to change the execution mode.";
+#endif
+            self.status.text=[NSString stringWithFormat:@"Local signing could not start: %s\n%@",reason[0]?reason:"see runtime log",retry];
             UIApplication.sharedApplication.idleTimerDisabled=NO;
             return;
         }
         fprintf(log,"[host] signed-image container=%s\n",shown.UTF8String); fflush(log);
     }
     BOOL ok = ng_initialize(path.fileSystemRepresentation, NSBundle.mainBundle.privateFrameworksPath.fileSystemRepresentation, map.fileSystemRepresentation, log, fullStartup);
+    // The outcome as the host saw it (tools/run.sh requires "returned").
+    fprintf(log,"[host] native %s %s\n",fullStartup?"startup":"first initializer",ok?"returned":"stopped"); fflush(log);
     self.status.text = ok ? (fullStartup ? @"App closed." : @"Original client first initializer returned.") : @"Native startup stopped. See runtime log.";
     UIApplication.sharedApplication.idleTimerDisabled = NO;
     // Runtime callbacks retain this log for the life of the guest.
@@ -530,14 +743,27 @@ static NSString *AppDisplayName(void) { return ProfileString(@"name")?:@"importe
         return;
     }
 #if TOLKARA_INTEGRATED_AUTH
-    if([arguments containsObject:@"--local-game-startup"]) { [self launchLocalGame];return; }
-    if(arguments.count==1 && [NSFileManager.defaultManager fileExistsAtPath:[NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"Guest/libraries.json"]]) {
-        self.status.text=[AppDisplayName() stringByAppendingString:@"\nReady for local launch."];
-        self.playButton.hidden=NO;return;
+    if([arguments containsObject:@"--local-game-startup"]) {
+        // Always Developer service: it replaces a saved choice or preselection
+        // (logged); an unusable or contradicting --execution-mode and any
+        // --signed-image are refused.
+        if([self refuseInvalidModeArgument] || ![self forceExecutionMode:TKExecutionModeDeveloperService by:@"--local-game-startup"]) return;
+        NSString *problem=nil;
+        if(TKSignedImagePath(arguments,NSHomeDirectory(),&problem) || problem) {
+            [self refuseNativeGame:@"--signed-image is a Local signing container, but --local-game-startup always uses Developer service. Pass only one of them."];
+            return;
+        }
+        [self launchLocalGame];return;
+    }
+    // A plain launch (at most a per-launch --execution-mode) shows the main screen.
+    BOOL plain=YES;
+    for(NSUInteger i=1;i<arguments.count;i++) if(![arguments[i] hasPrefix:TKExecutionModeArgumentPrefix]) plain=NO;
+    if(plain && [NSFileManager.defaultManager fileExistsAtPath:[NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"Guest/libraries.json"]]) {
+        [self showMainScreen];return;
     }
 #endif
     if ([arguments containsObject:@"--native-initializer"] || [arguments containsObject:@"--native-startup"]) {
-        [self runNativeGame:[arguments containsObject:@"--native-startup"]];return;
+        [self startNativeDiagnostic:[arguments containsObject:@"--native-startup"]];return;
     }
     NSString *runtime = [NSBundle.mainBundle objectForInfoDictionaryKey:@"TolkaraGuestRuntime"];
     if ([runtime isEqualToString:@"emulated"]) {

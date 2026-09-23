@@ -3,8 +3,14 @@
 # Values come from the ignored local.env (see local.env.example); none are committed.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-[ -f local.env ] && { set -a; . ./local.env; set +a; }
+. tools/localenv.sh; tolkara_load_env
 export DEVELOPMENT_TEAM=${DEVELOPMENT_TEAM:-}
 export TOLKARA_BUNDLE_ID=${TOLKARA_BUNDLE_ID:-local.tolkara.app}
 export TOLKARA_KEYCHAIN_GROUP=${TOLKARA_KEYCHAIN_GROUP:-local.tolkara.authorization}
+# Optional execution-mode preselection; empty means the app asks on first launch.
+export TOLKARA_MODE=${TOLKARA_MODE:-}
+case "$TOLKARA_MODE" in
+    ""|developer-service|local-signing) ;;
+    *) echo "TOLKARA_MODE must be empty, developer-service or local-signing (see local.env.example)." >&2; exit 2;;
+esac
 xcodegen generate -q "$@"

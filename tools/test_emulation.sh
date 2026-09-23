@@ -117,6 +117,12 @@ xcrun clang -fobjc-arc -Wno-deprecated-declarations -Wall -Wextra -Werror \
     runtime/GuestModule.m runtime/GuestMemory.c runtime/GuestImage.c tests/test_guest_module.m \
     -o build/emulation/test_guest_module
 build/emulation/test_guest_module build/emulation/module_fixture
+for auth in 0 1; do   # TolkaraDiagnostics and Tolkara (TOLKARA_INTEGRATED_AUTH)
+    xcrun clang -fobjc-arc -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined \
+        -DTOLKARA_INTEGRATED_AUTH=$auth -Ilauncher/App -framework Foundation \
+        launcher/App/ExecutionMode.m tests/test_execution_mode.m -o "build/emulation/test_execution_mode_$auth"
+    "build/emulation/test_execution_mode_$auth"
+done
 python3 tests/test_publish.py
 python3 tests/test_arena_publish.py
 python3 tests/test_nib.py
