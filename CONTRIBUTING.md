@@ -9,10 +9,11 @@ These are not negotiable, because they are what keeps the project a
 compatibility layer:
 
 - Never commit third-party application code, assets, shaders, captured memory,
-  or anything copied out of macOS or iPadOS. Tests use our own synthetic
-  fixtures from `testguest/` and `tests/`.
-- Never patch, re-sign or repackage an application's executable. Only Tolkara's
-  own code is signed.
+  page containers, or anything copied out of macOS or iPadOS. Tests use our own
+  synthetic fixtures from `testguest/` and `tests/`.
+- Never patch, re-sign or repackage an application's executable. Tolkara's own
+  code is signed. With Local signing, each user builds and signs their own page
+  container on their own machine, with their own identity, for their own iPad.
 - No features that read or change a running application's memory beyond loading
   it, no input automation, and no workarounds for anti-cheat, licence or
   integrity checks. See "Policy" in the [README](README.md).

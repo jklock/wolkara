@@ -3,13 +3,15 @@
 > Engineering notes written during bring-up, kept for their protocol detail.
 > They include historical intermediate states. `build/*.log` and `logs/` paths
 > are local evidence files on the author's machine and are not in the repository.
-> For a how-to, read [BUILDING.md](BUILDING.md) first.
+> For a how-to, read [BUILDING.md](BUILDING.md) first. This is the
+> **Developer service** execution mode; the other mode, Local signing, is
+> described in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 Tolkara is one installed app. It does not rely on an external JIT-enabler app
 or an embedded third-party JIT library: the app bundles its own packet-tunnel
 extension and speaks to the iPad's own developer services over a local route.
-The imported macOS executable stays unchanged data outside the signed app and
-is never signed.
+The imported macOS executable stays unchanged data outside the signed app; in
+this mode nothing of it is ever signed.
 
 ## Current physical status (September 20)
 
@@ -41,9 +43,10 @@ unknown status after helper loss remains uncertain and preserves the arena.
 - Our bounded packet routine checks IPv4/header/total lengths and exact address
   pairs. ASan/UBSan tests verify payload and IP/TCP checksum preservation,
   unrelated-traffic rejection and malformed input bounds.
-- Local launch setup UI can check TCP reachability of 127.0.0.1:49152 or request/
-  stop our optional route. Starting it is an explicit action that may require
-  iPadOS's VPN configuration consent. It never starts automatically at launch.
+- The Developer service diagnostics UI (formerly "Local launch setup") can check
+  TCP reachability of 127.0.0.1:49152 or request or stop our optional route.
+  Starting it is an explicit action that may require iPadOS's VPN
+  configuration consent. It never starts automatically at launch.
 - `--direct-authorization-probe` runs the same bounded, credentials-free TCP check
   and writes Documents/direct-authorization-probe.txt. A failed connection only
   rejects that one endpoint at that moment. A successful connection proves

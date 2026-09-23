@@ -24,9 +24,9 @@ from a fresh clone to a running application.
 3. On the iPad: Settings > Privacy & Security > **Developer Mode** > on. The
    iPad restarts; confirm the prompt after it boots.
 
-Tolkara depends on Developer Mode. iPadOS only lets a development-signed app
-execute memory it did not sign after the device's developer service has
-prepared it, and that service exists only in Developer Mode.
+Tolkara depends on Developer Mode: iPadOS runs development-signed apps only in
+Developer Mode, and the Developer service execution mode uses the developer
+service that exists only there.
 
 ## 2. Configure your own signing
 
@@ -52,6 +52,8 @@ xcrun devicectl list devices
 - `GUEST_EXE`: the executable inside the macOS app you own, for example
   `/Applications/Example.app/Contents/MacOS/Example`.
 - `TOLKARA_PROFILE` (optional): a profile from [`profiles/`](../profiles).
+- `TOLKARA_MODE` (optional): `developer-service` or `local-signing`, see step 4.
+  Without it the app asks on first launch.
 
 Xcode signs automatically (`CODE_SIGN_STYLE: Automatic`). The first build
 registers the bundle IDs and the iPad with your team and creates the profiles.
@@ -69,12 +71,21 @@ This generates the Xcode project, inspects which macOS frameworks and symbols
 your executable imports, builds and signs **only Tolkara's own code** (the app,
 its tunnel extension and the translation libraries), and installs the app. Your
 executable is read for analysis; it is not copied into the app, modified or
-signed.
+signed. (Local signing signs a separate page container derived from it; see
+step 4.)
 
 On first launch iPadOS may ask you to trust your developer certificate:
 Settings > General > VPN & Device Management.
 
-## 4. Enrol local authorization (once)
+## 4. Set up your execution mode
+
+Tolkara runs the application's code in one of two ways; the README's
+[Two ways to run code](../README.md#two-ways-to-run-code) compares them. Choose
+one. The app asks on first launch unless `TOLKARA_MODE` preselected a mode, and
+**Execution mode…** in the app changes it later. You only need to set up the
+mode you use.
+
+### Developer service: enrol local authorization (once)
 
 ```bash
 tools/enroll.sh
@@ -99,6 +110,39 @@ provisioning profile expires or you change the bundle ID or Keychain group.
 > command. If it fails, the individual steps are readable in the script and
 > each prints its own diagnosis.
 
+### Local signing: build the page container
+
+With `TOLKARA_MODE=local-signing` in `local.env`, `tools/install.sh` does this
+after installing. By hand:
+
+```bash
+python3 tools/build_signed_container.py
+```
+
+It reads `GUEST_EXE`, `TOLKARA_CAPTURE`, `DEVELOPMENT_TEAM` and `SIGN_IDENTITY`
+from the environment or `local.env`, puts the executable's `__TEXT` pages into
+`build/signed-image/page-container.dylib`, signs it with your Apple Development identity and verifies the signature. The
+first signature asks macOS whether the signing tool may use your signing key:
+choose **Always Allow**. The approval belongs to that build of the tool, so it
+is asked again after the tool is rebuilt. Signing on the iPad itself is not
+implemented yet.
+
+Copy the container into the Tolkara app's Documents as
+`LocalSigning/page-container.dylib` (in the Files app: On My iPad > Tolkara >
+LocalSigning). `tools/install.sh` with `TOLKARA_MODE=local-signing` copies it
+for you.
+
+Without `--capture`, the container holds the executable's code as it is on
+disk. That is right only for applications that do not rewrite their own code at
+launch. For one that does, such as the tested World of Warcraft client, the
+container must be built from a capture of the final code pages
+(`--capture FILE`, or `TOLKARA_CAPTURE` in `local.env`), and Tolkara cannot
+produce that capture yet. A container that does not match the executable, or
+what its own startup code produces, stops the launch before any more
+application code runs; the app may close, and `Documents/native-guest.log` says
+why (`[signed-image] FATAL …` or a rejection). Rebuild the container whenever
+the application is updated.
+
 ## 5. Copy your application's files
 
 The application's files live in the Tolkara app's Documents folder on the iPad,
@@ -114,8 +158,9 @@ and write a profile: see [profiles/README.md](../profiles/README.md).
 
 ## 6. Run
 
-Open Tolkara on the iPad and press **Play**. Keep the app in the foreground
-while it prepares memory (currently about 80 seconds). Runtime output goes to
+Open Tolkara on the iPad, choose the execution mode if it asks, and press
+**Play**. With Developer service, keep the app in the foreground while it
+prepares memory (currently about 80 seconds). Runtime output goes to
 `Documents/native-guest.log`.
 
 ## Developing without a device
@@ -130,7 +175,16 @@ tools/run.sh sim
 
 The first runs the sanitizer regression suite on the Mac. The second builds the
 `TolkaraDiagnostics` scheme and runs the loader diagnostics in the simulator
-against a synthetic test application from [`testguest/`](../testguest).
+against a synthetic test application from [`testguest/`](../testguest). To try
+Local signing in the simulator:
+
+```bash
+TOLKARA_MODE=local-signing tools/run.sh sim
+```
+
+It builds an ad-hoc signed page container for the test application (or for
+`GUEST_EXE` if `local.env` sets it) and runs its first initializer through
+Local signing.
 Simulator builds need no signing team. A simulator pass says nothing about
 Metal behaviour or native execution on a real iPad.
 
@@ -144,7 +198,7 @@ tools/generate.sh && xcodebuild -project Tolkara.xcodeproj -scheme Tolkara -sdk 
 
 - Never attach a debugger (Xcode, lldb) to the app once application code is
   running. Tolkara deliberately runs with the debugger detached.
-- Deleting the app from the iPad deletes the application files you copied and
-  the enrolment. Installing over it keeps both.
-- Do not commit `local.env`, provisioning profiles, pairing records or anything
-  from `build/` or `logs/`.
+- Deleting the app from the iPad deletes the application files you copied, the
+  enrolment and the page container. Installing over it keeps them.
+- Do not commit `local.env`, provisioning profiles, pairing records, page
+  containers, captures or anything from `build/` or `logs/`.

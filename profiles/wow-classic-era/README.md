@@ -9,11 +9,11 @@ account. Nothing from the game is included here.
 In `local.env`:
 
 ```
-GUEST_EXE=/Applications/World of Warcraft/_classic_era_/World of Warcraft Classic.app/Contents/MacOS/World of Warcraft Classic
+GUEST_EXE="/Applications/World of Warcraft/_classic_era_/World of Warcraft Classic.app/Contents/MacOS/World of Warcraft Classic"
 TOLKARA_PROFILE=profiles/wow-classic-era/profile.json
 ```
 
-Build, install and enrol as described in
+Build, install and set up your execution mode as described in
 [docs/BUILDING.md](../../docs/BUILDING.md), then copy your installation:
 
 ```bash
@@ -26,12 +26,25 @@ It copies only your region and language settings, not account settings, saved
 credentials or add-ons. Pass `--source` if the game is installed elsewhere, and
 `--skip-data` to refresh the client without copying `Data` again.
 
-Open Tolkara, press Play, and log in inside the game as usual.
+Open Tolkara, choose an execution mode if it asks, press Play, and log in
+inside the game as usual.
+
+**Execution mode.** Both modes are described in the
+[README](../../README.md#two-ways-to-run-code); choose one. This client has been
+played with Developer service. With Local signing, an earlier build started it
+as far as its original `main`; the current build has not yet been re-run on a
+device, and login and gameplay are not yet validated. This client unpacks its
+own code at launch, so its page container must be built from a capture of its
+final code pages, which Tolkara cannot produce yet.
 
 Start with modest graphics settings; quality 8 at 50% render scale held 120 FPS
 on the M5. Voice chat does not work.
 
 **Account risk.** Tolkara is not supported by Blizzard. Blizzard has
 historically tolerated Wine and Proton players, and Tolkara works the same way,
-but nothing guarantees that for your account. The risk of a suspension or ban is
-yours alone. Consider testing with a free Starter account first.
+but nothing guarantees that for your account. With Local signing, Tolkara also
+keeps a derived copy of the game's unpacked code on your iPad, signed under your
+own developer identity. That modifies nothing Blizzard ships, but whether it is
+acceptable is still for Blizzard's licence terms to decide. The risk of a
+suspension or ban is yours alone. Consider testing with a free Starter account
+first.
