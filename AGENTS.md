@@ -21,6 +21,7 @@ TOLKARA_MODE=local-signing tools/run.sh sim   # Local signing: first initializer
 tools/install.sh            # build, sign and install the Tolkara app on the configured iPad
 tools/probe_guest.sh "/path/to/Executable"   # inspect an unchanged executable
 python3 tools/build_signed_container.py       # build and sign the Local signing page container for GUEST_EXE
+python3 tools/make_icon.py                    # redraw the app icon at every size and appearance (needs Google Chrome)
 ```
 
 Device installs replace the app under the same bundle ID and keep its data.
