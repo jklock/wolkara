@@ -30,11 +30,14 @@ in the library (it appears once the files are copied), and log in inside the
 game as usual.
 
 **Execution mode.** Both modes are described in the
-[README](../../README.md#two-ways-to-run-code); choose one. This client has not
-yet been run on a device with either mode. Like the Era client, it is expected
-to unpack its own code at launch, so its Local signing page container would
-have to be built from a capture of its final code pages (see
-`tools/capture_final_text.sh`).
+[README](../../README.md#two-ways-to-run-code); choose one. With Local signing,
+the client's startup has run on an iPad Pro M5: the unpacked code matched the
+signed page container byte for byte and all 13,280 initializers ran into the
+original `main`. Login and gameplay are not yet validated, with either mode.
+Like the Era client, this client unpacks its own code at launch, so its Local
+signing page container must be built from a capture of its final code pages —
+producing such a capture in the app is not wired yet (see
+[docs/LOCAL_AUTHORIZATION.md](../../docs/LOCAL_AUTHORIZATION.md)).
 
 Start with modest graphics settings.
 
