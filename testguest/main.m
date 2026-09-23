@@ -8,6 +8,9 @@
 #import <QuartzCore/QuartzCore.h>
 
 static _Thread_local int tls_counter = 41;          // TLV survives exe->dylib?
+// Leaf for Local signing probes: no imports and no relocations, so it runs at
+// its offset in a remapped page container (tools/probe_signed_file.sh).
+__attribute__((used, noinline, visibility("default"))) int tolkara_probe_leaf(void) { return 0x12345678; }
 static double start_time;
 __attribute__((constructor)) static void init(void) { start_time = CACurrentMediaTime(); }
 

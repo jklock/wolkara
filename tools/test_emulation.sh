@@ -135,6 +135,7 @@ xcrun clang -fobjc-arc -Wall -Wextra -Werror -Wno-deprecated-declarations -g -fs
 build/emulation/test_library_container build/emulation/container-fixture.metallib
 python3 tests/test_shader_translation.py
 python3 -m unittest tests.test_sign_guest_local
+python3 -m unittest tests.test_build_signed_container
 
 "${CC[@]}" runtime/GuestMemory.c runtime/GuestImage.c runtime/GuestFixups.c tests/test_fixups.c -o build/emulation/test_fixups
 build/emulation/test_fixups

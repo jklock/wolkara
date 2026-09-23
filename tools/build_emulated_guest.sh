@@ -6,7 +6,8 @@ OUT=$1; EXE=${2:-}
 mkdir -p "$ROOT/build"
 if [ -z "$EXE" ]; then
     EXE="$ROOT/build/TestGuest"
-    xcrun --sdk macosx clang -fobjc-arc -arch arm64 -O1 -mmacosx-version-min=14.0 -o "$EXE" \
+    # Classic dyld info: the native loader does not apply chained fixups.
+    xcrun --sdk macosx clang -fobjc-arc -arch arm64 -O1 -mmacosx-version-min=14.0 -Wl,-no_fixup_chains -o "$EXE" \
       "$ROOT/testguest/main.m" -framework Cocoa -framework Metal -framework QuartzCore
 fi
 mkdir -p "$OUT/Guest"
@@ -20,7 +21,7 @@ python3 "$ROOT/tools/package_guest.py" "$EXE" "$MODULE"
 # Optional app profile: names the app and its imported file layout. Data only.
 rm -f "$OUT/Guest/profile.json"
 if [ -z "${TOLKARA_PROFILE:-}" ] && [ -f "$ROOT/local.env" ]; then
-    TOLKARA_PROFILE=$(sed -n 's/^TOLKARA_PROFILE=//p' "$ROOT/local.env" | tail -1)
+    TOLKARA_PROFILE=$(cd "$ROOT" && . tools/localenv.sh && tolkara_load_env && printf '%s' "${TOLKARA_PROFILE:-}")
 fi
 if [ -n "${TOLKARA_PROFILE:-}" ]; then
     case "$TOLKARA_PROFILE" in /*) PROFILE="$TOLKARA_PROFILE";; *) PROFILE="$ROOT/$TOLKARA_PROFILE";; esac

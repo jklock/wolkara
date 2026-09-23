@@ -6,7 +6,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export DEVELOPER_DIR=${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}
-[ -f local.env ] && { set -a; . ./local.env; set +a; }
+. tools/localenv.sh; tolkara_load_env
 BUNDLE=${TOLKARA_BUNDLE_ID:-local.tolkara.app}
 [ -n "${DEVICE:-}" ] || { echo "Set DEVICE=<iPad UDID> in local.env (xcrun devicectl list devices)."; exit 2; }
 
