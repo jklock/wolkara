@@ -272,12 +272,20 @@ static void PrepareLocalSigningFolder(void) {
 
 #pragma mark Library
 
-// --app=<identifier> selects an app for development runs; otherwise the
-// most recently started one (or a profile app) is used.
+// --app=<identifier> selects an app for development runs (the library UUID or
+// its profile id); otherwise the most recently started one (or a profile app)
+// is used. Discovery runs first: on a fresh launch nothing has populated the
+// library yet.
 - (TKApp *)appFromArguments {
-    for (NSString *argument in NSProcessInfo.processInfo.arguments)
-        if ([argument hasPrefix:@"--app="]) return [self.library appWithIdentifier:[argument substringFromIndex:6]];
     [self.library discover];
+    for (NSString *argument in NSProcessInfo.processInfo.arguments) {
+        if (![argument hasPrefix:@"--app="]) continue;
+        NSString *requested=[argument substringFromIndex:6];
+        TKApp *app=[self.library appWithIdentifier:requested];
+        if (app) return app;
+        for (TKApp *candidate in self.library.apps) if ([candidate.profile isEqualToString:requested]) return candidate;
+        return nil;
+    }
     return self.library.defaultApp;
 }
 - (void)libraryViewController:(TKLibraryViewController *)controller startApp:(TKApp *)app {
@@ -561,6 +569,8 @@ static void PrepareLocalSigningFolder(void) {
     NSString *logPath = TKDocumentsPath(@"native-guest.log");
     FILE *log = fopen(logPath.fileSystemRepresentation, "w");
     if (!log) { self.status.text = @"Cannot open native runtime log."; [self showStartStopped]; return; }
+    // Line-buffered: an early return must not leave its message stuck in the buffer.
+    setvbuf(log, NULL, _IOLBF, 0);
     dup2(fileno(log), STDERR_FILENO);
     dup2(fileno(log), STDOUT_FILENO);
     setvbuf(stdout, NULL, _IOLBF, 0);
