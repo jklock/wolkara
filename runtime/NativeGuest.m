@@ -150,9 +150,50 @@ static bool inside(const void *address, size_t size) {
     uintptr_t a = (uintptr_t)address, base = (uintptr_t)guest.arena.executable;
     return a >= base && a - base <= guest.arena.size && size <= guest.arena.size - (a - base);
 }
-// Optional diagnostics after debugger detachment. Log our own main thread's
-// return addresses and symbols only; never copy guest code or data, attach,
-// suspend the thread, or modify guest registers/instructions.
+// Optional diagnostics after debugger detachment. Log our own threads'
+// program counters and symbols only; never copy guest code or data, attach,
+// suspend a thread, or modify guest registers/instructions.
+static void sample_all_threads(unsigned number) {
+    thread_act_array_t threads=NULL; mach_msg_type_number_t count=0;
+    if(task_threads(mach_task_self(),&threads,&count)!=KERN_SUCCESS) return;
+    flockfile(guest.log);
+    LOG("[native] threads sample %u count=%u\n",number,count);
+    for(mach_msg_type_number_t i=0;i<count;i++) {
+        arm_thread_state64_t state={0}; mach_msg_type_number_t stateCount=ARM_THREAD_STATE64_COUNT;
+        kern_return_t kr=thread_get_state(threads[i],ARM_THREAD_STATE64,(thread_state_t)&state,&stateCount);
+        uintptr_t pc=kr==KERN_SUCCESS?arm_thread_state64_get_pc(state):0;
+        Dl_info info={0}; if(pc) dladdr((void *)pc,&info);
+        LOG("[native] thread %u pc=%#lx preferred=%#llx symbol=%s image=%s\n",i,(unsigned long)pc,
+            pc&&inside((void *)pc,1)?pc-guest.slide:0,info.dli_sname?:"unknown",info.dli_fname?:"unknown");
+        if(kr!=KERN_SUCCESS) { mach_port_deallocate(mach_task_self(),threads[i]); continue; }
+        // Poor-man's stack: guest frames carry no frame pointers, so scan the
+        // live stack and log only words that resolve to code, never the data.
+        uintptr_t sp=arm_thread_state64_get_sp(state);
+        uintptr_t lr=arm_thread_state64_get_lr(state)&0x0000ffffffffffffULL;
+        Dl_info linfo={0}; if(lr) dladdr((void *)lr,&linfo);
+        LOG("[native] thread %u lr=%#lx preferred=%#llx symbol=%s image=%s\n",i,(unsigned long)lr,
+            lr&&inside((void *)lr,1)?lr-guest.slide:0,linfo.dli_sname?:"unknown",linfo.dli_fname?:"unknown");
+        enum { SCAN=16384 };
+        uintptr_t window[SCAN/8];
+        vm_size_t got=0;
+        if(sp && vm_read_overwrite(mach_task_self(),sp,SCAN,(vm_address_t)window,&got)==KERN_SUCCESS) {
+            unsigned shown=0; uintptr_t previous=0;
+            for(unsigned w=0;w<got/8 && shown<12;w++) {
+                uintptr_t value=window[w]&0x0000ffffffffffffULL;
+                if(value==previous || !(value&0xffff00000000ULL)) continue;
+                Dl_info vinfo={0}; dladdr((void *)value,&vinfo);
+                bool guestCode=inside((void *)value,1);
+                if(!guestCode && !vinfo.dli_fname) continue;
+                previous=value; shown++;
+                LOG("[native] thread %u stack %u %#lx preferred=%#llx symbol=%s image=%s\n",i,shown,(unsigned long)value,
+                    guestCode?value-guest.slide:0,vinfo.dli_sname?:"unknown",vinfo.dli_fname?:"unknown");
+            }
+        }
+        mach_port_deallocate(mach_task_self(),threads[i]);
+    }
+    funlockfile(guest.log);
+    if(threads) vm_deallocate(mach_task_self(),(vm_address_t)threads,count*sizeof(thread_act_t));
+}
 static void schedule_native_sample(thread_t thread, unsigned number) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,10*NSEC_PER_SEC),dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
         arm_thread_state64_t state={0}; mach_msg_type_number_t count=ARM_THREAD_STATE64_COUNT;
@@ -172,7 +213,8 @@ static void schedule_native_sample(thread_t thread, unsigned number) {
             }
             funlockfile(guest.log);
         } else LOG("[native] sample unavailable kr=%d\n",kr);
-        if(number<3) schedule_native_sample(thread,number+1);
+        sample_all_threads(number);
+        if(number<360) schedule_native_sample(thread,number+1);
         else mach_port_deallocate(mach_task_self(),thread);
     });
 }

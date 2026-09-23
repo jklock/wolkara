@@ -28,6 +28,9 @@
 @property(nonatomic, strong, nullable) TKApp *launchingApp;
 // iPadOS allows one guest startup per process; some checks also end it.
 @property(nonatomic) BOOL sessionUsed;
+// A plain launch (library shown, no development arguments): a game that
+// closes cleanly ends the process so the next tap starts another app.
+@property(nonatomic) BOOL uiSession;
 @property(nonatomic) BOOL consumedImportArgument;
 // This launch's execution mode and where it came from (logged; never a path).
 @property(nonatomic) TKExecutionMode executionMode;
@@ -182,6 +185,7 @@ static void PrepareLocalSigningFolder(void) {
     BOOL plain=YES;
     for(NSUInteger i=1;i<arguments.count;i++) if(![arguments[i] hasPrefix:TKExecutionModeArgumentPrefix]) plain=NO;
     if (plain) {
+        self.uiSession=YES;
         self.libraryController=[[TKLibraryViewController alloc] initWithLibrary:self.library];
         self.libraryController.delegate=self;
         // An unusable per-launch mode or preselection never falls back; say so.
@@ -611,6 +615,13 @@ static void PrepareLocalSigningFolder(void) {
     fprintf(log,"[host] native %s %s\n",fullStartup?"startup":"first initializer",ok?"returned":"stopped"); fflush(log);
     self.status.text = ok ? (fullStartup ? [app.name stringByAppendingString:@" closed."] : @"Original client first initializer returned.") : @"Native startup stopped. See runtime log.";
     [self showStartStopped];
+    // A cleanly closed game was the whole session in a library launch. End the
+    // process after a short note: the next tap on Tolkara opens the library
+    // ready to start another app (one guest startup per process).
+    if (ok && fullStartup && self.uiSession) {
+        fprintf(log,"[host] %s closed; ending this session\n",app.name.UTF8String); fflush(log);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC),dispatch_get_main_queue(),^{ exit(0); });
+    }
     // Runtime callbacks retain this log for the life of the guest.
 }
 
