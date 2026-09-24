@@ -9,6 +9,7 @@
 #import "LibraryViewController.h"
 #import "NativeGuest.h"
 #import "SignedFileProbe.h"
+#include "HostDiagnostics.h"
 #include <errno.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -76,6 +77,17 @@ static void PrepareLocalSigningFolder(void) {
     [NSFileManager.defaultManager createDirectoryAtPath:TKLocalSigningContainerPath(NSHomeDirectory()).stringByDeletingLastPathComponent
         withIntermediateDirectories:YES attributes:nil error:NULL];
 }
+#if TOLKARA_INTEGRATED_AUTH
+// Whether Developer service can skip the bundled tunnel: a JIT-enabling tool
+// (SideStore, StikDebug and similar) may have prepared this process already,
+// outside anything Tolkara asked for.
+static NSString *ExecutableMemoryState(void) {
+    if(ng_arena_reserved()) return @"Executable memory from an outside enabler is ready.";
+    if(!hd_may_run_unsigned_code())
+        return @"No outside enabler: enable JIT for this app in the tool you sideloaded it with, then reopen it.";
+    return @"JIT is enabled, but nothing has handed this process executable memory yet; an iPad that enforces it needs an enabler that stays attached.";
+}
+#endif
 
 // Explicit execution-mode choice: two equal buttons, neither highlighted nor
 // recommended. The first choice cannot be dismissed without choosing.
@@ -161,6 +173,15 @@ static void PrepareLocalSigningFolder(void) {
     (void)scene;
     return UISceneWindowingControlStyle.minimalStyle;
 }
+// An outside enabler is attached only briefly; take its arena now, whether or
+// not this launch ends up needing it.
+- (void)reserveExecutableMemory {
+    if(ng_arena_reserved() || !hd_debugger_attached()) return;
+    ng_reserve_arena(NULL);
+}
+- (void)sceneDidBecomeActive:(UIScene *)scene {
+    (void)scene; [self reserveExecutableMemory];
+}
 - (void)scene:(UIScene *)scene willConnectToSession:(UISceneSession *)s options:(UISceneConnectionOptions *)o {
     static BOOL started;
     if (started) return;
@@ -176,6 +197,7 @@ static void PrepareLocalSigningFolder(void) {
     // can receive containers (tools/install.sh launches once if needed).
     if (self.executionMode==TKExecutionModeLocalSigning) PrepareLocalSigningFolder();
     self.window = [[UIWindow alloc] initWithWindowScene:(UIWindowScene *)scene];
+    [self reserveExecutableMemory];
     self.library = OpenLibrary();
 #if TOLKARA_INTEGRATED_AUTH
     (void)[TKEnrollmentImport prepare];
@@ -455,11 +477,18 @@ static void PrepareLocalSigningFolder(void) {
     if([NSProcessInfo.processInfo.arguments containsObject:@"--local-shaders-only"])
         setenv("TOLKARA_LOCAL_SHADERS_ONLY","1",1);
     UIApplication.sharedApplication.idleTimerDisabled=YES;
+    // Already granted from outside: nothing left to prepare.
+    if(hd_may_run_unsigned_code() || ng_arena_reserved()) {
+        self.status.text=[NSString stringWithFormat:@"Starting %@…\nKeep the app open. Startup currently takes a few minutes.",app.name];
+        [self performSelector:@selector(startLocalGame) withObject:nil afterDelay:0];
+        return;
+    }
     self.status.text=[NSString stringWithFormat:@"Preparing local launch of %@…",app.name];
     [self.localAuthorization startAndPrepareLocalAuthorization:^(NSString *report) {
         [report writeToFile:TKDocumentsPath(@"local-game-setup.txt") atomically:YES encoding:NSUTF8StringEncoding error:NULL];
         if(!self.localAuthorization.localSessionReady || !ng_use_local_authorization()) {
-            self.status.text=[@"Local launch could not prepare. Close and reopen the app to retry.\n" stringByAppendingString:report];
+            self.status.text=[NSString stringWithFormat:@"%@\nLocal launch could not prepare either. Close and reopen the app to retry.\n%@",
+                ExecutableMemoryState(),report];
             [self showStartStopped];return;
         }
         self.status.text=[NSString stringWithFormat:@"Starting %@…\nKeep the app open. Startup currently takes a few minutes.",app.name];
