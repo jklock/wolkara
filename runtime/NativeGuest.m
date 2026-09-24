@@ -1,5 +1,7 @@
 #import <Foundation/Foundation.h>
 #include "NativeGuest.h"
+#include "DebuggerArena.h"
+#include "HostDiagnostics.h"
 #include "NativeCodeMemory.h"
 #if TOLKARA_INTEGRATED_AUTH
 #import "LocalAuthorization.h"
@@ -66,6 +68,11 @@ bool ng_use_local_authorization(void) {
     return false;
 #endif
 }
+static atomic_bool use_external_authorization;
+bool ng_use_external_authorization(void) {
+    if(atomic_load(&initialization_attempted) || atomic_load(&use_signed_image)) return false;
+    atomic_store(&use_external_authorization,true);return true;
+}
 
 static struct {
     GuestImage image;
@@ -77,6 +84,24 @@ static struct {
 } guest;
 // The libraries the application carries, for the life of the guest.
 static GuestLinkSet carried;
+static NativeCodeMemory external_quarantine;
+// Prepared before the launch, while a debugger was there.
+static NativeCodeMemory reserved_arena;
+bool ng_arena_reserved(void) { return reserved_arena.published; }
+bool ng_reserve_arena(FILE *log) {
+    if (reserved_arena.published) return true;
+    if (atomic_load(&initialization_attempted) || !da_debugger_present()) return false;
+    // A script may refuse the largest; take what it gives.
+    for (size_t size=nc_arena_limit(); size>=64u*1024u*1024u; size/=2)
+        if (da_request_arena(&reserved_arena,size,log)) break;
+    if (!reserved_arena.published) return false;
+    (void)da_release_debugger(&reserved_arena,log);
+    if (hd_is_executable(reserved_arena.executable)) return true;
+    // Useless now, and there is no second chance to ask.
+    if (log) fprintf(log,"[native] the reserved arena did not survive the detach\n");
+    nc_destroy(&reserved_arena);
+    return false;
+}
 #define LOG(...) do { fprintf(guest.log, __VA_ARGS__); fflush(guest.log); } while (0)
 __attribute__((noinline,used,visibility("default")))
 void host_debugger_publish_arena(void *address, size_t size, volatile uint64_t *completion) {
@@ -141,6 +166,12 @@ static int guest_sigaction(int number,const struct sigaction *action,struct siga
         if(action) guest_signal_actions[number]=*action;
     }
     return result;
+}
+// Nothing to publish: an enabler outside the app prepared this.
+static NCPreparation prepare_externally(void *address, size_t size, void *context) {
+    (void)context;
+    LOG("[native] arena prepared outside this app address=%p size=%zu\n",address,size);
+    return NC_PREPARED;
 }
 static bool publish(void *address, size_t size, void *context) {
     (void)context;
@@ -654,17 +685,47 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
             carried.count,carried.count==1?"y":"ies");
         goto done;
     }
+    bool local=false;
+#if TOLKARA_INTEGRATED_AUTH
+    local=!signed_backend && (atomic_load(&use_local_authorization) ||
+        [NSProcessInfo.processInfo.arguments containsObject:@"--local-native-authorization"]);
+#endif
+    bool external=!signed_backend && !local && (atomic_load(&use_external_authorization) ||
+        [NSProcessInfo.processInfo.arguments containsObject:@"--external-authorization"]);
+    // Nothing else was named, and this process may already run unsigned code.
+    if(!signed_backend && !local && !external && hd_may_run_unsigned_code()) {
+        LOG("[native] this process may already run unsigned code; its arena comes from whatever prepared it\n");
+        external=true;
+    }
+    if (!signed_backend) {
+        // An arena is counted twice while its writable view exists.
+        size_t limit=nc_arena_limit();
+        LOG("[native] this image needs %zu bytes of executable memory; this process may prepare %zu of the %zu it has left\n",
+            total,limit,nc_available_memory());
+        if (total>limit) { LOG("[native] not enough room for this arena; guest entry blocked\n"); goto done; }
+    }
     if (signed_backend)
         arena_ready=signed_image_prepare(guest.base+total,error,sizeof error);
-    else {
 #if TOLKARA_INTEGRATED_AUTH
-    if(atomic_load(&use_local_authorization) || [NSProcessInfo.processInfo.arguments containsObject:@"--local-native-authorization"])
+    else if(local)
         arena_ready=nc_create_managed(&guest.arena,total,TKPrepareLocalArena,NULL,&local_quarantine);
-    else
 #endif
-        arena_ready=nc_create(&guest.arena,total,publish,NULL);
+    else if(reserved_arena.published && total<=reserved_arena.size) {
+        guest.arena=reserved_arena; arena_ready=true;
+        LOG("[native] using the arena reserved earlier: %zu bytes\n",guest.arena.size);
     }
+    else if(external) {
+        // An enabler first; otherwise an arena of our own.
+        arena_ready=da_request_arena(&guest.arena,total,guest.log);
+        if(!arena_ready) arena_ready=nc_create_managed(&guest.arena,total,prepare_externally,NULL,&external_quarantine);
+    }
+    else
+        arena_ready=nc_create(&guest.arena,total,publish,NULL);
     if (!arena_ready) { LOG("[native] arena preparation failed errno=%d %s; guest entry blocked\n",errno,signed_backend?error:""); goto done; }
+    // A protection change can be reported and not granted.
+    LOG("[native] arena protection %#x\n",hd_protection(guest.arena.executable));
+    // Whichever route prepared it: nothing attached, really executable.
+    if (external && !da_entry_allowed(&guest.arena,guest.log)) { LOG("[native] guest entry blocked\n"); goto done; }
     guest.slide=(uintptr_t)guest.arena.executable-guest.base;
     for (size_t i=0;i<carried.count;i++)
         carried.libraries[i].slide=(uintptr_t)guest.arena.executable+offset[i]-low[i];

@@ -15,3 +15,9 @@ bool ng_use_local_authorization(void);
 // reason to error (startup already attempted, Developer service already
 // selected, empty or overlong path).
 bool ng_use_signed_image(const char *container_path, char *error, size_t error_size);
+// Prepared outside the app; accepted only if really executable.
+bool ng_use_external_authorization(void);
+// Ask an attached debugger for the arena now.
+bool ng_reserve_arena(FILE *log);
+// Whether an arena is already prepared for the launch.
+bool ng_arena_reserved(void);
