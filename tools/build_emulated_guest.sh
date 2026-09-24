@@ -43,27 +43,37 @@ if [ -n "${TOLKARA_PROFILE:-}" ]; then
     cp "$PROFILE" "$OUT/Guest/Profiles/0-local.json"
 fi
 
-# Build/sign only our compatibility libraries. The original is never patched.
-if [ "${NATIVE_GUEST_SHIMS:-NO}" = YES ]; then
+# Our libraries only: YES classifies GUEST_EXE, GENERIC ships one adapter per
+# hand-written translation/<Framework>/, made for no particular application.
+case "${NATIVE_GUEST_SHIMS:-NO}" in
+YES|GENERIC)
     if [ "${PLATFORM_NAME:-iphoneos}" = iphonesimulator ]; then P=iossim; else P=ios; fi
     W="$ROOT/build/native-$P"; mkdir -p "$W" "$OUT/Frameworks"
-    python3 "$ROOT/tools/classify.py" "${EXES[@]}" --out "$W/SURFACE.md" --map "$W/map.json" --raw "$W/surface.json"
-    python3 "$ROOT/tools/build_shims.py" "$P" "$W/surface.json" "$OUT/Frameworks"
-    cp "$W/map.json" "$OUT/Guest/libraries.json"
+    if [ "${NATIVE_GUEST_SHIMS}" = GENERIC ]; then
+        python3 "$ROOT/tools/build_shims.py" "$P" generic "$OUT/Frameworks"
+    else
+        python3 "$ROOT/tools/classify.py" "${EXES[@]}" --out "$W/SURFACE.md" --map "$W/map.json" --raw "$W/surface.json"
+        python3 "$ROOT/tools/build_shims.py" "$P" "$W/surface.json" "$OUT/Frameworks"
+        cp "$W/map.json" "$OUT/Guest/libraries.json"
+    fi
     MACSDK=$(xcrun --sdk macosx --show-sdk-path)
     xcrun --sdk macosx clang -target arm64-apple-macos14.0 -isysroot "$MACSDK" \
       -fobjc-arc -Wno-deprecated-declarations -framework Foundation -framework Security \
       "$ROOT/tools/export_system_anchors.m" -o "$ROOT/build/export_system_anchors"
     "$ROOT/build/export_system_anchors" "$OUT/CompatibilityRootCertificates.plist"
-    for exe in "${EXES[@]}"; do
-        RESOURCES="$(dirname "$(dirname "$exe")")/Resources"
-        [ -d "$RESOURCES" ] || continue
-        mkdir -p "$MODULE/Nibs"
-        for nib in "$RESOURCES"/*.nib; do
-            # Shared nib directory: the first executable's version of a name wins.
-            [ -f "$nib" ] && [ ! -e "$MODULE/Nibs/$(basename "$nib").json" ] || continue
-            python3 "$ROOT/tools/inspect_nib.py" "$nib" --out "$MODULE/Nibs/$(basename "$nib").json"
+    # Nibs belong to a classified application's own resources.
+    if [ "${NATIVE_GUEST_SHIMS}" = YES ]; then
+        for exe in "${EXES[@]}"; do
+            RESOURCES="$(dirname "$(dirname "$exe")")/Resources"
+            [ -d "$RESOURCES" ] || continue
+            mkdir -p "$MODULE/Nibs"
+            for nib in "$RESOURCES"/*.nib; do
+                # Shared nib directory: the first executable's version of a name wins.
+                [ -f "$nib" ] && [ ! -e "$MODULE/Nibs/$(basename "$nib").json" ] || continue
+                python3 "$ROOT/tools/inspect_nib.py" "$nib" --out "$MODULE/Nibs/$(basename "$nib").json"
+            done
         done
-    done
+    fi
     for f in "$OUT/Frameworks"/*.dylib; do codesign -f -s "${EXPANDED_CODE_SIGN_IDENTITY:--}" "$f" 2>/dev/null; done
-fi
+    ;;
+esac

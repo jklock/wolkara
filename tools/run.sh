@@ -2,6 +2,7 @@
 # One-command loop: build, install, launch, collect console + crash logs.
 # usage: tools/run.sh sim|device [seconds]      (default 15 s of console capture)
 # env:   GUEST_EXE=/path/to/macOS/executable    (default: in-repo test guest)
+#        NATIVE_GUEST_SHIMS=GENERIC             (adapters, no executable)
 #        DEVICE=<udid or name>                  (device mode; default: first paired device)
 #        TOLKARA_MODE=developer-service|local-signing   (passed to every launch)
 # sim + local-signing also builds an ad-hoc page container for the guest, runs
@@ -20,6 +21,7 @@ SIM=${SIMULATOR:-iPad Pro 13-inch (M5)}
 TS=$(date +%Y%m%d-%H%M%S); LOG=logs/$TS-$MODE; mkdir -p "$LOG"
 MODEARG=(); [ -n "${TOLKARA_MODE:-}" ] && MODEARG=(--execution-mode="$TOLKARA_MODE")
 PROV=(); SHIMS=()
+[ -n "${NATIVE_GUEST_SHIMS:-}" ] && SHIMS=(NATIVE_GUEST_SHIMS="$NATIVE_GUEST_SHIMS")
 
 if [ "$MODE" = sim ]; then
     # One UDID for every step: several simulators may share a name; prefer the booted one.
@@ -32,7 +34,7 @@ print(found[0]["udid"] if found else "")' "$SIM")
     [ -n "$SIM_ID" ] || { echo "no available simulator named $SIM (set SIMULATOR in local.env)"; exit 2; }
     DEST="platform=iOS Simulator,id=$SIM_ID"; CONF=Debug-iphonesimulator
     # Local signing needs the native loader's compatibility libraries.
-    [ "${TOLKARA_MODE:-}" = local-signing ] && SHIMS=(NATIVE_GUEST_SHIMS=YES)
+    [ "${TOLKARA_MODE:-}" = local-signing ] && [ ${#SHIMS[@]} -eq 0 ] && SHIMS=(NATIVE_GUEST_SHIMS=YES)
 else
     DEVICE=${DEVICE:-$(xcrun devicectl list devices 2>/dev/null | awk '/physical/ && /connected/ {for(i=1;i<=NF;i++) if ($i ~ /^[0-9A-F]{8}-[0-9A-F]{16}$/) {print $i; exit}}')}
     [ -z "${DEVICE:-}" ] && { echo "no device: connect the iPad, unlock it, tap Trust"; exit 2; }

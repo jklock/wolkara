@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 """Build one shim dylib per library listed in surface.json (from classify.py).
 
-usage: build_shims.py <ios|iossim> <surface.json> <outdir>
+usage: build_shims.py <ios|iossim> <surface.json|generic> <outdir>
+
+With "generic" there is no surface: one adapter is built per hand-written
+translation/<Framework>/ directory, with no stubs for any one executable. That is
+what a build not made for a particular application ships; the runtime resolves
+libraries by name and synthesises whatever is still missing.
 
 For library <Leaf>: hand-written sources in translation/<Leaf>/ are compiled first; every
 symbol the guest needs that they do not define gets a generated logging stub
@@ -14,12 +19,15 @@ from pathlib import Path
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 platform, surface, outdir = sys.argv[1:4]
-plan = json.load(open(surface))
+generic = surface == "generic"
+plan = {"sdk": "", "translation": {}} if generic else json.load(open(surface))
 SDKNAME = {"ios": "iphoneos", "iossim": "iphonesimulator"}[platform]
 TARGET = {"ios": "arm64-apple-ios17.0", "iossim": "arm64-apple-ios17.0-simulator"}[platform]
 SDK = subprocess.run(["xcrun", "--sdk", SDKNAME, "--show-sdk-path"], capture_output=True, text=True, check=True).stdout.strip()
 CC = ["xcrun", "--sdk", SDKNAME, "clang", "-target", TARGET, "-isysroot", SDK, "-O1", "-g", "-fobjc-arc",
       "-I", os.path.join(ROOT, "translation/AKSupport"), "-Wno-deprecated-declarations"]
+if generic:
+    plan["sdk"] = SDK   # sdk_tbd() below rewrites paths from the SDK classify used
 gen = os.path.join(ROOT, "build/gen", platform); os.makedirs(gen, exist_ok=True); os.makedirs(outdir, exist_ok=True)
 
 
@@ -94,6 +102,25 @@ def build(leaf, install_name, symbols, real_tbd=None, provider_tbds=(), extra=()
     print(f"  {os.path.basename(out):32s} hand={len(defined):3d} stubs={len(todo):3d}" + (" reexports real" if real_tbd else ""))
 
 
+def sdk_library(leaf):
+    """The iOS library of the same name, so an adapter re-exports what exists."""
+    for candidate in (f"{SDK}/System/Library/Frameworks/{leaf}.framework/{leaf}.tbd",
+                      f"{SDK}/usr/lib/{leaf}.tbd"):
+        if os.path.exists(candidate):
+            return candidate
+    return None
+
+
 build("AKSupport", "@rpath/libAKSupport.dylib", [])
-for leaf, p in plan["translation"].items():
-    build(leaf, p["install_name"], p["symbols"], p["real_tbd"], p["provider_tbds"])
+if generic:
+    written = os.path.join(ROOT, "translation")
+    for leaf in sorted(os.listdir(written)):
+        directory = os.path.join(written, leaf)
+        if leaf == "AKSupport" or not os.path.isdir(directory):
+            continue
+        if not any(f.endswith((".c", ".m")) for f in os.listdir(directory)):
+            continue
+        build(leaf, f"@rpath/ak{leaf}.dylib", [], sdk_library(leaf))
+else:
+    for leaf, p in plan["translation"].items():
+        build(leaf, p["install_name"], p["symbols"], p["real_tbd"], p["provider_tbds"])

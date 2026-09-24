@@ -5,13 +5,17 @@
 # TOLKARA_MODE=local-signing also builds a Local signing page container for
 # each executable in GUEST_EXE, signed with your developer identity, and copies
 # it into the app's Documents/LocalSigning as <SHA-256 of the executable>.dylib.
+# For an unsigned .ipa to sideload instead: tools/package_ipa.sh.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export DEVELOPER_DIR=${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}
 . tools/localenv.sh; tolkara_load_env
 [ -n "${DEVELOPMENT_TEAM:-}" ] || { echo "Set DEVELOPMENT_TEAM in local.env (see local.env.example)."; exit 2; }
 [ -n "${DEVICE:-}" ] || { echo "Set DEVICE=<iPad UDID> in local.env (xcrun devicectl list devices)."; exit 2; }
-[ -n "${GUEST_EXE:-}" ] || { echo "Set GUEST_EXE to the macOS executable you own (several: separate with ':'). It is analysed, never bundled or modified."; exit 2; }
+# A generic build is analysed against no executable at all.
+SHIMS=${NATIVE_GUEST_SHIMS:-YES}
+GUEST_EXE=${GUEST_EXE:-}
+[ "$SHIMS" = GENERIC ] || [ -n "$GUEST_EXE" ] || { echo "Set GUEST_EXE to the macOS executable you own (several: separate with ':'), or NATIVE_GUEST_SHIMS=GENERIC to build for none. It is analysed, never bundled or modified."; exit 2; }
 IFS=: read -r -a EXES <<< "$GUEST_EXE"
 for exe in "${EXES[@]}"; do [ -f "$exe" ] || { echo "GUEST_EXE entry not found: $exe"; exit 2; }; done
 case "${TOLKARA_MODE:-}" in
@@ -27,11 +31,10 @@ fi
 BUNDLE=${TOLKARA_BUNDLE_ID:-local.tolkara.app}
 mkdir -p logs; LOG=logs/install-$(date +%Y%m%d-%H%M%S).log
 tools/generate.sh
-# NATIVE_GUEST_SHIMS=YES builds and signs only Tolkara's translation libraries
-# for the API surface those executables import. They stay outside the app.
+# Our translation libraries only, classified or generic; the executables stay outside the app.
 xcodebuild -project Tolkara.xcodeproj -scheme Tolkara -destination "platform=iOS,id=$DEVICE" \
     -derivedDataPath build/device -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
-    GUEST_EXE="$GUEST_EXE" NATIVE_GUEST_SHIMS=YES TOLKARA_PROFILE="${TOLKARA_PROFILE:-}" TOLKARA_MODE="${TOLKARA_MODE:-}" \
+    GUEST_EXE="$GUEST_EXE" NATIVE_GUEST_SHIMS="$SHIMS" TOLKARA_PROFILE="${TOLKARA_PROFILE:-}" TOLKARA_MODE="${TOLKARA_MODE:-}" \
     build > "$LOG" 2>&1 \
     || { grep -E "error:" "$LOG" | head -20; echo "BUILD FAILED -> $LOG"; exit 1; }
 xcrun devicectl device install app --device "$DEVICE" build/device/Build/Products/Debug-iphoneos/Tolkara.app
@@ -71,7 +74,13 @@ local-signing)
 developer-service)
     echo "Installed with Developer service. Next: tools/enroll.sh (once), then copy your apps' files (see profiles/).";;
 *)
-    echo "Installed. The app asks for its execution mode on first launch: Developer service needs tools/enroll.sh (once);"
-    echo "Local signing needs page containers (TOLKARA_MODE=local-signing builds and copies them). Then copy your apps' files (see profiles/).";;
+    if [ "$SHIMS" = GENERIC ]; then
+        echo "Installed. The app asks for its execution mode on first launch: Developer service needs tools/enroll.sh (once);"
+        echo "Local signing needs page containers (TOLKARA_MODE=local-signing builds and copies them)."
+        echo "Next: copy the application's folder into the app's Documents and choose it in the app."
+    else
+        echo "Installed. The app asks for its execution mode on first launch: Developer service needs tools/enroll.sh (once);"
+        echo "Local signing needs page containers (TOLKARA_MODE=local-signing builds and copies them). Then copy your apps' files (see profiles/)."
+    fi;;
 esac
 [ -z "${TOLKARA_MODE:-}" ] || echo "A mode already chosen in the app is kept; change it there with Execution mode…"
