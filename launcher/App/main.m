@@ -359,6 +359,9 @@ static void PrepareLocalSigningFolder(void) {
     NSMutableArray *sections=[NSMutableArray new];
     TKAppLibrary *library=self.library;
     [sections addObject:[TKDiagnosticSection sectionWithTitle:@"Runtime" footer:@"These checks run only Tolkara's own code." items:@[
+        [TKDiagnostic diagnosticWithTitle:@"Host diagnostics" detail:@"Debugger, code signing, memory and the arena limit. No probe sample runs." run:^(TKDiagnosticReport report) {
+            report(TKHostDiagnosticsReport(),YES);
+        }],
         [TKDiagnostic diagnosticWithTitle:@"Check loader" detail:@"Loads the most recently started app into emulated memory without running it." run:^(TKDiagnosticReport report) {
             dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
                 [library discover];

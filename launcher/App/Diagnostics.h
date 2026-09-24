@@ -11,6 +11,9 @@ NS_ASSUME_NONNULL_BEGIN
 
 NSString *TKDocumentsPath(NSString *name);
 
+// Main thread. Process and memory facts (debugger, code signing, footprint,
+// arena limit); no probe sample runs and no code is executed.
+NSString *TKHostDiagnosticsReport(void);
 // Background queue. Emulated-memory self-test, then loads `executable` (if
 // given) into guest memory without running it. `missing` explains a nil path.
 NSString *TKLoaderCheck(NSString *_Nullable executable, NSString *_Nullable missing);
