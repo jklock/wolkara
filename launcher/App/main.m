@@ -54,12 +54,8 @@ static TKAppLibrary *OpenLibrary(void) {
 // libraries: classified for one or more imported executables, or generic
 // (tools/install.sh); either ships libAKSupport.dylib, a build with none does not.
 static BOOL CanStartApps(void) {
-#if TOLKARA_INTEGRATED_AUTH
     NSString *support=[NSBundle.mainBundle.privateFrameworksPath stringByAppendingPathComponent:@"libAKSupport.dylib"];
     return [NSFileManager.defaultManager fileExistsAtPath:support];
-#else
-    return NO;
-#endif
 }
 static const char *ModeIdentifier(TKExecutionMode mode) { return (TKExecutionModeIdentifier(mode)?:@"none").UTF8String; }
 // Files shows the app's Documents under its bundle name (Tolkara or TolkaraDiagnostics).
@@ -77,17 +73,14 @@ static void PrepareLocalSigningFolder(void) {
     [NSFileManager.defaultManager createDirectoryAtPath:TKLocalSigningContainerPath(NSHomeDirectory()).stringByDeletingLastPathComponent
         withIntermediateDirectories:YES attributes:nil error:NULL];
 }
-#if TOLKARA_INTEGRATED_AUTH
-// Whether Developer service can skip the bundled tunnel: a JIT-enabling tool
-// (SideStore, StikDebug and similar) may have prepared this process already,
-// outside anything Tolkara asked for.
+// Whether an outside enabler (SideStore, StikDebug and similar) has prepared
+// this process already, with or without the bundled Developer-service tunnel.
 static NSString *ExecutableMemoryState(void) {
     if(ng_arena_reserved()) return @"Executable memory from an outside enabler is ready.";
     if(!hd_may_run_unsigned_code())
         return @"No outside enabler: enable JIT for this app in the tool you sideloaded it with, then reopen it.";
     return @"JIT is enabled, but nothing has handed this process executable memory yet; an iPad that enforces it needs an enabler that stays attached.";
 }
-#endif
 
 // Explicit execution-mode choice: two equal buttons, neither highlighted nor
 // recommended. The first choice cannot be dismissed without choosing.
@@ -272,12 +265,9 @@ static NSString *ExecutableMemoryState(void) {
 #pragma mark Execution mode
 
 // First launch with no chosen, saved or preselected mode: ask before any app
-// starts; the choice cannot be skipped. TolkaraDiagnostics never starts apps,
-// so it only resolves modes for development runs and does not ask.
+// starts; the choice cannot be skipped.
 - (void)askExecutionModeIfNeeded {
-#if TOLKARA_INTEGRATED_AUTH
     if (!self.executionMode) [self chooseExecutionMode:NO forApp:nil];
-#endif
 }
 // The mode chooser over whatever is showing. When app is given, its start
 // continues once the mode is chosen.
@@ -319,11 +309,10 @@ static NSString *ExecutableMemoryState(void) {
 - (void)libraryViewController:(TKLibraryViewController *)controller startApp:(TKApp *)app {
     (void)controller;
     if (!CanStartApps()) {
-        // Development builds without the local launch path check the loader only.
+        // A build with no compatibility libraries at all checks the loader only.
         [self libraryViewController:controller checkApp:app];
         return;
     }
-#if TOLKARA_INTEGRATED_AUTH
     // Starting an app uses the chosen execution mode. Without one the user
     // must choose first (not skippable), then the start continues.
     if (!self.executionMode) { [self chooseExecutionMode:NO forApp:app]; return; }
@@ -331,7 +320,6 @@ static NSString *ExecutableMemoryState(void) {
     if (!TKExecutionModeAvailable(self.executionMode,&unavailable)) { [self alert:@"Execution Mode Unavailable" message:unavailable]; return; }
     if (self.executionMode==TKExecutionModeLocalSigning) { [self launchLocalSigningApp:app]; return; }
     [self launchLocalApp:app];
-#endif
 }
 - (void)libraryViewController:(TKLibraryViewController *)controller checkApp:(TKApp *)app {
     (void)controller;
@@ -452,9 +440,10 @@ static NSString *ExecutableMemoryState(void) {
 
 #pragma mark Starting apps
 
-#if TOLKARA_INTEGRATED_AUTH
 // Developer service: the iPad's developer service prepares memory and detaches
-// before any application code runs.
+// before any application code runs. An outside enabler (SideStore, StikDebug
+// and similar) can prepare it instead, without TOLKARA_INTEGRATED_AUTH's
+// bundled tunnel at all.
 - (void)launchLocalApp:(TKApp *)app {
     if(self.sessionUsed) {
         [self alert:@"Reopen Tolkara" message:@"Only one app can start per session. Close Tolkara in the app switcher and open it again."];
@@ -483,6 +472,7 @@ static NSString *ExecutableMemoryState(void) {
         [self performSelector:@selector(startLocalGame) withObject:nil afterDelay:0];
         return;
     }
+#if TOLKARA_INTEGRATED_AUTH
     self.status.text=[NSString stringWithFormat:@"Preparing local launch of %@…",app.name];
     [self.localAuthorization startAndPrepareLocalAuthorization:^(NSString *report) {
         [report writeToFile:TKDocumentsPath(@"local-game-setup.txt") atomically:YES encoding:NSUTF8StringEncoding error:NULL];
@@ -495,6 +485,11 @@ static NSString *ExecutableMemoryState(void) {
         // Guest main must enter from a timer callout, never a dispatch block.
         [self performSelector:@selector(startLocalGame) withObject:nil afterDelay:0];
     }];
+#else
+    // No bundled tunnel in this build: only an outside enabler can prepare memory.
+    self.status.text=[NSString stringWithFormat:@"%@\nClose Tolkara, enable JIT for it in the tool you sideloaded it with, and reopen it.",ExecutableMemoryState()];
+    [self showStartStopped];
+#endif
 }
 - (void)startLocalGame { [self runNativeGame:YES app:self.launchingApp container:nil]; }
 // Local signing: the page container holds the app's final code pages, signed
@@ -541,7 +536,6 @@ static NSString *ExecutableMemoryState(void) {
     });
 }
 - (void)startSignedGame:(NSString *)container { [self runNativeGame:YES app:self.launchingApp container:container]; }
-#endif
 
 #pragma mark Native runs
 
@@ -851,11 +845,11 @@ static NSString *ExecutableMemoryState(void) {
         self.status.text=TKExecutionProbeReport(probe,arguments);
         return;
     }
-#if TOLKARA_INTEGRATED_AUTH
     if([arguments containsObject:@"--local-game-startup"]) {
         // Always Developer service: it replaces a saved choice or preselection
         // (logged); an unusable or contradicting --execution-mode and any
-        // --signed-image are refused.
+        // --signed-image are refused. Without TOLKARA_INTEGRATED_AUTH the mode
+        // itself is unavailable, but an outside enabler can still start it.
         if([self refuseInvalidModeArgument] || ![self forceExecutionMode:TKExecutionModeDeveloperService by:@"--local-game-startup"]) return;
         NSString *problem=nil;
         if(TKSignedImagePath(arguments,NSHomeDirectory(),&problem) || problem) {
@@ -864,7 +858,6 @@ static NSString *ExecutableMemoryState(void) {
         }
         [self launchLocalApp:[self appFromArguments]];return;
     }
-#endif
     if ([arguments containsObject:@"--native-initializer"] || [arguments containsObject:@"--native-startup"]) {
         [self startNativeDiagnostic:[arguments containsObject:@"--native-startup"]];return;
     }
