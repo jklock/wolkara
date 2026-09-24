@@ -6,6 +6,8 @@
 static NativeCodeMemory local_quarantine;
 #endif
 #include "GuestFixups.h"
+#include "GuestLink.h"
+#include "GuestStubs.h"
 #include "GuestTLS.h"
 #include "GuestWait.h"
 #include "SignedImage.h"
@@ -67,13 +69,14 @@ bool ng_use_local_authorization(void) {
 
 static struct {
     GuestImage image;
-    GuestTLS tls;
     NativeCodeMemory arena;
     void *libraries[GI_MAX_DYLIBS];
     uint64_t base, slide;
     FILE *log;
     const char *path;
 } guest;
+// The libraries the application carries, for the life of the guest.
+static GuestLinkSet carried;
 #define LOG(...) do { fprintf(guest.log, __VA_ARGS__); fflush(guest.log); } while (0)
 __attribute__((noinline,used,visibility("default")))
 void host_debugger_publish_arena(void *address, size_t size, volatile uint64_t *completion) {
@@ -403,10 +406,38 @@ static void guest_unexpected_lazy_bind(void) {
 __attribute__((noinline,used,visibility("default")))
 void host_debugger_guest_complete(bool ok) { __asm__ volatile("" : : "r"(ok) : "memory"); }
 extern void *guest_tlv_bootstrap(const uint64_t descriptor[3]);
+// One registration per image, found by its descriptor range.
+static GTImage guest_tls[1+GL_MAX_LIBRARIES];
+static size_t guest_tls_count;
 void *guest_tlv_address(const uint64_t descriptor[3]) {
-    void *value=gt_address(&guest.tls,descriptor);
-    if (!value) { LOG("[native] invalid TLS descriptor %p\n",descriptor); abort(); }
-    return value;
+    const char *owner;
+    void *value=gt_find(guest_tls,guest_tls_count,descriptor,&owner);
+    if (value) return value;
+    if (owner) LOG("[native] %s: no thread-local storage for descriptor %p\n",owner,descriptor);
+    else LOG("[native] invalid TLS descriptor %p\n",descriptor);
+    abort();
+}
+// The image's initial thread-local bytes and its descriptors.
+static bool setup_tls(GuestImage *image, uint64_t slide, const char *name) {
+    if (!image->has_tls) return true;
+    if (image->tls_initializer_count) { LOG("[native] %s: TLS constructors unsupported\n",name); return false; }
+    // No descriptors of its own: nothing to set up.
+    if (!image->tls_descriptors_size) return true;
+    if (guest_tls_count==sizeof guest_tls/sizeof *guest_tls) { LOG("[native] %s: too many images with TLS\n",name); return false; }
+    GTImage *tls=&guest_tls[guest_tls_count];
+    void *template=image->tls_size?malloc((size_t)image->tls_size):NULL;
+    bool ready=(!image->tls_size ||
+                (template && gm_read(&image->memory,image->tls_address,template,(size_t)image->tls_size)==GM_OK)) &&
+        gt_register(tls,name,template,(size_t)image->tls_size,image->tls_alignment,
+            (uintptr_t)(image->tls_descriptors+slide),(size_t)image->tls_descriptors_size);
+    free(template);
+    if (!ready) { LOG("[native] %s: TLS template setup failed\n",name); return false; }
+    if (image->tls_size) LOG("[native] %s: TLS template size=%zu alignment=%zu descriptors=%zu\n",
+        name,tls->tls.size,tls->tls.alignment,tls->descriptors_size/24);
+    else LOG("[native] %s: %zu thread-local descriptors with no storage; refused where used\n",
+        name,tls->descriptors_size/24);
+    guest_tls_count++;
+    return true;
 }
 static int guest_executable_path(char *buffer, uint32_t *size) {
     size_t required=strlen(guest.path)+1;
@@ -517,14 +548,61 @@ fail:
     dlclose(handle);
     return false;
 }
-static bool resolve(const char *symbol, int ordinal, bool weak, uint64_t *value, void *context) {
-    (void)context;
+// No map: our adapter for the leaf name, else iOS.
+static NSString *library_path(NSString *install_name, const char *frameworks) {
+    NSString *leaf=install_name.lastPathComponent;
+    NSString *adapter=[@(frameworks) stringByAppendingPathComponent:
+        [NSString stringWithFormat:@"ak%@.dylib",[leaf hasSuffix:@".dylib"]?[leaf stringByDeletingPathExtension]:leaf]];
+    if ([NSFileManager.defaultManager fileExistsAtPath:adapter]) return adapter;
+    if ([leaf hasSuffix:@".dylib"]) return [@"/usr/lib" stringByAppendingPathComponent:leaf];
+    return [NSString stringWithFormat:@"/System/Library/Frameworks/%@.framework/%@",leaf,leaf];
+}
+// The image being fixed up. Ordinals index its own list.
+typedef struct { const GuestImage *image; const char *path; void *const *host; } GuestBinder;
+static bool resolve(const char *symbol, int ordinal, bool weak, bool lazy, uint64_t *value, void *context) {
+    const GuestBinder *binder = context;
     const char *name = symbol[0]=='_' ? symbol+1 : symbol;
     void *pointer = hook(name);
-    if (!pointer && ordinal>0 && guest.libraries[ordinal-1]) pointer=dlsym(guest.libraries[ordinal-1],name);
+    // A positive ordinal names a library; the rest name nothing.
+    const char *needed = binder && ordinal>0 && (size_t)ordinal<=binder->image->dylib_count ?
+        binder->image->dylibs[ordinal-1] : NULL;
+    // The application's own libraries answer before the system does.
+    uint64_t carried_value=0;
+    if (!pointer && gl_lookup(&carried,binder?binder->image:NULL,binder?binder->path:NULL,needed,symbol,&carried_value)) {
+        *value=carried_value; return true;
+    }
+    if (!pointer && needed && binder->host && binder->host[ordinal-1]) pointer=dlsym(binder->host[ordinal-1],name);
     if (!pointer) pointer=dlsym(RTLD_DEFAULT,name);
+    // Nothing provides it: a stub, or null when weak.
+    if (!pointer && !weak) pointer=gs_bind(symbol,gs_kind_bound(symbol,binder && binder->image->lazy_bind_size,lazy));
     if (!pointer && !weak) LOG("[native] unresolved %s ordinal=%d\n",symbol,ordinal);
     *value=(uintptr_t)pointer; return pointer || weak;
+}
+// Apple's ObjC SPI explicitly supports images created outside dyld.
+static bool register_objc_image(const char *name, const struct mach_header *header) {
+    static void (*map_images)(unsigned,const char *const *,const struct mach_header *const *);
+    static void (*load_image)(const char *,const struct mach_header *);
+    if (!map_images) map_images=dlsym(RTLD_DEFAULT,"_objc_map_images");
+    if (!load_image) load_image=dlsym(RTLD_DEFAULT,"_objc_load_image");
+    if (!map_images || !load_image) { LOG("[native] ObjC image registration unavailable\n"); return false; }
+    const char *names[]={name};
+    map_images(1,names,&header);
+    load_image(name,header);
+    return true;
+}
+// A carried library's own initializers, already relocated.
+static bool run_initializers(const GuestImage *image, uint64_t slide, const char *name,
+                             int argc, const char **argv, const char **env, const char **apple) {
+    for (uint64_t i=0;i<image->initializer_count;i++) {
+        uintptr_t function=(uintptr_t)gi_placed_initializer(image,slide,i);
+        if (!inside((void *)function,4) || (function&3)) {
+            LOG("[native] %s: initializer %llu is not in the arena (%p)\n",name,(unsigned long long)i,(void *)function);
+            return false;
+        }
+        LOG("[native] %s: initializer %llu native=%p\n",name,(unsigned long long)i,(void *)function);
+        ((void (*)(int,const char **,const char **,const char **))function)(argc,argv,env,apple);
+    }
+    return true;
 }
 bool ng_initialize(const char *path, const char *frameworks, const char *library_map, FILE *log, bool full_startup) {
     // Failure can leave installed Objective-C hooks and an uncertain helper.
@@ -533,7 +611,7 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
     if (atomic_exchange(&initialization_attempted,true)) {
         fprintf(log,"[native] startup was already attempted; restart the app\n"); return false;
     }
-    guest.log=log; guest.path=strdup(path);
+    guest.log=log; guest.path=strdup(path); gs_log(log);
     guest_arguments=@[@(path)];
     Method arguments_method=class_getInstanceMethod(NSProcessInfo.class,@selector(arguments));
     original_arguments=(void *)method_setImplementation(arguments_method,(IMP)guest_process_arguments);
@@ -552,34 +630,58 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
     }
     char error[2048]; bool ok=false; GFStats stats;
     if (!gi_load(path,&guest.image,error,sizeof error)) { LOG("[native] load failed: %s\n",error); goto done; }
+    // Carried libraries load as data too; missing ones become stubs.
+    if (!gl_load(&carried,&guest.image,path,error,sizeof error))
+        LOG("[native] carried libraries unavailable: %s\n",error);
+    gl_report(&carried,log);
     guest.base=guest.image.header_address;
     uint64_t end=guest.base;
     for(size_t i=0;i<guest.image.segment_count;i++) {
         GISegment *s=&guest.image.segments[i]; if(s->prot && s->address+s->size>end) end=s->address+s->size;
     }
+    // One region for everything: a debugger prepares it once.
+    uint64_t offset[GL_MAX_LIBRARIES], low[GL_MAX_LIBRARIES];
+    size_t total=(size_t)(end-guest.base);
+    for (size_t i=0;i<carried.count;i++) {
+        offset[i]=total;
+        total+=(size_t)gi_extent(&carried.libraries[i].image,&low[i]);
+    }
     bool arena_ready;
     bool signed_backend=atomic_load(&use_signed_image);
+    // The signed container is captured from one executable's own pages.
+    if (signed_backend && carried.count) {
+        LOG("[native] Local signing places only the application's own image; this one carries %zu librar%s of its own; guest entry blocked\n",
+            carried.count,carried.count==1?"y":"ies");
+        goto done;
+    }
     if (signed_backend)
-        arena_ready=signed_image_prepare(end,error,sizeof error);
+        arena_ready=signed_image_prepare(guest.base+total,error,sizeof error);
     else {
 #if TOLKARA_INTEGRATED_AUTH
     if(atomic_load(&use_local_authorization) || [NSProcessInfo.processInfo.arguments containsObject:@"--local-native-authorization"])
-        arena_ready=nc_create_managed(&guest.arena,(size_t)(end-guest.base),TKPrepareLocalArena,NULL,&local_quarantine);
+        arena_ready=nc_create_managed(&guest.arena,total,TKPrepareLocalArena,NULL,&local_quarantine);
     else
 #endif
-        arena_ready=nc_create(&guest.arena,(size_t)(end-guest.base),publish,NULL);
+        arena_ready=nc_create(&guest.arena,total,publish,NULL);
     }
     if (!arena_ready) { LOG("[native] arena preparation failed errno=%d %s; guest entry blocked\n",errno,signed_backend?error:""); goto done; }
     guest.slide=(uintptr_t)guest.arena.executable-guest.base;
+    for (size_t i=0;i<carried.count;i++)
+        carried.libraries[i].slide=(uintptr_t)guest.arena.executable+offset[i]-low[i];
     LOG("[native] arena ready base=%p slide=%#llx\n",guest.arena.executable,(unsigned long long)guest.slide);
     {
         NSData *data=[NSData dataWithContentsOfFile:@(library_map)];
         NSDictionary *mapping=data?[NSJSONSerialization JSONObjectWithData:data options:0 error:NULL]:nil;
-        if (![mapping isKindOfClass:NSDictionary.class]) { LOG("[native] missing library map\n"); goto done; }
+        // A map comes with a build made for one executable.
+        if (![mapping isKindOfClass:NSDictionary.class]) {
+            LOG("[native] no library map; libraries are resolved by name\n"); mapping=nil;
+        }
         NSString *support=[@(frameworks) stringByAppendingPathComponent:@"libAKSupport.dylib"];
-        if (!dlopen(support.fileSystemRepresentation,RTLD_NOW|RTLD_GLOBAL)) { LOG("[native] support load failed: %s\n",dlerror()); goto done; }
+        if ([NSFileManager.defaultManager fileExistsAtPath:support] &&
+            !dlopen(support.fileSystemRepresentation,RTLD_NOW|RTLD_GLOBAL)) { LOG("[native] support load failed: %s\n",dlerror()); goto done; }
         for(size_t i=0;i<guest.image.dylib_count;i++) {
-            NSString *original=@(guest.image.dylibs[i]); NSString *target=mapping[original]?:original;
+            NSString *original=@(guest.image.dylibs[i]);
+            NSString *target=mapping[original]?:library_path(original,frameworks);
             if ([target hasPrefix:@"@rpath/"]) target=[@(frameworks) stringByAppendingPathComponent:target.lastPathComponent];
             guest.libraries[i]=dlopen(target.fileSystemRepresentation,RTLD_NOW|RTLD_GLOBAL);
             if (!guest.libraries[i]) LOG("[native] library %s unavailable: %s\n",target.UTF8String,dlerror());
@@ -591,35 +693,39 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
     }
     if([NSProcessInfo.processInfo.arguments containsObject:@"--sample-native"]) signal_log_fd=open([[NSHomeDirectory() stringByAppendingPathComponent:@"Documents/native-signal.log"] fileSystemRepresentation],O_WRONLY|O_CREAT|O_TRUNC,0600);
     shader_wait_pending=dlsym(RTLD_DEFAULT,"AKShaderWaitPending");
-    if (!gf_apply(&guest.image,guest.slide,resolve,NULL,&stats,error,sizeof error)) { LOG("[native] fixups failed: %s\n",error); goto done; }
-    LOG("[native] resolved rebases=%zu binds=%zu\n",stats.rebases,stats.binds);
-    if (guest.image.has_tls) {
-        if (guest.image.tls_initializer_count) { LOG("[native] TLS constructors unsupported\n"); goto done; }
-        void *template=malloc((size_t)guest.image.tls_size);
-        bool ready=template && gm_read(&guest.image.memory,guest.image.tls_address,template,(size_t)guest.image.tls_size)==GM_OK &&
-            gt_create(&guest.tls,template,(size_t)guest.image.tls_size,guest.image.tls_alignment,
-                (uintptr_t)(guest.image.tls_descriptors+guest.slide),(size_t)guest.image.tls_descriptors_size);
-        free(template);
-        if (!ready) { LOG("[native] TLS template setup failed\n"); goto done; }
-        LOG("[native] TLS template size=%zu alignment=%zu descriptors=%zu\n",guest.tls.size,guest.tls.alignment,guest.tls.descriptors_size/24);
+    for (size_t i=0;i<carried.count;i++) {
+        GuestLibrary *library=&carried.libraries[i];
+        GFStats library_stats;
+        GuestBinder binder={.image=&library->image,.path=library->path};
+        if (!gf_apply(&library->image,library->slide,resolve,&binder,&library_stats,error,sizeof error)) {
+            LOG("[native] %s fixups failed: %s\n",library->install_name,error); goto done;
+        }
+        LOG("[native] %s rebases=%zu binds=%zu\n",library->install_name,library_stats.rebases,library_stats.binds);
     }
+    GuestBinder binder={.image=&guest.image,.path=guest.path,.host=guest.libraries};
+    if (!gf_apply(&guest.image,guest.slide,resolve,&binder,&stats,error,sizeof error)) { LOG("[native] fixups failed: %s\n",error); goto done; }
+    LOG("[native] resolved rebases=%zu binds=%zu stubs=%u of %u\n",stats.rebases,stats.binds,gs_used(),gs_capacity());
+    if (!setup_tls(&guest.image,guest.slide,"the application")) goto done;
+    // Carried libraries get the treatment dyld gives them.
+    for (size_t i=0;i<carried.count;i++)
+        if (!setup_tls(&carried.libraries[i].image,carried.libraries[i].slide,carried.libraries[i].install_name)) goto done;
     size_t signed_pages_skipped=0;
     for(size_t i=0;i<guest.image.memory.count;i++) {
         GMPage *page=&guest.image.memory.pages[i];
         if(!page->bytes) continue;
-        size_t offset=(size_t)(page->address-guest.base);
+        size_t page_offset=(size_t)(page->address-guest.base);
         if (signed_image.active) {
             // __TEXT pages after the rewritten range are already backed by the
             // signed container: never overwrite validated pages. Only the
             // rewritten range (original packed bytes) is staged onto anonymous
             // pages, with the bounds check nc_write applies in the other backend.
-            if (offset>=signed_image.shadow_size && offset<signed_image.image.size) { signed_pages_skipped++; continue; }
-            if (offset>guest.arena.size || GM_PAGE_SIZE>guest.arena.size-offset) {
+            if (page_offset>=signed_image.shadow_size && page_offset<signed_image.image.size) { signed_pages_skipped++; continue; }
+            if (page_offset>guest.arena.size || GM_PAGE_SIZE>guest.arena.size-page_offset) {
                 LOG("[signed-image] staged page %#llx lies outside the arena\n",(unsigned long long)page->address); goto done;
             }
-            memcpy((char *)guest.arena.executable+offset,page->bytes,GM_PAGE_SIZE);
+            memcpy((char *)guest.arena.executable+page_offset,page->bytes,GM_PAGE_SIZE);
         }
-        else if(!nc_write(&guest.arena,offset,page->bytes,GM_PAGE_SIZE)) goto done;
+        else if(!nc_write(&guest.arena,page_offset,page->bytes,GM_PAGE_SIZE)) goto done;
     }
     if (signed_image.active) LOG("[signed-image] %zu staged executable pages left to the signed container\n",signed_pages_skipped);
     for(size_t i=0;i<guest.image.segment_count;i++) {
@@ -629,19 +735,51 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
             LOG("[native] segment protection failed: %s errno=%d\n",s->name,errno); goto done;
         }
     }
+    // Carried libraries are never part of a signed container: plain pages.
+    for (size_t i=0;i<carried.count;i++) {
+        GuestLibrary *library=&carried.libraries[i];
+        uint64_t base=low[i];
+        for (size_t j=0;j<library->image.memory.count;j++) {
+            GMPage *page=&library->image.memory.pages[j];
+            if (page->bytes && !nc_write(&guest.arena,(size_t)(page->address-base+offset[i]),page->bytes,GM_PAGE_SIZE)) {
+                LOG("[native] %s: cannot place page %#llx\n",library->install_name,(unsigned long long)page->address); goto done;
+            }
+        }
+        for (size_t j=0;j<library->image.segment_count;j++) {
+            GISegment *s=&library->image.segments[j]; if(!s->prot) continue;
+            if (mprotect((void *)(s->address+library->slide),s->size,s->prot & ((s->prot&GM_EXEC)?~GM_WRITE:~0u))) {
+                LOG("[native] %s: segment protection failed: %s errno=%d\n",library->install_name,s->name,errno); goto done;
+            }
+        }
+        gm_destroy(&library->image.memory);
+    }
     {
         // The unpacking initializer runs in both backends. With Local signing
         // its code-writing operations verify the signed pages byte-for-byte
-        // instead of writing through an RW alias.
-        uintptr_t initializer=guest.image.first_initializer+guest.slide;
+        // instead of writing through an RW alias. Read like the rest of the
+        // initializers, after fixups: a chained record is no address.
+        uintptr_t initializer=guest.image.initializer_count?(uintptr_t)gi_placed_initializer(&guest.image,guest.slide,0):0;
         gm_destroy(&guest.image.memory);
-        LOG("[native] entering original initializer preferred=%#llx native=%p\n",(unsigned long long)guest.image.first_initializer,(void *)initializer);
+        if (guest.image.initializer_count)
+            LOG("[native] entering original initializer preferred=%#llx native=%p\n",(unsigned long long)(initializer-guest.slide),(void *)initializer);
+        else LOG("[native] the application records no initializers\n");
         char *executable_argument=NULL;
         asprintf(&executable_argument,"executable_path=%s",guest.path);
         const char *argv[]={guest.path,NULL}, *env[]={NULL}, *apple[]={executable_argument,NULL};
         int argc=1;
-        ((void (*)(int,const char **,const char **,const char **))initializer)(argc,argv,env,apple);
-        LOG("[native] first original initializer returned\n"); ok=true;
+        // dyld order: a library's initializers before the client's.
+        for (size_t i=0;full_startup && i<carried.count;i++) {
+            GuestLibrary *library=&carried.libraries[i];
+            LOG("[native] registering %s\n",library->install_name);
+            if (!register_objc_image(library->path,(const struct mach_header *)(library->image.header_address+library->slide)) ||
+                !run_initializers(&library->image,library->slide,library->install_name,argc,argv,env,apple)) { ok=false; goto done; }
+        }
+        // Nothing to call where the image records no initializer.
+        if (guest.image.initializer_count) {
+            ((void (*)(int,const char **,const char **,const char **))initializer)(argc,argv,env,apple);
+            LOG("[native] first original initializer returned\n");
+        }
+        ok=true;
         if (signed_image.active && !signed_image.shadow)
             LOG("[signed-image] no rewritten range: every __TEXT page was signed before the initializer; no unpack verification or restore needed\n");
         if (signed_image.shadow) {
@@ -671,18 +809,11 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
         if (full_startup) {
             // Apple's ObjC SPI explicitly supports images created outside dyld.
             // Invoke after the client's unpacking initializer restores its code.
-            void (*map_images)(unsigned,const char *const *,const struct mach_header *const *)=dlsym(RTLD_DEFAULT,"_objc_map_images");
-            void (*load_image)(const char *,const struct mach_header *)=dlsym(RTLD_DEFAULT,"_objc_load_image");
-            if (!map_images || !load_image) { LOG("[native] ObjC image registration unavailable\n"); ok=false; goto done; }
-            const struct mach_header *header=guest.arena.executable;
-            const char *names[]={path};
             LOG("[native] registering original ObjC image\n");
-            map_images(1,names,&header);
-            load_image(path,header);
+            if (!register_objc_image(path,(const struct mach_header *)guest.arena.executable)) { ok=false; goto done; }
             LOG("[native] ObjC image registration returned\n");
-            uint64_t *initializers=(uint64_t *)(guest.image.initializer_address+guest.slide);
             for(uint64_t i=1;i<guest.image.initializer_count;i++) {
-                uintptr_t function=initializers[i];
+                uintptr_t function=(uintptr_t)gi_placed_initializer(&guest.image,guest.slide,i);
                 if (!inside((void *)function,4) || (function&3)) { LOG("[native] invalid initializer %llu=%p\n",(unsigned long long)i,(void *)function); ok=false; goto done; }
                 LOG("[native] initializer %llu preferred=%#llx native=%p\n",(unsigned long long)i,(unsigned long long)(function-guest.slide),(void *)function);
                 ((void (*)(int,const char **,const char **,const char **))function)(argc,argv,env,apple);

@@ -23,7 +23,9 @@ static bool read_at(FILE *f, uint64_t offset, void *out, size_t size) {
 }
 void gi_destroy(GuestImage *image) {
     for (size_t i = 0; i < image->dylib_count; i++) free(image->dylibs[i]);
+    for (size_t i = 0; i < image->rpath_count; i++) free(image->rpaths[i]);
     free(image->exports);
+    free(image->initializers);
     gm_destroy(&image->memory); *image = (GuestImage){0};
 }
 static bool load(FILE *f, GuestImage *image, uint32_t file_type, char *error, size_t error_size) {
@@ -66,7 +68,7 @@ static bool load(FILE *f, GuestImage *image, uint32_t file_type, char *error, si
     image->slice_offset = slice; image->slice_size = slice_size;
     uint64_t cursor = sizeof mh, commands_end = sizeof mh + mh.sizeofcmds;
     uint64_t entry_offset = 0, init_address = 0, init_size = 0;
-    bool have_entry = false, have_init = false, have_text = false;
+    bool have_entry = false, have_init = false, have_text = false, init_offsets = false;
     uint64_t header_address = 0;
     uint32_t export_offset = 0;
     bool have_exports = false;
@@ -100,9 +102,10 @@ static bool load(FILE *f, GuestImage *image, uint32_t file_type, char *error, si
                     (!within(section.offset, section.size, slice_size) || section.offset < s.fileoff ||
                      !within(section.offset - s.fileoff, section.size, s.filesize) ||
                      section.addr - s.vmaddr != section.offset - s.fileoff)) BAD("invalid file-backed section");
-                if (type == S_MOD_INIT_FUNC_POINTERS) {
-                    if (have_init || (section.size % 8)) BAD("unsupported initializer section layout");
-                    have_init = true; init_address = section.addr; init_size = section.size;
+                if (type == S_MOD_INIT_FUNC_POINTERS || type == S_INIT_FUNC_OFFSETS) {
+                    bool offsets = type == S_INIT_FUNC_OFFSETS;
+                    if (have_init || (section.size % (offsets ? 4 : 8))) BAD("unsupported initializer section layout");
+                    have_init = true; init_offsets = offsets; init_address = section.addr; init_size = section.size;
                 }
                 if (type == S_THREAD_LOCAL_REGULAR || type == S_THREAD_LOCAL_ZEROFILL) {
                     if (section.align > 20) BAD("unsupported TLS alignment");
@@ -130,9 +133,22 @@ static bool load(FILE *f, GuestImage *image, uint32_t file_type, char *error, si
             size_t length = lc.cmdsize - d.dylib.name.offset;
             char *name = malloc(length);
             if (!name) BAD("cannot allocate dylib name");
+            image->dylib_reexports[image->dylib_count] = lc.cmd == LC_REEXPORT_DYLIB;
             image->dylibs[image->dylib_count++] = name;
             if (!read_at(f, slice + cursor + d.dylib.name.offset, name, length) ||
                 !memchr(name, 0, length)) BAD("unterminated dylib name");
+        } else if (lc.cmd == LC_RPATH) {
+            struct rpath_command r;
+            if (lc.cmdsize < sizeof r || !read_at(f, slice + cursor, &r, sizeof r) ||
+                r.path.offset < sizeof r || r.path.offset >= lc.cmdsize) BAD("invalid rpath command");
+            // More rpaths than this is not an image we load.
+            if (image->rpath_count == GI_MAX_RPATHS) BAD("too many rpaths");
+            size_t length = lc.cmdsize - r.path.offset;
+            char *path = malloc(length);
+            if (!path) BAD("cannot allocate rpath");
+            image->rpaths[image->rpath_count++] = path;
+            if (!read_at(f, slice + cursor + r.path.offset, path, length) ||
+                !memchr(path, 0, length)) BAD("unterminated rpath");
         } else if (lc.cmd == LC_MAIN) {
             struct entry_point_command entry;
             if (have_entry || lc.cmdsize < sizeof entry || !read_at(f, slice + cursor, &entry, sizeof entry)) BAD("invalid LC_MAIN");
@@ -157,7 +173,11 @@ static bool load(FILE *f, GuestImage *image, uint32_t file_type, char *error, si
                 !within(info.dataoff, info.datasize, slice_size)) BAD("invalid export trie command");
             have_exports = true; export_offset = info.dataoff; image->export_size = info.datasize;
         } else if (lc.cmd == LC_DYLD_CHAINED_FIXUPS) {
+            struct linkedit_data_command info;
+            if (image->chained_fixups || lc.cmdsize < sizeof info || !read_at(f, slice + cursor, &info, sizeof info) ||
+                !within(info.dataoff, info.datasize, slice_size)) BAD("invalid chained fixups command");
             image->chained_fixups = true;
+            image->chained_offset = info.dataoff; image->chained_size = info.datasize;
         } else if (lc.cmd == LC_ENCRYPTION_INFO_64) {
             struct encryption_info_command_64 encryption;
             if (lc.cmdsize < sizeof encryption || !read_at(f, slice + cursor, &encryption, sizeof encryption)) BAD("invalid encryption info");
@@ -211,11 +231,26 @@ static bool load(FILE *f, GuestImage *image, uint32_t file_type, char *error, si
     }
     if (have_entry && (!found_entry || (image->entry & 3))) BAD("LC_MAIN is not in executable file-backed memory");
     image->header_address = header_address; image->initializer_address = init_address;
-    image->initializer_count = init_size / 8;
-    if (init_size && gm_read(&image->memory, init_address, &image->first_initializer, 8) != GM_OK) BAD("cannot read initializer pointer");
-    if (image->first_initializer && !image->chained_fixups) {
-        uint32_t instruction;
-        if (gm_fetch(&image->memory, NULL, image->first_initializer, &instruction) != GM_OK) BAD("first initializer is not executable");
+    image->initializer_offsets = init_offsets;
+    image->initializer_count = init_size / (init_offsets ? 4 : 8);
+    if (init_offsets) {
+        // Offsets from the header are final: no fixup applies.
+        image->initializers = calloc(image->initializer_count ? image->initializer_count : 1, sizeof *image->initializers);
+        if (!image->initializers) BAD("cannot hold the initializer list");
+        for (uint64_t i = 0; i < image->initializer_count; i++) {
+            uint32_t offset, instruction;
+            if (gm_read(&image->memory, init_address + i * 4, &offset, 4) != GM_OK ||
+                gm_fetch(&image->memory, NULL, header_address + offset, &instruction) != GM_OK)
+                BAD("initializer %" PRIu64 " is not executable", i);
+            image->initializers[i] = header_address + offset;
+        }
+        if (image->initializer_count) image->first_initializer = image->initializers[0];
+    } else {
+        if (init_size && gm_read(&image->memory, init_address, &image->first_initializer, 8) != GM_OK) BAD("cannot read initializer pointer");
+        if (image->first_initializer && !image->chained_fixups) {
+            uint32_t instruction;
+            if (gm_fetch(&image->memory, NULL, image->first_initializer, &instruction) != GM_OK) BAD("first initializer is not executable");
+        }
     }
     // Ensure header bytes were copied verbatim, including MH_EXECUTE and platform.
     struct mach_header_64 guest_header;
@@ -240,6 +275,23 @@ bool gi_load(const char *path, GuestImage *image, char *error, size_t error_size
 bool gi_load_library(const char *path, GuestImage *image, char *error, size_t error_size) {
     return load_path(path, image, MH_DYLIB, error, error_size);
 }
+uint64_t gi_extent(const GuestImage *image, uint64_t *low) {
+    uint64_t start = UINT64_MAX, end = 0;
+    for (size_t i = 0; i < image->segment_count; i++) {
+        const GISegment *s = &image->segments[i];
+        // What gi_load maps is what gets placed.
+        if (!s->size || !strcmp(s->name, "__PAGEZERO")) continue;
+        if (s->address < start) start = s->address;
+        if (s->address + s->size > end) end = s->address + s->size;
+    }
+    if (start > end) { if (low) *low = image->header_address; return 0; }
+    if (low) *low = start;
+    return (end - start + GM_PAGE_SIZE - 1) & ~(uint64_t)(GM_PAGE_SIZE - 1);
+}
+uint64_t gi_placed_initializer(const GuestImage *image, uint64_t slide, uint64_t index) {
+    if (image->initializer_offsets) return image->initializers[index] + slide;
+    return ((const uint64_t *)(uintptr_t)(image->initializer_address + slide))[index];
+}
 static bool export_uleb(const unsigned char **cursor, const unsigned char *end, uint64_t *value) {
     *value = 0;
     for (unsigned shift = 0; shift <= 63 && *cursor < end; shift += 7) {
@@ -250,11 +302,12 @@ static bool export_uleb(const unsigned char **cursor, const unsigned char *end, 
     }
     return false;
 }
-GIExportResult gi_export(const GuestImage *image, const char *symbol,
-                         uint64_t *address, bool *absolute, char *error, size_t error_size) {
+GIExportResult gi_export(const GuestImage *image, const char *symbol, GIExport *out,
+                         char *error, size_t error_size) {
 #define INVALID(...) do { fail(error, error_size, __VA_ARGS__); return GI_EXPORT_INVALID; } while (0)
     if (error_size) error[0] = 0;
-    if (!symbol || !address || !absolute) INVALID("invalid export query");
+    if (!symbol || !out) INVALID("invalid export query");
+    *out = (GIExport){0};
     size_t remaining = strnlen(symbol, 4097);
     if (!remaining || remaining > 4096) INVALID("invalid export symbol length");
     if (!image->export_size) return GI_EXPORT_MISSING;
@@ -273,9 +326,21 @@ GIExportResult gi_export(const GuestImage *image, const char *symbol,
             uint64_t flags, value;
             if (!export_uleb(&cursor, children, &flags)) INVALID("invalid export flags");
             unsigned kind = flags & EXPORT_SYMBOL_FLAGS_KIND_MASK;
-            if ((flags & ~(uint64_t)(EXPORT_SYMBOL_FLAGS_KIND_MASK | EXPORT_SYMBOL_FLAGS_WEAK_DEFINITION)) ||
+            if ((flags & ~(uint64_t)(EXPORT_SYMBOL_FLAGS_KIND_MASK | EXPORT_SYMBOL_FLAGS_WEAK_DEFINITION |
+                                     EXPORT_SYMBOL_FLAGS_REEXPORT)) ||
                 (kind != EXPORT_SYMBOL_FLAGS_KIND_REGULAR && kind != EXPORT_SYMBOL_FLAGS_KIND_ABSOLUTE))
                 INVALID("unsupported export kind/flags %#" PRIx64, flags);
+            // A re-export names a library and a name.
+            if (flags & EXPORT_SYMBOL_FLAGS_REEXPORT) {
+                uint64_t ordinal;
+                if (!export_uleb(&cursor, children, &ordinal) || !ordinal || ordinal > image->dylib_count)
+                    INVALID("re-export names library %" PRIu64 " of %zu", ordinal, image->dylib_count);
+                const char *imported = (const char *)cursor;
+                size_t length = (size_t)(children - cursor);
+                if (!length || memchr(imported, 0, length) != imported + length - 1) INVALID("invalid re-export name");
+                out->ordinal = (int)ordinal; out->name = *imported ? imported : NULL;
+                return GI_EXPORT_REEXPORT;
+            }
             if (!export_uleb(&cursor, children, &value) || cursor != children) INVALID("invalid export address");
             bool is_absolute = kind == EXPORT_SYMBOL_FLAGS_KIND_ABSOLUTE;
             if (!is_absolute) {
@@ -288,7 +353,7 @@ GIExportResult gi_export(const GuestImage *image, const char *symbol,
                 }
                 if (!mapped) INVALID("export outside mapped image");
             }
-            *address = value; *absolute = is_absolute;
+            out->address = value; out->absolute = is_absolute;
             return GI_EXPORT_FOUND;
         }
         if (children == end) INVALID("missing export child count");
@@ -322,8 +387,11 @@ void gi_report(const GuestImage *image, FILE *out) {
                 s->name, s->address, s->size, s->file_size,
                 s->prot & GM_READ ? 'r' : '-', s->prot & GM_WRITE ? 'w' : '-', s->prot & GM_EXEC ? 'x' : '-');
     }
-    fprintf(out, "[guest] mapped=%" PRIu64 " file-backed=%" PRIu64 " entry=%#" PRIx64 " initializers=%" PRIu64 " first=%#" PRIx64 "\n",
-            image->mapped_size, image->file_backed_size, image->entry, image->initializer_count, image->first_initializer);
+    fprintf(out, "[guest] mapped=%" PRIu64 " file-backed=%" PRIu64 " entry=%#" PRIx64 " initializers=%" PRIu64 " first=%#" PRIx64 "%s\n",
+            image->mapped_size, image->file_backed_size, image->entry, image->initializer_count, image->first_initializer,
+            image->initializer_offsets ? " (offsets)" : "");
+    for (uint64_t i = 0; image->initializer_offsets && i < image->initializer_count; i++)
+        fprintf(out, "[guest] initializer %" PRIu64 "=%#" PRIx64 "\n", i, image->initializers[i]);
     fprintf(out, "[guest] pending runtime work: arm64 execution, dyld imports (bind=%u lazy=%u weak=%u), TLS=%s ObjC registration; chained-fixups=%s\n",
             image->bind_size, image->lazy_bind_size, image->weak_bind_size,
             image->has_tls ? "yes" : "no", image->chained_fixups ? "yes" : "no");
