@@ -147,6 +147,23 @@ int main(void) {
         assert(gf_apply(&i, 0x200000, resolve, NULL, &stats, error, sizeof error));
         assert(gm_read(&i.memory, 0x100000000, &value, 8) == GM_OK && value == 0x100200800);
         gi_destroy(&i);
+        // Offsets again, from a page start past zero: a rebase, then a bind
+        // with an inline addend of four. The words before it stay as they were.
+        chained_setup(&i, DYLD_CHAINED_PTR_64_OFFSET, 0, 0);
+        uint16_t page_start = 0x100;
+        uint64_t chain[2] = {0x800ULL | (2ULL << 51), (1ULL << 63) | (4ULL << 24)};
+        assert(gm_populate(&i.memory, 0x10000043E, &page_start, sizeof page_start) == GM_OK);
+        assert(gm_populate(&i.memory, 0x100000100, chain, sizeof chain) == GM_OK);
+        assert(gf_apply(&i, 0x200000, resolve, NULL, &stats, error, sizeof error) && stats.rebases == 1 && stats.binds == 1);
+        assert(gm_read(&i.memory, 0x100000100, &value, 8) == GM_OK && value == 0x100200800);
+        assert(gm_read(&i.memory, 0x100000108, &value, 8) == GM_OK && value == 0x12340004);
+        assert(gm_read(&i.memory, 0x100000000, &value, 8) == GM_OK && value == 0);
+        gi_destroy(&i);
+        // A vmaddr rebase's high8 lands in the top byte.
+        chained_setup(&i, DYLD_CHAINED_PTR_64, 0x100000800ULL | (0x5AULL << 36), 0);
+        assert(gf_apply(&i, 0x200000, resolve, NULL, &stats, error, sizeof error) && stats.rebases == 1);
+        assert(gm_read(&i.memory, 0x100000000, &value, 8) == GM_OK && value == (0x100200800ULL | (0x5AULL << 56)));
+        gi_destroy(&i);
 
         // Two pointer initializers in a chain: read after fixups.
         chained_setup(&i, DYLD_CHAINED_PTR_64, 0x100000800ULL | (2ULL << 51), 0x100000900ULL);
@@ -167,6 +184,25 @@ int main(void) {
         gi_destroy(&i);
         chained_setup(&i, DYLD_CHAINED_PTR_64, rebase, (1ULL << 63) | 5);
         assert(!gf_apply(&i, 0, resolve, NULL, &stats, error, sizeof error) && strstr(error, "import 5"));
+        gi_destroy(&i);
+        // arm64e pointers are authenticated; only plain formats are walked.
+        chained_setup(&i, DYLD_CHAINED_PTR_ARM64E, rebase, bind);
+        assert(!gf_apply(&i, 0, resolve, NULL, &stats, error, sizeof error) && strstr(error, "pointer format"));
+        gi_destroy(&i);
+        // The first ordinal past the table.
+        chained_setup(&i, DYLD_CHAINED_PTR_64, rebase, bind | 1);
+        assert(!gf_apply(&i, 0, resolve, NULL, &stats, error, sizeof error) && strstr(error, "import 1 of 1"));
+        gi_destroy(&i);
+        // An import count the blob cannot hold, and a name past the blob's end.
+        chained_setup(&i, DYLD_CHAINED_PTR_64, rebase, bind);
+        uint32_t huge = 0x1000000;
+        assert(gm_populate(&i.memory, 0x100000410, &huge, sizeof huge) == GM_OK);
+        assert(!gf_apply(&i, 0, resolve, NULL, &stats, error, sizeof error) && strstr(error, "imports outside"));
+        gi_destroy(&i);
+        chained_setup(&i, DYLD_CHAINED_PTR_64, rebase, bind);
+        uint32_t unnamed = 1 | (200u << 9);
+        assert(gm_populate(&i.memory, 0x100000440, &unnamed, sizeof unnamed) == GM_OK);
+        assert(!gf_apply(&i, 0, resolve, NULL, &stats, error, sizeof error) && strstr(error, "names nothing"));
         gi_destroy(&i);
         // A chain that walks off the end of its page.
         chained_setup(&i, DYLD_CHAINED_PTR_64, 4094ULL << 51, bind);
@@ -229,5 +265,5 @@ int main(void) {
         }
     }
     puts("PASS: Mach-O pointer relocation, import binding, signed addends, observed fixups, malformed fixup bounds");
-    puts("PASS: lazy binds first, chained fixups, chained initializers read after fixups");
+    puts("PASS: lazy binds first, chained fixups, chained initializers read after fixups, malformed chains");
 }
