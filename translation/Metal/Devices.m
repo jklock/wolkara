@@ -2,7 +2,7 @@
 #import <Foundation/Foundation.h>
 #import "AKSupport.h"
 #import "LibraryContainer.h"
-#import <dlfcn.h>
+#import "RealFunction.h"
 #import <objc/runtime.h>
 #import <CommonCrypto/CommonDigest.h>
 #import <UIKit/UIKit.h>
@@ -206,14 +206,11 @@ void MTLRemoveDeviceObserver(id<NSObject> observer) {
 }
 // The guest can also reach Metal without the observer entry points; wrap those
 // so every device it gets carries the desktop translations. The real functions
-// are those of the Metal this adapter re-exports.
+// are those of the Metal this adapter re-exports (tests/test_real_function.m).
 static void *realMetalFunction(const char *name, void *wrapper) {
-    void *function=dlsym(RTLD_NEXT,name);
-    if(!function) {
-        void *metal=dlopen("/System/Library/Frameworks/Metal.framework/Metal",RTLD_LAZY|RTLD_NOLOAD);
-        function=metal?dlsym(metal,name):NULL;
-    }
-    return function==wrapper?NULL:function;
+    void *function=AKRealFunction(name,AK_METAL_PATH,wrapper);
+    if(!function) AKLog(@"Metal: the system has no %s to forward to",name);
+    return function;
 }
 typedef id<MTLDevice> (*DeviceFactory)(void) __attribute__((ns_returns_retained));
 id<MTLDevice> MTLCreateSystemDefaultDevice(void) {
