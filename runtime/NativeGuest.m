@@ -26,6 +26,7 @@ static NativeCodeMemory local_quarantine;
 #include <mach/arm/thread_status.h>
 #include <pthread.h>
 #include <signal.h>
+#include <spawn.h>
 #include <sys/ucontext.h>
 #include <fcntl.h>
 #include <stdatomic.h>
@@ -506,6 +507,12 @@ static void *guest_dlsym(void *, const char *);
 static void *guest_dlopen(const char *, int);
 static int guest_dlclose(void *);
 static char *guest_dlerror(void);
+static int guest_system(const char *);
+static FILE *guest_popen(const char *, const char *);
+static int guest_posix_spawn(pid_t *, const char *, const posix_spawn_file_actions_t *, const posix_spawnattr_t *,
+                             char *const *, char *const *);
+static void guest_exit(int) __attribute__((noreturn));
+static void guest_abort(void) __attribute__((noreturn));
 // Handles to the placed images a guest dlopen yields: the tag, RTLD_FIRST, and
 // the image in the low byte (0 the executable, n carried library n-1).
 #define GUEST_HANDLE_TAG 0x7400000000000000ULL
@@ -538,6 +545,8 @@ static void *hook(const char *name) {
     HOOK("dyld_stub_binder",guest_unexpected_lazy_bind);
     HOOK("dladdr",guest_dladdr); HOOK("dlsym",guest_dlsym);
     HOOK("dlopen",guest_dlopen); HOOK("dlclose",guest_dlclose); HOOK("dlerror",guest_dlerror);
+    HOOK("system",guest_system); HOOK("popen",guest_popen); HOOK("posix_spawn",guest_posix_spawn);
+    HOOK("exit",guest_exit); HOOK("abort",guest_abort);
     HOOK("mmap",guest_mmap); HOOK("mprotect",guest_mprotect); HOOK("munmap",guest_munmap);
     HOOK("memcpy",guest_memcpy); HOOK("memmove",guest_memmove); HOOK("memset",guest_memset);
     HOOK("pthread_jit_write_protect_np",guest_jit_protect);
@@ -579,6 +588,33 @@ static void loggable_path(const char *path, char *out, size_t size) {
     const char *name=strrchr(path,'/');
     if (out[0]=='/') snprintf(out,size,".../%s",name?name+1:path);
 }
+// How the guest starts helper processes or gives up: logged, then the real
+// call. iPadOS runs no helper processes, so these fail as on a Mac without
+// the tool. system and popen are not declared for iOS; the macOS guest
+// imports them, so they are found at run time.
+static int guest_system(const char *command) {
+    char shown[1024]; home_relative(command,shown,sizeof shown);
+    LOG("[native] system(%s)\n",command?shown:"NULL");
+    static int (*real_system)(const char *);
+    if (!real_system) real_system=dlsym(RTLD_DEFAULT,"system");
+    return real_system?real_system(command):-1;
+}
+static FILE *guest_popen(const char *command, const char *mode) {
+    char shown[1024]; home_relative(command,shown,sizeof shown);
+    LOG("[native] popen(%s)\n",command?shown:"NULL");
+    static FILE *(*real_popen)(const char *, const char *);
+    if (!real_popen) real_popen=dlsym(RTLD_DEFAULT,"popen");
+    return real_popen?real_popen(command,mode):NULL;
+}
+static int guest_posix_spawn(pid_t *pid, const char *path, const posix_spawn_file_actions_t *actions,
+                             const posix_spawnattr_t *attributes, char *const argv[], char *const envp[]) {
+    char shown[1024]; if (path) loggable_path(path,shown,sizeof shown);
+    int result=posix_spawn(pid,path,actions,attributes,argv,envp);
+    LOG("[native] posix_spawn(%s) -> %d\n",path?shown:"NULL",result);
+    return result;
+}
+static void guest_exit(int code) { LOG("[native] exit(%d)\n",code); exit(code); }
+static void guest_abort(void) { LOG("[native] abort()\n"); abort(); }
 // dlopen the signed container (dyld validates its CodeDirectory and maps its
 // pages), check its layout and bind it to this guest before anything is
 // mapped, then reserve the guest arena anonymously. Pages after the rewritten
