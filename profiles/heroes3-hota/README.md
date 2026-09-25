@@ -1,14 +1,17 @@
 # Heroes of Might and Magic III: Horn of the Abyss (Windows, GOG)
 
-**Status: not yet started on a device.** This profile describes the first
-Windows application for Tolkara: a 32-bit x86 program run by an arm64 macOS
-build of Wine with FEX inside it as the x86 emulator, the same pairing Valve's
-Proton uses for ARM64 and CodeWeavers' CrossOver uses on Apple silicon. The
-runtime work Tolkara needs to host that stack is listed, with its status, in
-[docs/WINDOWS.md](../../docs/WINDOWS.md). Until those items land, this profile
-serves the Mac-side milestone: the runtime built here runs the game natively on
-an Apple silicon Mac without Rosetta, which is how the Wine + FEX layers are
-validated before Tolkara enters the picture.
+**Status: blocked below Tolkara, on the Mac already.** This profile describes
+the first Windows application for Tolkara: a 32-bit x86 program run by an
+arm64 macOS build of Wine with FEX inside it as the x86 emulator, the same
+pairing Valve's Proton uses for ARM64 and CodeWeavers' CrossOver uses on Apple
+silicon. The runtime builds and starts natively on an Apple silicon Mac, but a
+native arm64 process on macOS and iPadOS has no address space below 4 GB, and
+a 32-bit Windows program needs exactly that; see "The 4 GB floor" in
+[docs/WINDOWS.md](../../docs/WINDOWS.md). Until FEX can run a 32-bit guest at
+a translated address, this game cannot reach the first milestone. The steps
+below still build and stage everything, so the state is reproducible and the
+runtime is ready for 64-bit Windows programs once Wine's shared-data mapping
+is relocated.
 
 You need your own GOG installer of *Heroes of Might and Magic III: Horn of the
 Abyss* (the GOG build bundles HotA and the HD mod; 1.8.1 / HD 5.8 was used
