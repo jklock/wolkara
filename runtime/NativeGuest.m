@@ -503,6 +503,20 @@ static int guest_executable_path(char *buffer, uint32_t *size) {
     memcpy(buffer,guest.path,required); return 0;
 }
 static void *guest_dlsym(void *, const char *);
+static void *guest_dlopen(const char *, int);
+static int guest_dlclose(void *);
+static char *guest_dlerror(void);
+// Handles to the placed images a guest dlopen yields: the tag, RTLD_FIRST, and
+// the image in the low byte (0 the executable, n carried library n-1).
+#define GUEST_HANDLE_TAG 0x7400000000000000ULL
+#define GUEST_HANDLE_FIRST 0x100ULL
+static bool guest_handle(const void *handle, size_t *index, bool *first) {
+    uintptr_t value=(uintptr_t)handle;
+    if ((value&~(GUEST_HANDLE_FIRST|0xffULL))!=GUEST_HANDLE_TAG || (value&0xff)>carried.count) return false;
+    *index=value&0xff; *first=(value&GUEST_HANDLE_FIRST)!=0;
+    return true;
+}
+static void *placed_symbol(size_t index, const char *name, bool first);
 extern int __ulock_wait(uint32_t,void *,uint64_t,uint32_t);
 static bool (*shader_wait_pending)(void);
 static bool shader_pending(void) { return shader_wait_pending && shader_wait_pending(); }
@@ -523,6 +537,7 @@ static void *hook(const char *name) {
     HOOK("_tlv_bootstrap",guest_tlv_bootstrap);
     HOOK("dyld_stub_binder",guest_unexpected_lazy_bind);
     HOOK("dladdr",guest_dladdr); HOOK("dlsym",guest_dlsym);
+    HOOK("dlopen",guest_dlopen); HOOK("dlclose",guest_dlclose); HOOK("dlerror",guest_dlerror);
     HOOK("mmap",guest_mmap); HOOK("mprotect",guest_mprotect); HOOK("munmap",guest_munmap);
     HOOK("memcpy",guest_memcpy); HOOK("memmove",guest_memmove); HOOK("memset",guest_memset);
     HOOK("pthread_jit_write_protect_np",guest_jit_protect);
@@ -530,8 +545,24 @@ static void *hook(const char *name) {
     return NULL;
 }
 static void *guest_dlsym(void *handle, const char *name) {
-    void *value = hook(name); if (!value) value = dlsym(handle,name);
+    void *value = hook(name);
+    size_t index; bool first;
+    if (!value && guest_handle(handle,&index,&first)) value = placed_symbol(index,name,first);
+    else if (!value) value = dlsym(handle,name);
     LOG("[native] dlsym(%s) -> %p\n",name,value); return value;
+}
+// Placed images stay for the life of the guest.
+static int guest_dlclose(void *handle) {
+    size_t index; bool first;
+    return guest_handle(handle,&index,&first) ? 0 : dlclose(handle);
+}
+// A dlopen this loader refuses is reported once by the guest's dlerror, as dyld would.
+static _Thread_local char guest_dl_error[512];
+static char *guest_dlerror(void) {
+    static _Thread_local char reported[sizeof guest_dl_error];
+    if (!guest_dl_error[0]) return dlerror();
+    memcpy(reported,guest_dl_error,sizeof reported); guest_dl_error[0]=0;
+    return reported;
 }
 // Logs leave the device: show app-container paths relative to the home
 // directory, whose absolute form carries a per-install UUID.
@@ -605,12 +636,17 @@ fail:
     dlclose(handle);
     return false;
 }
-// No map: our adapter for the leaf name, else iOS.
-static NSString *library_path(NSString *install_name, const char *frameworks) {
+// Our adapter for an install name's leaf, if this build has one.
+static NSString *adapter_path(NSString *install_name, const char *frameworks) {
     NSString *leaf=install_name.lastPathComponent;
     NSString *adapter=[@(frameworks) stringByAppendingPathComponent:
         [NSString stringWithFormat:@"ak%@.dylib",[leaf hasSuffix:@".dylib"]?[leaf stringByDeletingPathExtension]:leaf]];
-    if ([NSFileManager.defaultManager fileExistsAtPath:adapter]) return adapter;
+    return [NSFileManager.defaultManager fileExistsAtPath:adapter] ? adapter : nil;
+}
+// No map: our adapter for the leaf name, else iOS.
+static NSString *library_path(NSString *install_name, const char *frameworks) {
+    NSString *leaf=install_name.lastPathComponent, *adapter=adapter_path(install_name,frameworks);
+    if (adapter) return adapter;
     if ([leaf hasSuffix:@".dylib"]) return [@"/usr/lib" stringByAppendingPathComponent:leaf];
     return [NSString stringWithFormat:@"/System/Library/Frameworks/%@.framework/%@",leaf,leaf];
 }
@@ -619,6 +655,11 @@ static bool guest_generic;
 // What each carried library links against outside the application.
 static void *carried_hosts[GL_MAX_LIBRARIES][GI_MAX_DYLIBS];
 static const char *const stub_kinds[]={"function","data","class","metaclass"};
+// A map entry with an empty target: the library is absent on this platform
+// (classify.py's 'absent' kind). It is never opened, and its imports never
+// fall back to whatever else the process has loaded.
+static char absent_marker;
+#define ABSENT_LIBRARY ((void *)&absent_marker)
 // Opens what an image links against, except the application's own libraries,
 // which are placed, never opened. handles[i] answers the image's dylib i.
 static void open_dependencies(const GuestImage *image, const char *image_path, NSDictionary *mapping,
@@ -627,10 +668,117 @@ static void open_dependencies(const GuestImage *image, const char *image_path, N
         handles[i]=NULL;
         if (gl_carried(&carried,image,image_path,image->dylibs[i])) continue;
         NSString *original=@(image->dylibs[i]); NSString *target=mapping[original]?:library_path(original,frameworks);
+        if (!target.length) {
+            handles[i]=ABSENT_LIBRARY; LOG("[native] library %s absent on this platform; not opened\n",original.UTF8String); continue;
+        }
         if ([target hasPrefix:@"@rpath/"]) target=[@(frameworks) stringByAppendingPathComponent:target.lastPathComponent];
         handles[i]=dlopen(target.fileSystemRepresentation,RTLD_NOW|RTLD_GLOBAL);
         if (!handles[i]) LOG("[native] library %s unavailable: %s\n",target.UTF8String,dlerror());
     }
+}
+// The library map and adapter folder, for the guest's own dlopen calls; set
+// once before guest code runs.
+static NSDictionary *guest_mapping;
+static NSString *guest_frameworks;
+// A framework's install name carries /Versions/<letter>/; dlopen may omit it.
+static NSString *unversioned_framework_path(NSString *path) {
+    NSRange marker=[path rangeOfString:@".framework/Versions/"];
+    if (marker.location==NSNotFound) return path;
+    NSUInteger head=marker.location+[@".framework" length];
+    NSArray *parts=[[path substringFromIndex:head] pathComponents];   // / Versions A <leaf>
+    if (parts.count<4) return path;
+    return [[path substringToIndex:head] stringByAppendingPathComponent:parts[3]];
+}
+// What the map says a dlopen of this path opens: an adapter, an iOS library,
+// "" when absent, nil when it says nothing. A generic build has no map and
+// uses our adapter for the leaf name when there is one.
+static NSString *mapped_library(NSString *original) {
+    if (!guest_frameworks) return nil;
+    if (!guest_mapping) return adapter_path(original,guest_frameworks.fileSystemRepresentation);
+    id target=guest_mapping[original];
+    if (!target) for (NSString *key in guest_mapping)
+        if ([unversioned_framework_path(key) isEqualToString:unversioned_framework_path(original)]) { target=guest_mapping[key]; break; }
+    if (![target isKindOfClass:NSString.class]) return nil;
+    if ([target hasPrefix:@"@rpath/"]) return [guest_frameworks stringByAppendingPathComponent:[target lastPathComponent]];
+    return target;
+}
+static bool same_leaf(const char *path, const char *leaf) {
+    const char *slash=path?strrchr(path,'/'):NULL;
+    return path && !strcmp(slash?slash+1:path,leaf);
+}
+// The placed image a dlopen names, by any name dyld would take: a leaf (of its
+// file or its install name), a path, or @rpath/@loader_path/@executable_path
+// from the calling image.
+static bool placed_image(const char *path, const void *caller, size_t *index) {
+    if (!strchr(path,'/')) {
+        for (size_t i=0;i<=carried.count;i++) {
+            const GuestLibrary *library=i?&carried.libraries[i-1]:NULL;
+            if (same_leaf(library?library->path:guest.path,path) || (library && same_leaf(library->install_name,path))) { *index=i; return true; }
+        }
+        return false;
+    }
+    const GuestLibrary *from=carried_library_at(caller);
+    char resolved[PATH_MAX];
+    if (!gl_resolve(&carried,from?&from->image:&guest.image,from?from->path:guest.path,path,resolved,sizeof resolved)) return false;
+    for (size_t i=0;i<=carried.count;i++) {
+        const char *candidate=i?carried.libraries[i-1].path:carried.executable;
+        if (candidate && !strcmp(candidate,resolved)) { *index=i; return true; }
+    }
+    return false;
+}
+// Original code inside the application folder is placed by this loader or not
+// at all: never handed to the host's dyld. @-prefixed names resolve only
+// against the application.
+static bool inside_application(const char *path) {
+    if (!carried.root) return false;
+    if (path[0]=='@') return true;
+    char real[PATH_MAX];
+    if (!realpath(path,real)) return false;
+    size_t length=strlen(carried.root);
+    return !strncmp(real,carried.root,length) && (real[length]=='/' || !real[length]);
+}
+static void *refuse_dlopen(const char *shown, const char *reason) {
+    (void)dlerror();   // ours is the most recent error now
+    snprintf(guest_dl_error,sizeof guest_dl_error,"dlopen(%s): %s",shown,reason);
+    LOG("[native] dlopen(%s) refused: %s\n",shown,reason);
+    return NULL;
+}
+static void *guest_dlopen(const char *path, int mode) {
+    if (!path) return dlopen(path,mode);   // the main program: the host's answer, as before
+    char shown[1024]; loggable_path(path,shown,sizeof shown);
+    size_t index;
+    if (placed_image(path,__builtin_return_address(0),&index)) {
+        LOG("[native] dlopen(%s) -> placed %s\n",shown,index?carried.libraries[index-1].install_name:"executable");
+        return (void *)(uintptr_t)(GUEST_HANDLE_TAG|index|((mode&RTLD_FIRST)?GUEST_HANDLE_FIRST:0));
+    }
+    // A mapped library never falls back to the real one beside its adapter.
+    NSString *target=mapped_library(@(path));
+    if (target && !target.length) return refuse_dlopen(shown,"absent on this platform");
+    if (target) {
+        void *handle=dlopen(target.fileSystemRepresentation,mode);
+        LOG("[native] dlopen(%s) mapped to %s -> %p\n",shown,target.lastPathComponent.UTF8String,handle);
+        return handle;
+    }
+    if (inside_application(path)) return refuse_dlopen(shown,"not a library this application carries; only its placed images open");
+    void *handle=dlopen(path,mode);
+    LOG("[native] dlopen(%s) -> %p\n",shown,handle);
+    return handle;
+}
+// dlsym on a placed image: its own exports, then, unless it was opened
+// RTLD_FIRST, those of the libraries it links, as dyld searches a handle.
+static void *placed_symbol(size_t index, const char *name, bool first) {
+    const GuestImage *image=index?&carried.libraries[index-1].image:&guest.image;
+    const char *path=index?carried.libraries[index-1].path:guest.path;
+    void *const *host=index?carried_hosts[index-1]:guest.libraries;
+    char symbol[1024]; uint64_t address=0;
+    if (!name || snprintf(symbol,sizeof symbol,"_%s",name)>=(int)sizeof symbol) return NULL;
+    if (gl_lookup(&carried,image,path,BIND_SPECIAL_DYLIB_SELF,symbol,&address,NULL)) return (void *)(uintptr_t)address;
+    for (size_t i=0;!first && i<image->dylib_count;i++) {
+        if (gl_lookup(&carried,image,path,(int)i+1,symbol,&address,NULL)) return (void *)(uintptr_t)address;
+        void *value=host[i] && host[i]!=ABSENT_LIBRARY ? dlsym(host[i],name) : NULL;
+        if (value) return value;
+    }
+    return NULL;
 }
 // The image being fixed up. Ordinals index its own list.
 typedef struct { const GuestImage *image; const char *path; void *const *host; } GuestBinder;
@@ -645,8 +793,11 @@ static bool resolve(const char *symbol, int ordinal, bool weak, bool lazy, uint6
         *value=own_value; return true;
     }
     bool named=binder && ordinal>0 && (size_t)ordinal<=binder->image->dylib_count;
-    if (!pointer && named && binder->host && binder->host[ordinal-1]) pointer=dlsym(binder->host[ordinal-1],name);
-    if (!pointer) pointer=dlsym(RTLD_DEFAULT,name);
+    void *host=named && binder->host ? binder->host[ordinal-1] : NULL;
+    // An absent library answers nothing, not even through what else is loaded.
+    bool absent=host==ABSENT_LIBRARY;
+    if (!pointer && host && !absent) pointer=dlsym(host,name);
+    if (!pointer && !absent) pointer=dlsym(RTLD_DEFAULT,name);
     // Nothing provides it: a stub where no build-time analysis covered it, or null when weak.
     if (!pointer && ng_may_stub(guest_generic,binder && binder->image!=&guest.image,weak)) {
         GSKind kind=gs_kind_bound(symbol,binder && binder->image->lazy_bind_size,lazy);
@@ -800,6 +951,7 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
             LOG("[native] no library map; libraries are resolved by name and missing imports stubbed\n"); mapping=nil;
         }
         guest_generic=!mapping;
+        guest_mapping=mapping; guest_frameworks=@(frameworks);
         NSString *support=[@(frameworks) stringByAppendingPathComponent:@"libAKSupport.dylib"];
         if (!dlopen(support.fileSystemRepresentation,RTLD_NOW|RTLD_GLOBAL)) { LOG("[native] support load failed: %s\n",dlerror()); goto done; }
         open_dependencies(&guest.image,guest.path,mapping,frameworks,guest.libraries);
