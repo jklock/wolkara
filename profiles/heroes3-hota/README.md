@@ -21,9 +21,11 @@ repository.
 tools/build_windows_runtime.sh
 ```
 
-This fetches Wine (Proton's tree with the ARM64EC/FEX patches, or the branch
-you name) and FEX, builds Wine for arm64 macOS with the `arm64ec`, `aarch64`
-and `i386` architectures, builds FEX's two Windows-side emulator modules
+This fetches Wine (bylaws' `upstream-arm64ec`: upstream Wine with the
+ARM64EC/FEX series Proton carries; Proton's own Linux-targeted tree can be
+named with `WINE_REPO`/`WINE_BRANCH` but does not compile on macOS) and FEX,
+builds Wine for arm64 macOS with the `arm64ec`, `aarch64` and `i386`
+architectures, builds FEX's two Windows-side emulator modules
 (`libarm64ecfex.dll`, `libwow64fex.dll`), and assembles them into
 `build/windows-runtime/Wine`. It needs Xcode, the LLVM mingw toolchain it
 downloads, and a few Homebrew packages it checks for. Expect an hour on an

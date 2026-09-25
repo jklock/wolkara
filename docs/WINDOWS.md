@@ -21,9 +21,13 @@ WoW64), and the one CodeWeavers shipped in CrossOver's ARM64 preview for
 Apple silicon in July 2026 after "making a custom version of FEX compatible
 with macOS". Proton's contribution here is its Wine tree: it carries bylaws'
 ARM64EC patch series and the loader that lets FEX bring a native `.so`
-companion (`MemoryWineLoadUnixLibByName`), and it is what
+companion (`MemoryWineLoadUnixLibByName`). That tree targets Linux, though:
+on macOS its fsync/ntsync, `win32u` OpenGL, `winedmo` and `bcrypt` changes
+do not compile, and none of them matter on an iPad. So
 [`tools/build_windows_runtime.sh`](../tools/build_windows_runtime.sh) builds
-for macOS.
+bylaws' `upstream-arm64ec` (upstream Wine plus the same ARM64EC/FEX series,
+the tree FEX's own instructions name) and leaves Proton's tree selectable
+with `WINE_REPO`/`WINE_BRANCH`.
 
 ```
   Heroes III (x86 Windows program, unchanged)

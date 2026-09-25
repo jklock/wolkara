@@ -18,11 +18,14 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 [ -f local.env ] && { . tools/localenv.sh; tolkara_load_env; }
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
-# Proton's Wine (ValveSoftware/wine, experimental_11.0) carries bylaws' ARM64EC
-# patches and the FEX unixlib loader; bylaws/wine upstream-arm64ec is the
-# leaner upstream-based alternative.
-WINE_REPO="${WINE_REPO:-https://github.com/ValveSoftware/wine.git}"
-WINE_BRANCH="${WINE_BRANCH:-experimental_11.0}"
+# bylaws/wine upstream-arm64ec is upstream Wine plus the ARM64EC/FEX series
+# that Proton carries (FEX's own build instructions name it). Proton's tree
+# itself (ValveSoftware/wine, experimental_11.0) is selectable with WINE_REPO
+# and WINE_BRANCH, but it targets Linux: on macOS its fsync/ntsync, win32u
+# OpenGL, winedmo and bcrypt changes do not compile, and none of them matter
+# on an iPad.
+WINE_REPO="${WINE_REPO:-https://github.com/bylaws/wine.git}"
+WINE_BRANCH="${WINE_BRANCH:-upstream-arm64ec}"
 FEX_REPO="${FEX_REPO:-https://github.com/FEX-Emu/FEX.git}"
 FEX_BRANCH="${FEX_BRANCH:-main}"
 LLVM_MINGW_VERSION="${LLVM_MINGW_VERSION:-20260922}"
@@ -58,7 +61,11 @@ fi
 "$MINGW/bin/arm64ec-w64-mingw32-clang" --version | head -1
 
 step "Sources"
-if [ ! -d "$SRC/wine/.git" ]; then git clone --depth 1 --branch "$WINE_BRANCH" "$WINE_REPO" "$SRC/wine"; fi
+if [ -d "$SRC/wine/.git" ] && [ "$(git -C "$SRC/wine" rev-parse --abbrev-ref HEAD)" != "$WINE_BRANCH" ]; then
+    # Another tree was built here before: keep it aside, start this one clean.
+    mv "$SRC/wine" "$SRC/wine-$(git -C "$SRC/wine" rev-parse --abbrev-ref HEAD)"; rm -rf "$OUT/wine-build"
+fi
+if [ ! -d "$SRC/wine/.git" ]; then git clone --depth 1 --branch "$WINE_BRANCH" "$WINE_REPO" "$SRC/wine"; rm -rf "$OUT/wine-build"; fi
 if [ ! -d "$SRC/FEX/.git" ]; then git clone --depth 1 --recurse-submodules --shallow-submodules --branch "$FEX_BRANCH" "$FEX_REPO" "$SRC/FEX"; fi
 (cd "$SRC/wine" && git log -1 --format='wine %h %s')
 (cd "$SRC/FEX" && git log -1 --format='FEX %h %s')
@@ -82,8 +89,15 @@ build_fex aarch64-w64-mingw32 libwow64fex.dll
 
 step "Wine for arm64 macOS (arm64ec, aarch64 and i386 Windows sides)"
 WINE_BUILD="$OUT/wine-build"; mkdir -p "$WINE_BUILD"
-# Proton's tree carries configure.ac only; upstream tarballs ship configure.
+# Proton's tree carries configure.ac only and no generated Vulkan headers;
+# upstream tarballs ship both. Generate them as Proton's own build does.
 [ -x "$SRC/wine/configure" ] || (cd "$SRC/wine" && autoreconf -f 2>&1 | tail -3)
+[ -f "$SRC/wine/include/wine/vulkan.h" ] || (cd "$SRC/wine/dlls/winevulkan" && python3 make_vulkan)
+[ -f "$SRC/wine/include/wine/server_protocol.h" ] || (cd "$SRC/wine" && tools/make_requests)
+[ -f "$SRC/wine/dlls/ntdll/ntsyscalls.h" ] || (cd "$SRC/wine" && tools/make_specfiles)
+# winebuild and the PE link steps find lld-link, llvm-ar and friends by name:
+# llvm-mingw's bin goes at the END of PATH so the host toolchain stays first.
+export PATH="$PATH:$MINGW/bin"
 if [ ! -f "$WINE_BUILD/.configured" ]; then
     MACSDK="$(xcrun --sdk macosx --show-sdk-path)"
     # Wine's configure builds the Unix side with the host clang and every PE
@@ -94,6 +108,7 @@ if [ ! -f "$WINE_BUILD/.configured" ]; then
         CFLAGS="-isysroot $MACSDK -mmacosx-version-min=14.0" LDFLAGS="-isysroot $MACSDK" \
         "$SRC/wine/configure" --prefix="$RUNTIME" --enable-archs=arm64ec,aarch64,i386 \
         --with-mingw="$MINGW/bin/clang" --disable-tests --without-x --without-alsa --without-pulse --without-oss \
+        enable_amd_ags_x64=no enable_winegstreamer=no \
         2>&1 | tee "$OUT/wine-configure.log")
     touch "$WINE_BUILD/.configured"
 fi
@@ -111,7 +126,7 @@ cp "$OUT/libarm64ecfex.dll" "$OUT/libwow64fex.dll" "$RUNTIME/lib/wine/aarch64-wi
 step "Bundling Homebrew libraries the Unix side links"
 mkdir -p "$RUNTIME/lib"
 bundle() {  # binary
-    otool -L "$1" | awk 'NR>1{print $1}' | grep -E "^$(brew --prefix)/" | while read -r lib; do
+    { otool -L "$1" | awk 'NR>1{print $1}' | grep -E "^$(brew --prefix)/" || true; } | while read -r lib; do
         local name; name="$(basename "$lib")"
         [ -f "$RUNTIME/lib/$name" ] || { cp "$lib" "$RUNTIME/lib/$name"; chmod u+w "$RUNTIME/lib/$name"; bundle "$RUNTIME/lib/$name"; }
         install_name_tool -change "$lib" "@rpath/$name" "$1" 2>/dev/null || true
