@@ -60,7 +60,8 @@ jobs:
 
       - name: Build the unsigned .ipa
         if: steps.plan.outputs.skip != 'true'
-        run: tools/package_ipa.sh "$IPA"
+        # Published, so nothing exported from the runner's macOS goes in.
+        run: TOLKARA_SYSTEM_ROOTS=NO tools/package_ipa.sh "$IPA"
 
       - name: Write the release notes
         if: steps.plan.outputs.skip != 'true'
@@ -92,7 +93,7 @@ jobs:
             echo "$MARKER"
             echo "---"
             echo
-            echo "\`$IPA\` is an unsigned build: your sideloading app signs it with your own Apple ID. What it can and cannot do is in the [README]($URL#readme)."
+            echo "\`$IPA\` is an unsigned build: your sideloading app signs it with your own Apple ID. It is meant for External JIT mode and is a convenience; the supported way to use Tolkara is to [build it yourself]($URL/blob/$TAG/docs/BUILDING.md). What it can and cannot do is in the [README]($URL#readme)."
             echo
             echo "**Install on your iPad** — copy the line for your sideloading app into Safari. GitHub drops links that are not https, so these are text to copy, not links:"
             echo
