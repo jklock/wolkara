@@ -101,8 +101,14 @@ Hand-written areas today:
   nib loading from metadata extracted by `tools/inspect_nib.py`.
 - **Metal**: devices and presentation pass straight through to the iPad GPU.
   macOS shader libraries are validated and rewrapped in an iOS container around
-  the unchanged AIR bitcode, and the iPad's own compiler builds the pipelines.
-  Unknown formats stop with a message instead of substituting a shader.
+  the unchanged AIR bitcode, and the iPad's own compiler builds the pipelines:
+  legacy containers (AIR 2.0, 2.1 and 2.3, as World of Warcraft ships) and
+  current ones (AIR 2.6 and 2.7). Only a library the iPad refuses falls back to
+  a translation made on a Mac by `tools/serve_shader_translation.py` (the same
+  AIR retargeted by Apple's compiler) and, failing that, pauses the game with a
+  message instead of substituting a shader. The Diagnostics menu's **Captured
+  shaders** check (`tools/probe_captured_shaders.py`) loads every library a
+  game ever left for translation through the on-device path.
 - **CoreAudio / AudioToolbox** on AVFAudio, **Carbon / CoreServices** keyboard
   layout services, **CoreGraphics** display queries, and **Security** (system
   trust roots exported from the builder's own Mac at build time, a keychain

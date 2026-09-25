@@ -454,8 +454,11 @@ services explicitly. See the primary debugserver/RSD references below.
    the validated raw debugserver service and handle developer-image readiness;
    then test the entire path on M5. Preserve visible startup errors and never
    treat transport readiness or CS_DEBUGGED alone as native authorization.
-6. Demonstrate original native startup after force-close/relaunch with no Mac,
-   then remove the independent Mac shader-compiler dependency.
+6. Demonstrate original native startup after force-close/relaunch with no Mac.
+   The Mac shader compiler is now only a fallback for libraries the iPad
+   refuses (the adapter tries the iPad first; see ARCHITECTURE.md); confirm
+   with the captured-shader diagnostic (`tools/probe_captured_shaders.py`)
+   that none of the game's libraries needs it.
 
 ## Primary protocol/API references (not bundled dependencies)
 
@@ -624,6 +627,8 @@ then that memory successfully executed our return-42 fixture. No Mac debugger
 participated. The first full game-size allocation returned uncertainty; guest
 entry was blocked and mappings retained. A subsequent launch was blocked by the
 locked device. Progress diagnostics are prepared for the next unlocked test.
-Fully disconnected cold launch, reboot/DDI recovery and shader independence are
-not yet demonstrated. Original guest CPU files remain unchanged and unsigned by
+Fully disconnected cold launch and reboot/DDI recovery are not yet
+demonstrated; shader independence is implemented (the iPad compiles first, the
+Mac translation is a fallback) and awaits the captured-shader diagnostic on the
+device. Original guest CPU files remain unchanged and unsigned by
 our app. The signed app includes only our runtime/adapters and bundled helper.

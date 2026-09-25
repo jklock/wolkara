@@ -503,13 +503,16 @@ import sys
 from pathlib import Path
 sys.path.insert(0,'tests')
 from test_metallib import library
+# A legacy macOS container (AIR 2.0) and a current one (AIR 2.7, macOS 15).
 data=bytearray(library());data[4:16]=bytes([1,128,2,0,2,0,0,0,0,0,0,0])
 Path('build/emulation/container-fixture.metallib').write_bytes(data)
+data=bytearray(library((2,7)));data[4:16]=bytes([1,128,2,0,8,0,0,0x81,15,0,0,0])
+Path('build/emulation/container-fixture-current.metallib').write_bytes(data)
 PYFIXTURE
 xcrun clang -fobjc-arc -Wall -Wextra -Werror -Wno-deprecated-declarations -g -fsanitize=address,undefined \
     -Itranslation/Metal -framework Foundation translation/Metal/LibraryContainer.m tests/test_library_container.m \
     -o build/emulation/test_library_container
-build/emulation/test_library_container build/emulation/container-fixture.metallib
+build/emulation/test_library_container build/emulation/container-fixture.metallib build/emulation/container-fixture-current.metallib
 xcrun clang -fobjc-arc -Wall -Wextra -Werror -Wno-deprecated-declarations -O1 -g -fsanitize=address,undefined \
     -Itranslation/Metal tests/test_storage_modes.m -o build/emulation/test_storage_modes
 build/emulation/test_storage_modes

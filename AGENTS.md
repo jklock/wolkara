@@ -20,6 +20,7 @@ tools/run.sh sim            # loader diagnostics in the simulator (TolkaraDiagno
 TOLKARA_MODE=local-signing tools/run.sh sim   # Local signing: first initializer of testguest (or GUEST_EXE) from an ad-hoc page container
 tools/install.sh            # build, sign and install the Tolkara app on the configured iPad
 tools/probe_guest.sh "/path/to/Executable"   # inspect an unchanged executable
+python3 tools/probe_captured_shaders.py       # compile every shader library a game left on the iPad with the iPad's own Metal (no app code runs)
 python3 tools/build_signed_container.py       # build and sign the Local signing page container for GUEST_EXE
 python3 tools/make_icon.py                    # redraw the app icon at every size and appearance (needs Google Chrome)
 NATIVE_GUEST_SHIMS=GENERIC tools/install.sh   # build for no particular application: one adapter per translation/<Framework>/
