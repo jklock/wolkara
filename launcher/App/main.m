@@ -864,6 +864,15 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
         return;
     }
 #endif
+    // Experimental development probe: what iPadOS lets this app reserve.
+    if ([arguments containsObject:@"--vm-probe"]) {
+        self.status.text=@"Probing virtual-memory reservations…";
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
+            NSString *report=TKVMProbeReport();
+            dispatch_async(dispatch_get_main_queue(),^{ self.status.text=report; });
+        });
+        return;
+    }
     if ([arguments containsObject:@"--cpu-probe"]) {
         self.status.text=@"Measuring execution through the signed runtime…";
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
