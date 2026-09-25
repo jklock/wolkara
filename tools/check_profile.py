@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Validate an app profile (profiles/*.json). Profiles are data only."""
 import json
+import re
 import sys
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 REQUIRED = ('id', 'name', 'workingDirectory', 'executable')
-OPTIONAL = ('notes', 'tested', 'caseAliases')
+OPTIONAL = ('notes', 'tested', 'caseAliases', 'runtime', 'arguments', 'environment')
+ENVIRONMENT_NAME = re.compile(r'[A-Za-z_][A-Za-z0-9_]*')
 
 
 def relative(value):
@@ -26,6 +28,18 @@ def check_case_aliases(aliases):
             raise ValueError(f'caseAliases: {alias!r} -> {target!r} must name {leaf!r} in another case')
 
 
+def check_command_line(profile):
+    """A compatibility runtime's command line (arguments, environment): plain strings, no code."""
+    arguments = profile.get('arguments', [])
+    if not isinstance(arguments, list) or len(arguments) > 64 or any(not isinstance(a, str) or len(a) > 4096 for a in arguments):
+        raise ValueError('arguments must be a list of at most 64 strings')
+    environment = profile.get('environment', {})
+    if not isinstance(environment, dict) or len(environment) > 64: raise ValueError('environment must be an object of at most 64 variables')
+    for name, value in environment.items():
+        if not ENVIRONMENT_NAME.fullmatch(name) or len(name) > 256: raise ValueError(f'environment variable name {name!r} is invalid')
+        if not isinstance(value, str) or len(value) > 4096: raise ValueError(f'environment variable {name} must be a string')
+
+
 def check(path):
     profile = json.loads(Path(path).read_text())
     if not isinstance(profile, dict): raise ValueError('profile must be a JSON object')
@@ -33,10 +47,10 @@ def check(path):
     if unknown: raise ValueError('unknown keys: ' + ', '.join(sorted(unknown)))
     for key in REQUIRED:
         if not isinstance(profile.get(key), str) or not profile[key]: raise ValueError(f'{key} must be a non-empty string')
-    for key in ('workingDirectory', 'executable'):
-        parts = PurePosixPath(profile[key]).parts
-        if profile[key].startswith('/') or '..' in parts: raise ValueError(f'{key} must stay inside Documents')
+    for key in ('workingDirectory', 'executable', 'runtime'):
+        if key in profile and not relative(profile[key]): raise ValueError(f'{key} must stay inside Documents')
     if 'caseAliases' in profile: check_case_aliases(profile['caseAliases'])
+    check_command_line(profile)
     return profile
 
 

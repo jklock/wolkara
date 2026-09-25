@@ -5,6 +5,10 @@
 // Development startup diagnostic. Requires debugger publication of a fresh
 // runtime arena, and never changes the packaged original executable.
 bool ng_initialize(const char *path, const char *frameworks, const char *library_map, FILE *log, bool full_startup);
+// Command-line arguments after the executable path (argv[1..]), for a
+// compatibility runtime started from a profile. Copied; at most 64 of 4096
+// bytes. Call before ng_initialize; default: none.
+void ng_set_arguments(const char *const *arguments, size_t count);
 // Developer service: select our integrated helper before the process's one
 // permitted startup. Fails if Local signing was already selected.
 bool ng_use_local_authorization(void);

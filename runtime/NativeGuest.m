@@ -14,6 +14,7 @@ static NativeCodeMemory local_quarantine;
 #include "NativeGuestPolicy.h"
 #include "GuestStubs.h"
 #include "GuestTLS.h"
+#include "HostExecutionProbe.h"
 #include "GuestWait.h"
 #include "SignedImage.h"
 #include <dlfcn.h>
@@ -273,6 +274,17 @@ static void schedule_native_sample(thread_t thread, unsigned number) {
 static NSBundle *guest_bundle;
 static CFBundleRef guest_cf_bundle;
 static NSArray<NSString *> *guest_arguments;
+// argv[1..] for a compatibility runtime (profile command line); see ng_set_arguments.
+static char *launch_arguments[64];
+static size_t launch_argument_count;
+void ng_set_arguments(const char *const *arguments, size_t count) {
+    for (size_t i=0;i<launch_argument_count;i++) { free(launch_arguments[i]); launch_arguments[i]=NULL; }
+    launch_argument_count=0;
+    for (size_t i=0;i<count && i<64;i++) {
+        if (!arguments[i] || strlen(arguments[i])>4096) break;
+        launch_arguments[launch_argument_count++]=strdup(arguments[i]);
+    }
+}
 static NSArray<NSString *> *(*original_arguments)(id,SEL);
 static NSArray<NSString *> *guest_process_arguments(id receiver,SEL selector) {
     if(guest_arguments && inside(__builtin_return_address(0),1)) {
@@ -1052,7 +1064,9 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
     }
     guest.log=log; guest.path=strdup(path);
     gs_log(log);
-    guest_arguments=@[@(path)];
+    NSMutableArray *process_arguments=[NSMutableArray arrayWithObject:@(path)];
+    for (size_t i=0;i<launch_argument_count;i++) [process_arguments addObject:@(launch_arguments[i])];
+    guest_arguments=process_arguments;
     Method arguments_method=class_getInstanceMethod(NSProcessInfo.class,@selector(arguments));
     original_arguments=(void *)method_setImplementation(arguments_method,(IMP)guest_process_arguments);
     previous_exception_preprocessor=objc_setExceptionPreprocessor(log_exception);
@@ -1153,6 +1167,21 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
     for (size_t i=0;i<carried.count;i++)
         carried.libraries[i].slide=(uintptr_t)guest.arena.executable+library_offset[i]-library_low[i];
     LOG("[native] arena ready base=%p slide=%#llx\n",guest.arena.executable,(unsigned long long)guest.slide);
+    if ([NSProcessInfo.processInfo.arguments containsObject:@"--jit-probe"]) {
+        // Diagnostic (docs/WINDOWS.md): now that the helper has prepared the
+        // arena and detached, may this process execute memory it maps itself?
+        // A runtime that generates code (an x86 emulator) needs that. Only our
+        // own two-instruction sample runs; a kernel rejection may end the
+        // process, so each stage is flushed first. Guest entry is skipped.
+        HPResult wx=host_execution_probe(HP_WRITE_THEN_EXECUTE,log);
+        LOG("[jit-probe] write-then-execute: execute=%s rewrite=%s allocation_errno=%d protection_errno=%d\n",
+            wx.executable?"PASS":"FAIL",wx.rewrite_executable?"PASS":"FAIL",wx.allocation_errno,wx.protection_errno);
+        HPResult rwx=host_execution_probe(HP_READ_WRITE_EXECUTE,log);
+        LOG("[jit-probe] read-write-execute: execute=%s rewrite=%s allocation_errno=%d protection_errno=%d\n",
+            rwx.executable?"PASS":"FAIL",rwx.rewrite_executable?"PASS":"FAIL",rwx.allocation_errno,rwx.protection_errno);
+        LOG("[jit-probe] done; guest entry skipped\n");
+        goto done;
+    }
     {
         NSData *data=[NSData dataWithContentsOfFile:@(library_map)];
         NSDictionary *mapping=data?[NSJSONSerialization JSONObjectWithData:data options:0 error:NULL]:nil;
@@ -1272,8 +1301,14 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
         else LOG("[native] the application records no initializers\n");
         char *executable_argument=NULL;
         asprintf(&executable_argument,"executable_path=%s",guest.path);
-        const char *argv[]={guest.path,NULL}, *env[]={NULL}, *apple[]={executable_argument,NULL};
-        int argc=1;
+        // argv outlives this call: the program may keep pointers into it. The
+        // carried libraries' initializers, the client's and main all see it.
+        const char **argv=calloc(launch_argument_count+2,sizeof *argv);
+        argv[0]=guest.path;
+        for (size_t i=0;i<launch_argument_count;i++) argv[i+1]=launch_arguments[i];
+        const char *env[]={NULL}, *apple[]={executable_argument,NULL};
+        int argc=(int)launch_argument_count+1;
+        if (launch_argument_count) LOG("[native] %zu launch arguments after the executable path\n",launch_argument_count);
         // dyld order: a library's initializers before the client's, and
         // before those of the carried libraries that link it.
         size_t order[GL_MAX_LIBRARIES], ordered=gl_initialization_order(&carried,order);

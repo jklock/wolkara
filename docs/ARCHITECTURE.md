@@ -211,7 +211,10 @@ regular file inside Documents, or that a copy still matches its hash.
 Every profile in `profiles/` is packaged at build time. When a profile's files
 are present in Documents the library adds that app under the profile's name,
 so a profile's install script is enough to make an app appear. Profiles are
-data; they cannot carry code or patches.
+data; they cannot carry code or patches. A profile may name a compatibility
+runtime with its command line instead of a macOS `.app`: the first such
+runtime, Wine with FEX for a Windows program, is described in
+[WINDOWS.md](WINDOWS.md).
 
 The execution mode is chosen once for all apps (asked on first launch, changed
 with the mode button in the library). With Local signing each app uses its own

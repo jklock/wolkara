@@ -1,0 +1,13 @@
+{
+  "id": "heroes3-hota",
+  "name": "Heroes of Might and Magic III: Horn of the Abyss",
+  "workingDirectory": "Heroes 3 HotA/prefix/drive_c/GOG Games/Heroes of Might and Magic III - Horn of the Abyss",
+  "runtime": "Heroes 3 HotA/Wine",
+  "executable": "bin/wine",
+  "arguments": ["h3hota HD.exe"],
+  "environment": {
+    "WINEPREFIX": "${Documents}/Heroes 3 HotA/prefix",
+    "WINEDEBUG": "err+all,fixme-all"
+  },
+  "notes": "A Windows (x86) game run by an arm64 macOS Wine with FEX inside it. Not yet started on a device: the runtime work is listed in docs/WINDOWS.md. Build the runtime with tools/build_windows_runtime.sh, then profiles/heroes3-hota/install.py copies your own GOG installation. See profiles/heroes3-hota/README.md."
+}
