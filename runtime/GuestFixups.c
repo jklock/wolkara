@@ -264,8 +264,10 @@ static bool chained(GuestImage *image, uint64_t slide, GFResolve resolve, void *
                     uint64_t raw = 0, value = 0;
                     if (gm_read(&image->memory, address, &raw, 8) != GM_OK)
                         FAIL("chained pointer outside guest memory");
+                    // Linkers leave the reserved bits zero; anything else is corrupt.
                     if (raw >> 63) {
                         uint32_t ordinal = raw & 0xFFFFFF;
+                        if ((raw >> 32) & 0x7FFFF) FAIL("chained bind at %#llx sets reserved bits", (unsigned long long)address);
                         if (ordinal >= imports_count) FAIL("chained bind names import %u of %u", ordinal, imports_count);
                         const ChainedImport *import = &imports[ordinal];
                         if (!resolve(import->name, import->ordinal, import->weak, false, &value, context) && !import->weak)
@@ -273,6 +275,7 @@ static bool chained(GuestImage *image, uint64_t slide, GFResolve resolve, void *
                         value += import->addend + ((raw >> 24) & 0xFF);
                         stats->binds++;
                     } else {
+                        if ((raw >> 44) & 0x7F) FAIL("chained rebase at %#llx sets reserved bits", (unsigned long long)address);
                         value = (raw & 0xFFFFFFFFFULL) | (((raw >> 36) & 0xFF) << 56);
                         if (format == DYLD_CHAINED_PTR_64_OFFSET) value += image->header_address;
                         value += slide;
@@ -306,7 +309,13 @@ bool gf_apply_observed(GuestImage *image, uint64_t slide, GFResolve resolve, voi
     if (error_size) error[0] = 0;
     if (!resolve) { snprintf(error, error_size, "unsupported fixup configuration"); return false; }
     Observer o = {observe, observe_context};
-    if (image->chained_fixups) return chained(image, slide, resolve, context, &o, stats, error, error_size);
+    if (image->chained_fixups) {
+        // Linkers emit one or the other; both is a malformed image.
+        if (image->rebase_size || image->bind_size || image->lazy_bind_size || image->weak_bind_size) {
+            snprintf(error, error_size, "chained fixups together with dyld info opcodes"); return false;
+        }
+        return chained(image, slide, resolve, context, &o, stats, error, error_size);
+    }
     // Lazy first: a name bound both ways is a call.
     const uint32_t offsets[] = {image->rebase_offset, image->lazy_bind_offset, image->bind_offset, image->weak_bind_offset};
     const uint32_t sizes[] = {image->rebase_size, image->lazy_bind_size, image->bind_size, image->weak_bind_size};
