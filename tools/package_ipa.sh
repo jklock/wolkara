@@ -1,9 +1,8 @@
 #!/bin/bash
 # The unsigned .ipa a sideloader signs with your Apple ID.
 # usage: tools/package_ipa.sh [output.ipa]        (default: Tolkara-unsigned.ipa)
-# Applications are imported and started on the iPad; TOLKARA_INTEGRATED_AUTH's
-# bundled Developer-service tunnel is not in this build, so starting one needs
-# either Local signing or an outside JIT enabler (SideStore, StikDebug and similar).
+# Applications are added and started on the iPad in External JIT, preselected:
+# the tool that sideloads it (SideStore, StikDebug and similar) enables JIT.
 # Build from source instead: tools/install.sh.
 set -euo pipefail
 OUT=${1:-Tolkara-unsigned.ipa}
@@ -15,9 +14,10 @@ LOG=logs/ipa-$(date +%Y%m%d-%H%M%S).log
 tools/generate.sh
 # No extension: a free Apple ID cannot sign one.
 # GENERIC: one adapter per framework, no executable.
+# Its one way to run code, chosen already.
 # By target: schemes need a destination the SDK alone lacks.
 xcodebuild -project Tolkara.xcodeproj -target TolkaraDiagnostics -configuration Release \
-    -sdk iphoneos -arch arm64 SYMROOT=build/unsigned NATIVE_GUEST_SHIMS=GENERIC \
+    -sdk iphoneos -arch arm64 SYMROOT=build/unsigned NATIVE_GUEST_SHIMS=GENERIC TOLKARA_MODE=external-jit \
     INFOPLIST_KEY_CFBundleDisplayName=Tolkara \
     CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
     build > "$LOG" 2>&1 \
@@ -54,5 +54,5 @@ cp -R "$APP" build/Payload/
 ( cd build && zip -qry "$OUT" Payload )
 rm -rf build/Payload
 echo "Unsigned build: $OUT"
-echo "Sideload it, then in the app: import your application, and either enable JIT for it"
-echo "in your sideloader (or a tool like StikDebug) or choose Local signing."
+echo "Sideload it, open it with JIT enabled by your sideloader (or a tool like StikDebug),"
+echo "then add your application in the app and start it."

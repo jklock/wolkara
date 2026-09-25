@@ -692,11 +692,6 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
 #endif
     bool external=!signed_backend && !local && (atomic_load(&use_external_authorization) ||
         [NSProcessInfo.processInfo.arguments containsObject:@"--external-authorization"]);
-    // Nothing else was named, and this process may already run unsigned code.
-    if(!signed_backend && !local && !external && hd_may_run_unsigned_code()) {
-        LOG("[native] this process may already run unsigned code; its arena comes from whatever prepared it\n");
-        external=true;
-    }
     if (!signed_backend) {
         // An arena is counted twice while its writable view exists.
         size_t limit=nc_arena_limit();
@@ -710,7 +705,7 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
     else if(local)
         arena_ready=nc_create_managed(&guest.arena,total,TKPrepareLocalArena,NULL,&local_quarantine);
 #endif
-    else if(reserved_arena.published && total<=reserved_arena.size) {
+    else if(external && reserved_arena.published && total<=reserved_arena.size) {
         guest.arena=reserved_arena; arena_ready=true;
         LOG("[native] using the arena reserved earlier: %zu bytes\n",guest.arena.size);
     }

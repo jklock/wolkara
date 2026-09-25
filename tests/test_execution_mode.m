@@ -188,6 +188,31 @@ int main(void) {
         assert([NSFileManager.defaultManager removeItemAtPath:root error:NULL]);
         printf("PASS: execution mode names, summaries, availability (%s), saved choice, resolution precedence, container paths and lookup, --signed-image validation\n",
             TOLKARA_INTEGRATED_AUTH?"Tolkara":"TolkaraDiagnostics");
+
+        // External JIT: only without the tunnel, preselected by the unsigned build.
+        assert(TKExecutionModeFromIdentifier(@"external-jit")==TKExecutionModeExternalJIT);
+        assert([TKExecutionModeIdentifier(TKExecutionModeExternalJIT) isEqualToString:@"external-jit"]);
+        assert([TKExecutionModeName(TKExecutionModeExternalJIT) isEqualToString:@"External JIT"]);
+        for(NSString *bad in @[@"External-JIT",@"external_jit",@" external-jit",@"external-jit "])
+            assert(TKExecutionModeFromIdentifier(bad)==TKExecutionModeNone);
+        NSString *external=TKExecutionModeSummary(TKExecutionModeExternalJIT);
+        assert(Sentences(external)==2 && [external hasPrefix:@"Needs "] && [external hasSuffix:@"."]);
+        for(NSString *needed in @[@"SideStore",@"StikDebug",@"never signed or changed"]) assert([external containsString:needed]);
+        reason=@"stale";
+#if TOLKARA_INTEGRATED_AUTH
+        assert(!TKExecutionModeAvailable(TKExecutionModeExternalJIT,&reason) && [reason isEqualToString:@"Not included in this build (Tolkara)."]);
+#else
+        assert(TKExecutionModeAvailable(TKExecutionModeExternalJIT,&reason) && !reason);
+#endif
+        [defaults removePersistentDomainForName:suite];
+        assert(Resolve(@[],defaults,@"external-jit",&source)==TKExecutionModeExternalJIT && [source isEqualToString:@"TOLKARA_MODE"]);
+        assert([[defaults stringForKey:@"TolkaraExecutionMode"] isEqualToString:@"external-jit"]);
+        assert(Resolve(@[],defaults,nil,&source)==TKExecutionModeExternalJIT && [source isEqualToString:@"saved"]);
+        assert(Resolve(@[@"--execution-mode=local-signing"],defaults,nil,&source)==TKExecutionModeLocalSigning);
+        assert(TKExecutionModeLoad(defaults)==TKExecutionModeExternalJIT);
+        [defaults removePersistentDomainForName:suite];
+        printf("PASS: External JIT name, summary, availability (%s), preselection and saved choice\n",
+            TOLKARA_INTEGRATED_AUTH?"Tolkara":"TolkaraDiagnostics");
     }
     return 0;
 }

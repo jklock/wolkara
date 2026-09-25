@@ -10,7 +10,7 @@ export TOLKARA_KEYCHAIN_GROUP=${TOLKARA_KEYCHAIN_GROUP:-local.tolkara.authorizat
 # Optional execution-mode preselection; empty means the app asks on first launch.
 export TOLKARA_MODE=${TOLKARA_MODE:-}
 case "$TOLKARA_MODE" in
-    ""|developer-service|local-signing) ;;
-    *) echo "TOLKARA_MODE must be empty, developer-service or local-signing (see local.env.example)." >&2; exit 2;;
+    ""|developer-service|local-signing|external-jit) ;;
+    *) echo "TOLKARA_MODE must be empty, developer-service, local-signing or external-jit (see local.env.example)." >&2; exit 2;;
 esac
 xcodegen generate -q "$@"

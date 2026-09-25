@@ -9,20 +9,21 @@ NSString *const TKExecutionModeSourcePreselected=@"TOLKARA_MODE";
 NSString *const TKExecutionModeSourceNone=@"none";
 NSString *const TKExecutionModeSourceInvalidArgument=@"invalid --execution-mode";
 NSString *const TKExecutionModeSourceInvalidPreselection=@"invalid TOLKARA_MODE";
-static NSString *const Expected=@"expected developer-service or local-signing";
+static NSString *const Expected=@"expected developer-service, local-signing or external-jit";
 static NSString *const SignedImagePrefix=@"--signed-image=";
 
 NSString *TKExecutionModeIdentifier(TKExecutionMode mode) {
     switch(mode) {
     case TKExecutionModeDeveloperService: return @"developer-service";
     case TKExecutionModeLocalSigning: return @"local-signing";
+    case TKExecutionModeExternalJIT: return @"external-jit";
     case TKExecutionModeNone: break;
     }
     return nil;
 }
 TKExecutionMode TKExecutionModeFromIdentifier(NSString *identifier) {
     if(![identifier isKindOfClass:NSString.class]) return TKExecutionModeNone;
-    for(TKExecutionMode mode=TKExecutionModeDeveloperService;mode<=TKExecutionModeLocalSigning;mode++)
+    for(TKExecutionMode mode=TKExecutionModeDeveloperService;mode<=TKExecutionModeExternalJIT;mode++)
         if([identifier isEqualToString:TKExecutionModeIdentifier(mode)]) return mode;
     return TKExecutionModeNone;
 }
@@ -30,6 +31,7 @@ NSString *TKExecutionModeName(TKExecutionMode mode) {
     switch(mode) {
     case TKExecutionModeDeveloperService: return @"Developer service";
     case TKExecutionModeLocalSigning: return @"Local signing";
+    case TKExecutionModeExternalJIT: return @"External JIT";
     case TKExecutionModeNone: break;
     }
     return nil;
@@ -44,6 +46,9 @@ NSString *TKExecutionModeSummary(TKExecutionMode mode) {
         return @"Needs a page container signed with your own developer identity, currently built on a Mac with "
             "tools/build_signed_container.py and copied to Documents/LocalSigning. The application's executable is never changed, "
             "but the container is a copy of its final code pages, signed under your identity and kept on this iPad.";
+    case TKExecutionModeExternalJIT:
+        return @"Needs JIT enabled for Tolkara by the tool you sideloaded it with, such as SideStore or StikDebug. "
+            "The application's code is never signed or changed: that tool's debugger prepares memory, then Tolkara copies the original code in.";
     case TKExecutionModeNone: break;
     }
     return nil;
@@ -58,6 +63,13 @@ BOOL TKExecutionModeAvailable(TKExecutionMode mode, NSString **reason) {
 #else
         if(reason) *reason=@"Not included in this build (TolkaraDiagnostics).";
         return NO;
+#endif
+    case TKExecutionModeExternalJIT:
+#if TOLKARA_INTEGRATED_AUTH
+        if(reason) *reason=@"Not included in this build (Tolkara).";
+        return NO;
+#else
+        return YES;
 #endif
     case TKExecutionModeNone: break;
     }
