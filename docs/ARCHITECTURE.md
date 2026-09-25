@@ -110,6 +110,11 @@ Hand-written areas today:
 - Experimental and opt-in (`TOLKARA_EXPERIMENTAL_ADAPTERS`): **GameController**
   as a Mac with no controllers, and **MetalFX** presented as absent. Both work
   around one game's crashes and are not yet validated on a device.
+- Experimental launch arguments, each off by default and not yet validated on
+  a device: `--appkit-event-monitors` (NSEvent local monitors run before
+  dispatch), `--guest-window-covers-launcher` (the launcher's windows hide
+  while a guest window is up) and `--metal-managed-storage` (Managed storage
+  requests become Shared).
 
 ## Executable memory: three modes
 
