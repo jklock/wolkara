@@ -1,0 +1,11 @@
+{
+  "id": "cyberpunk-2077",
+  "name": "Cyberpunk 2077",
+  "workingDirectory": "Cyberpunk 2077",
+  "executable": "Cyberpunk2077.app/Contents/MacOS/Cyberpunk2077",
+  "caseAliases": {
+    "archive/mac": "Mac"
+  },
+  "tested": "2.3.x (GOG, macOS arm64), iPad Pro M5: startup only, work in progress",
+  "notes": "Work in progress: does not run yet. Copy your own installed 'Cyberpunk 2077' folder (GOG, macOS) with profiles/cyberpunk-2077/install.py. See profiles/cyberpunk-2077/README.md."
+}
