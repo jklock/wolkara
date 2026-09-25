@@ -275,6 +275,31 @@ bool gl_lookup(const GuestLinkSet *set, const GuestImage *from, const char *from
     return true;
 }
 
+// A library once its dependencies are in the order; `seen` cuts cycles.
+static void initialize_after(const GuestLinkSet *set, size_t index, uint64_t *seen, size_t *order, size_t *count) {
+    if (*seen & (1ULL << index)) return;
+    *seen |= 1ULL << index;
+    const GuestLibrary *library = &set->libraries[index];
+    for (size_t i = 0; i < library->image.dylib_count; i++) {
+        const GuestLibrary *needed = carried_as(set, &library->image, library->path, library->image.dylibs[i]);
+        if (needed) initialize_after(set, (size_t)(needed - set->libraries), seen, order, count);
+    }
+    order[(*count)++] = index;
+}
+
+size_t gl_initialization_order(const GuestLinkSet *set, size_t order[GL_MAX_LIBRARIES]) {
+    if (!set || !order) return 0;
+    uint64_t seen = 0;
+    size_t count = 0;
+    const GuestImage *executable = set->executable_image;
+    for (size_t i = 0; executable && i < executable->dylib_count; i++) {
+        const GuestLibrary *needed = carried_as(set, executable, set->executable, executable->dylibs[i]);
+        if (needed) initialize_after(set, (size_t)(needed - set->libraries), &seen, order, &count);
+    }
+    for (size_t i = 0; i < set->count; i++) initialize_after(set, i, &seen, order, &count);
+    return count;
+}
+
 uint64_t gl_span(const GuestLinkSet *set) {
     uint64_t total = 0;
     for (size_t i = 0; i < set->count; i++) total += gi_extent(&set->libraries[i].image, NULL);

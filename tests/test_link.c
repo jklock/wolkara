@@ -95,6 +95,49 @@ int main(void) {
 
     gl_destroy(&set);
     assert(!set.root && !set.executable && !set.count && !set.executable_image);
+
+    // Initialization order: a library after those it links. The executable
+    // lists A and C; A links B, B links A back, C links A and the system;
+    // nothing links D. Loaded breadth first (A, C, B, D), initialized B, A, C, D.
+    static const char *const names[] = {"A", "C", "B", "D"};
+    char library_paths[4][512];
+    static GuestLinkSet ordered;
+    static GuestImage program;
+    ordered.root = strdup(resolved_bundle);
+    ordered.executable = strdup(resolved_executable);
+    assert(ordered.root && ordered.executable);
+    for (size_t i = 0; i < 4; i++) {
+        char file[512];
+        snprintf(file, sizeof file, "%s/lib%s.dylib", frameworks, names[i]);
+        touch(file);
+        assert(realpath(file, library_paths[i]));
+        ordered.libraries[i].path = strdup(library_paths[i]);
+        ordered.libraries[i].install_name = strdup(file);
+        assert(ordered.libraries[i].path && ordered.libraries[i].install_name);
+    }
+    ordered.count = 4;
+    ordered.executable_image = &program;
+    program.dylibs[program.dylib_count++] = strdup("@executable_path/../Frameworks/libA.dylib");
+    program.dylibs[program.dylib_count++] = strdup("@executable_path/../Frameworks/libC.dylib");
+    GuestImage *a = &ordered.libraries[0].image, *c = &ordered.libraries[1].image, *b = &ordered.libraries[2].image;
+    a->dylibs[a->dylib_count++] = strdup("@loader_path/libB.dylib");
+    b->dylibs[b->dylib_count++] = strdup("@loader_path/libA.dylib");
+    c->dylibs[c->dylib_count++] = strdup("@loader_path/libA.dylib");
+    c->dylibs[c->dylib_count++] = strdup("/usr/lib/libSystem.B.dylib");
+    size_t order[GL_MAX_LIBRARIES];
+    assert(gl_initialization_order(&ordered, order) == 4);
+    assert(order[0] == 2 && order[1] == 0 && order[2] == 1 && order[3] == 3);
+    // The executable's list decides first: listing C first puts it before A's
+    // branch, although A was loaded first.
+    char *swap = program.dylibs[0]; program.dylibs[0] = program.dylibs[1]; program.dylibs[1] = swap;
+    free(c->dylibs[0]); c->dylibs[0] = c->dylibs[1]; c->dylib_count = 1;
+    assert(gl_initialization_order(&ordered, order) == 4);
+    assert(order[0] == 1 && order[1] == 2 && order[2] == 0 && order[3] == 3);
+    assert(gl_initialization_order(NULL, order) == 0);
+    gi_destroy(&program);
+    gl_destroy(&ordered);
+    for (size_t i = 0; i < 4; i++) unlink(library_paths[i]);
+
     unlink(executable); unlink(carried); unlink(outside);
     rmdir(macos); rmdir(frameworks); rmdir(contents); rmdir(bundle); rmdir(root);
 
@@ -119,5 +162,5 @@ int main(void) {
     assert(gl_span(&measured) == 0x14000 + 0xC000);
 
     puts("PASS: carried library paths resolve inside the application only (@rpath, @loader_path, @executable_path),"
-         " extent from the lowest mapped segment");
+         " extent from the lowest mapped segment, initialization after linked libraries");
 }
