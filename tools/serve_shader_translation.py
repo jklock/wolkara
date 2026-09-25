@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Serve shader compilation requests over the connected iPad's app container.
 
+A fallback: the iPad compiles its games' shader libraries itself (see
+translation/Metal), and asks for a Mac translation only for a library it refuses.
 No network listener: devicectl transfers only generated shader requests/results.
 Keep this running while launching the native guest with --translate-shaders.
 """

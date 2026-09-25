@@ -7,11 +7,11 @@ import unittest
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'tools'))
 from translate_metallib import modules
 
-def library():
+def library(air=(2,0)):
     bitcode=b'BC\xc0\xde'+bytes(12)
     module=struct.pack('<5I',0x0b17c0de,0,20,len(bitcode),0xffffffff)+bitcode
     tags=[]
-    for tag,value in [(b'NAME',b'test\0'),(b'HASH',hashlib.sha256(module).digest()),(b'MDSZ',struct.pack('<Q',len(module))),(b'OFFT',bytes(24)),(b'VERS',struct.pack('<4H',2,0,2,0))]:
+    for tag,value in [(b'NAME',b'test\0'),(b'HASH',hashlib.sha256(module).digest()),(b'MDSZ',struct.pack('<Q',len(module))),(b'OFFT',bytes(24)),(b'VERS',struct.pack('<4H',*air,2,0))]:
         tags.append(tag+struct.pack('<H',len(value))+value)
     record=b''.join(tags)+b'ENDT';record=struct.pack('<I',4+len(record))+record
     table=struct.pack('<I',1)+record; public=88+len(table);private=public+8;code=private+8
@@ -21,6 +21,7 @@ def library():
 class MetalTests(unittest.TestCase):
     def test_read_module(self):
         data=library(); result=modules(data);self.assertEqual(result[0][0],(2,0));self.assertEqual(data,library())
+        self.assertEqual(modules(library((2,7)))[0][0],(2,7))
     def test_truncation(self):
         data=library()
         for length in range(len(data)):

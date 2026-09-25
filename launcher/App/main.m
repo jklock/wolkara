@@ -396,6 +396,9 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
         [TKDiagnostic diagnosticWithTitle:@"Local shader compiler" detail:@"Compiles the shader fixtures staged in Documents/LocalShaderProbe." run:^(TKDiagnosticReport report) {
             dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{ report(TKLocalShaderProbeReport(),YES); });
         }],
+        [TKDiagnostic diagnosticWithTitle:@"Captured shaders" detail:@"Compiles every shader library a game left in Documents/ShaderRequests on this iPad." run:^(TKDiagnosticReport report) {
+            dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{ report(TKCapturedShaderProbeReport(),YES); });
+        }],
     ]]];
 #if TOLKARA_INTEGRATED_AUTH
     TKLocalAuthorization *authorization=self.localAuthorization;
@@ -741,6 +744,14 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
         self.status.text=@"Testing the local shader compiler…";
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
             NSString *report=TKLocalShaderProbeReport();
+            dispatch_async(dispatch_get_main_queue(),^{self.status.text=report;});
+        });
+        return;
+    }
+    if([arguments containsObject:@"--captured-shader-probe"]) {
+        self.status.text=@"Compiling the captured shader libraries on this iPad…";
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
+            NSString *report=TKCapturedShaderProbeReport();
             dispatch_async(dispatch_get_main_queue(),^{self.status.text=report;});
         });
         return;

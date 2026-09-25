@@ -1,4 +1,5 @@
 #import "Diagnostics.h"
+#import "CapturedShaderProbe.h"
 #import "CPUProbe.h"
 #import "GuestImage.h"
 #import "HostDiagnostics.h"
@@ -68,6 +69,16 @@ NSString *TKCPUProbeReport(void) {
 NSString *TKLocalShaderProbeReport(void) {
     NSString *report=TKRunLocalShaderProbe(TKDocumentsPath(@"LocalShaderProbe"));
     [report writeToFile:TKDocumentsPath(@"local-shader-probe.txt") atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+    return report;
+}
+
+NSString *TKCapturedShaderProbeReport(void) {
+    NSString *runID=nil;
+    for(NSString *argument in NSProcessInfo.processInfo.arguments)
+        if([argument hasPrefix:@"--probe-run-id="])runID=[argument substringFromIndex:@"--probe-run-id=".length];
+    NSString *report=TKRunCapturedShaderProbe(TKDocumentsPath(@"ShaderRequests"),TKDocumentsPath(@"TranslatedShaders"),runID);
+    [report writeToFile:TKDocumentsPath(@"captured-shader-probe.txt") atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+    fprintf(stderr,"%s",report.UTF8String);
     return report;
 }
 
