@@ -5,6 +5,13 @@
 > (GOG build, HotA 1.8.1 with the HD mod 5.8, a 32-bit x86 program),
 > profile [`heroes3-hota`](../profiles/heroes3-hota). Nothing below is
 > validated on a device yet; each section says what is proven and what is not.
+>
+> **Status, 2026-09-25: blocked below Tolkara.** The runtime builds and runs
+> on an Apple silicon Mac, but a native arm64 Darwin process has no address
+> space below 4 GB, and Wine's 32-bit side needs it ("The 4 GB floor" below).
+> A 32-bit program such as Heroes III cannot run this way on macOS or iPadOS
+> until FEX can run 32-bit guests at a translated address; 64-bit programs
+> need a smaller Wine change. The rest of the design stands for those.
 
 ## The stack
 
@@ -45,6 +52,56 @@ Every layer above Tolkara exists and is maintained elsewhere. What this
 repository has to add is the part Tolkara does not do today for *any* app:
 Wine is not a single self-contained program the way a game is.
 
+## The 4 GB floor (measured on macOS 27, the kernel iPadOS shares)
+
+A native arm64 Darwin task's address space begins at 4 GB. Measured on this
+Mac, 2026-09-25, with two small programs kept in the session notes:
+
+- An arm64 executable linked with `-Wl,-pagezero_size,0x4000` (or `0x1000`,
+  which ld rounds up) is killed at exec with `SIGKILL` before its first
+  instruction. With the default 4 GB `__PAGEZERO` it runs, and Wine's own
+  loader is built that way: configure's `-pagezero_size,0x1000` is silently
+  ignored for arm64.
+- Inside a running process, the low 4 GB is not a reservation that can be
+  given back: `mach_vm_region` reports the first region at `0x100bdc000`;
+  after `mach_vm_deallocate(task, 0, 4 GiB)` (which "succeeds"),
+  `mach_vm_allocate(VM_FLAGS_FIXED)` at `0x400000` and `0x7ffe0000` return
+  `KERN_INVALID_ADDRESS` and `mmap(MAP_FIXED)` at `0x10000000` returns
+  `ENOMEM`. The same holds for an x86_64 binary under Rosetta with the default
+  page zero; Rosetta's small-`__PAGEZERO` x86_64 processes are the only ones
+  that get low memory, which is how Wine has worked on Apple silicon so far.
+- Wine's `wineboot` under the arm64 runtime therefore stops in
+  `virtual_alloc_first_teb`: "failed to map the shared user data" at
+  `0x7ffe0000` (`WINELOADERNOEXEC=1` to see it; the normal path re-execs and
+  the re-exec'd process dies without output). Upstream's `configure.ac` sets
+  no preloader and no reservation segments for `aarch64` on Darwin: nobody
+  has made this work in public yet.
+
+What it means for the two kinds of Windows program:
+
+- **32-bit x86 (Heroes III, the HD mod, HotA).** Wine's WoW64 layer keeps
+  the 32-bit process's address space in the low 4 GB of the 64-bit process,
+  and FEX's `libwow64fex.dll` runs the guest with guest addresses equal to
+  host addresses (bylaws' Wine series even forces every host allocation out
+  of the 32-bit range to keep it free for the guest). With no memory below
+  4 GB there is no 32-bit address space to give. Running such a program on
+  arm64 Darwin needs a 32-bit guest at a translated base address, which FEX
+  does not have; QEMU's user mode has that (`guest_base`) but no Darwin
+  host. This is a change in FEX, upstream of everything here.
+- **64-bit x86.** The guest's own allocations live above 4 GB anyway. What
+  sits below is `KUSER_SHARED_DATA` at `0x7ffe0000`, which Wine maps at that
+  address because Windows programs read it there directly. Wine's ARM64EC
+  code reaches it through a pointer and could map it anywhere; x86-64 guest
+  code that hardcodes the address would have to be caught by FEX. CrossOver's
+  ARM64 preview on macOS runs 64-bit programs, so CodeWeavers have done this
+  in their unpublished FEX and Wine changes; it is a bounded patch.
+
+On the iPad the floor is the same kernel rule, so nothing Tolkara does can
+lift it; the arena Tolkara prepares also lives above 4 GB. Until FEX gains a
+translated 32-bit mode, this profile cannot reach M0, and the milestones
+below apply to 64-bit Windows programs. The alternatives for this particular
+game are in "Working rules".
+
 ## What Wine needs from its host, and what Tolkara has
 
 | Wine needs | Tolkara today | Work item |
@@ -74,6 +131,14 @@ Ordered so that each layer is proven before the next depends on it.
   `profiles/heroes3-hota/install.py --installer … --stage-only` and the command
   it prints. This validates Wine's arm64ec build on macOS, FEX's modules and
   the prefix. Everything in W8 shows up here first.
+
+  **Result, 2026-09-25, M4 Pro, macOS 27.** The runtime builds (wine-10.13
+  arm64: 32 Unix-side libraries, 1052 PE DLLs for arm64ec and i386, FEX's
+  `libarm64ecfex.dll` and `libwow64fex.dll` built with llvm-mingw 20260922)
+  and `wine --version` runs natively. The installer unpacks with innoextract.
+  Prefix creation fails: `wineboot` cannot map `KUSER_SHARED_DATA` at
+  `0x7ffe0000`, see "The 4 GB floor". M0 is not reached and cannot be for a
+  32-bit program with the current FEX.
 - **M1 — the device JIT measurement.** Launch the installed, enrolled app
   once with `xcrun devicectl device process launch --device "$DEVICE"
   "$TOLKARA_BUNDLE_ID" --local-game-startup --jit-probe` (any library app will
