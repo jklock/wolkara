@@ -2,6 +2,7 @@
 #import <Foundation/Foundation.h>
 #import "AKSupport.h"
 #import "LibraryContainer.h"
+#import <dlfcn.h>
 #import <objc/runtime.h>
 #import <CommonCrypto/CommonDigest.h>
 #import <UIKit/UIKit.h>
@@ -200,4 +201,33 @@ NSArray<id<MTLDevice>> *MTLCopyAllDevicesWithObserver(id<NSObject> __strong *obs
 }
 void MTLRemoveDeviceObserver(id<NSObject> observer) {
     @synchronized(AKDeviceObserver.class) { [observers removeObject:observer]; }
+}
+// The guest can also reach Metal without the observer entry points; wrap those
+// so every device it gets carries the desktop translations. The real functions
+// are those of the Metal this adapter re-exports.
+static void *realMetalFunction(const char *name, void *wrapper) {
+    void *function=dlsym(RTLD_NEXT,name);
+    if(!function) {
+        void *metal=dlopen("/System/Library/Frameworks/Metal.framework/Metal",RTLD_LAZY|RTLD_NOLOAD);
+        function=metal?dlsym(metal,name):NULL;
+    }
+    return function==wrapper?NULL:function;
+}
+typedef id<MTLDevice> (*DeviceFactory)(void) __attribute__((ns_returns_retained));
+id<MTLDevice> MTLCreateSystemDefaultDevice(void) {
+    static DeviceFactory real; static dispatch_once_t once;
+    dispatch_once(&once,^{ real=(DeviceFactory)realMetalFunction("MTLCreateSystemDefaultDevice",(void *)MTLCreateSystemDefaultDevice); });
+    id<MTLDevice> device=real?real():nil;
+    if(device) addDesktopProperties(device);
+    return device;
+}
+typedef NSArray<id<MTLDevice>> *(*DeviceEnumerator)(void) __attribute__((ns_returns_retained));
+NSArray<id<MTLDevice>> *MTLCopyAllDevices(void) {
+    static DeviceEnumerator real; static dispatch_once_t once;
+    dispatch_once(&once,^{ real=(DeviceEnumerator)realMetalFunction("MTLCopyAllDevices",(void *)MTLCopyAllDevices); });
+    // iPadOS 17 has no MTLCopyAllDevices; on iOS it answers the default device alone.
+    if(!real) { id<MTLDevice> device=MTLCreateSystemDefaultDevice(); return device?@[device]:@[]; }
+    NSArray<id<MTLDevice>> *devices=real();
+    for(id<MTLDevice> device in devices) addDesktopProperties(device);
+    return devices?:@[];
 }
