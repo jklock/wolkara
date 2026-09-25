@@ -42,7 +42,11 @@ static bool target(GuestImage *image, size_t seg, uint64_t offset, uint64_t *add
     if (!s->prot || offset > s->size || 8 > s->size - offset || (offset & 7)) return false;
     *address = s->address + offset; return true;
 }
-static bool rebases(GuestImage *image, Cursor *c, uint64_t slide, GFStats *stats) {
+typedef struct { GFObserve observe; void *context; } Observer;
+static void notify(const Observer *o, uint64_t address, uint64_t value, const char *symbol) {
+    if (o->observe) o->observe(address, value, symbol, o->context);
+}
+static bool rebases(GuestImage *image, Cursor *c, uint64_t slide, const Observer *o, GFStats *stats) {
     size_t seg = SIZE_MAX; uint64_t offset = 0; unsigned type = 0;
     while (c->p < c->end) {
         uint8_t byte = *c->p++, op = byte & 0xf0, imm = byte & 15;
@@ -66,12 +70,13 @@ static bool rebases(GuestImage *image, Cursor *c, uint64_t slide, GFStats *stats
                 gm_read(&image->memory, address, &value, 8) != GM_OK) return false;
             value += slide; // Mach-O pointer arithmetic intentionally wraps for negative slides.
             if (gm_populate(&image->memory, address, &value, 8) != GM_OK || !add(&offset, 8 + skip)) return false;
+            notify(o, address, value, NULL);
         }
     }
     return false; // Missing DONE.
 }
 static bool binds(GuestImage *image, Cursor *c, bool lazy, bool weak_stream, GFResolve resolve,
-                  void *context, GFStats *stats, char *error, size_t error_size) {
+                  void *context, const Observer *o, GFStats *stats, char *error, size_t error_size) {
     size_t seg = SIZE_MAX; uint64_t offset = 0, addend = 0;
     int ordinal = weak_stream ? BIND_SPECIAL_DYLIB_WEAK_LOOKUP : 0;
     unsigned type = BIND_TYPE_POINTER, flags = 0; const char *symbol = NULL;
@@ -121,6 +126,7 @@ static bool binds(GuestImage *image, Cursor *c, bool lazy, bool weak_stream, GFR
             }
             value += addend;
             if (gm_populate(&image->memory, address, &value, 8) != GM_OK) return false;
+            notify(o, address, value, symbol);
             // Like ADD_ADDR_ULEB, bind-and-skip can encode a backward move as
             // an unsigned wrapping delta. Validate every resulting target above.
             offset += 8 + skip;
@@ -156,7 +162,7 @@ static int chained_ordinal(uint64_t raw, uint64_t limit) {
     return raw > limit - 15 ? (int)((int64_t)raw - (int64_t)limit - 1) : (int)raw;
 }
 
-static bool chained(GuestImage *image, uint64_t slide, GFResolve resolve, void *context,
+static bool chained(GuestImage *image, uint64_t slide, GFResolve resolve, void *context, const Observer *o,
                     GFStats *stats, char *error, size_t error_size) {
 #define FAIL(...) do { if (error_size) snprintf(error, error_size, __VA_ARGS__); goto done; } while (0)
     bool ok = false;
@@ -274,6 +280,7 @@ static bool chained(GuestImage *image, uint64_t slide, GFResolve resolve, void *
                     }
                     if (gm_populate(&image->memory, address, &value, 8) != GM_OK)
                         FAIL("cannot write a chained pointer");
+                    notify(o, address, value, raw >> 63 ? imports[raw & 0xFFFFFF].name : NULL);
                     uint32_t next = (raw >> 51) & 0xFFF;
                     if (!next) break;
                     address += (uint64_t)next * 4;
@@ -291,10 +298,15 @@ done:
 
 bool gf_apply(GuestImage *image, uint64_t slide, GFResolve resolve, void *context,
               GFStats *stats, char *error, size_t error_size) {
+    return gf_apply_observed(image, slide, resolve, context, NULL, NULL, stats, error, error_size);
+}
+bool gf_apply_observed(GuestImage *image, uint64_t slide, GFResolve resolve, void *context,
+                       GFObserve observe, void *observe_context, GFStats *stats, char *error, size_t error_size) {
     *stats = (GFStats){0};
     if (error_size) error[0] = 0;
     if (!resolve) { snprintf(error, error_size, "unsupported fixup configuration"); return false; }
-    if (image->chained_fixups) return chained(image, slide, resolve, context, stats, error, error_size);
+    Observer o = {observe, observe_context};
+    if (image->chained_fixups) return chained(image, slide, resolve, context, &o, stats, error, error_size);
     // Lazy first: a name bound both ways is a call.
     const uint32_t offsets[] = {image->rebase_offset, image->lazy_bind_offset, image->bind_offset, image->weak_bind_offset};
     const uint32_t sizes[] = {image->rebase_size, image->lazy_bind_size, image->bind_size, image->weak_bind_size};
@@ -303,7 +315,7 @@ bool gf_apply(GuestImage *image, uint64_t slide, GFResolve resolve, void *contex
         uint8_t *bytes = stream(image, offsets[i], sizes[i]);
         if (!bytes) { snprintf(error, error_size, "fixup stream outside readable image"); return false; }
         Cursor c = {bytes, bytes + sizes[i], false};
-        bool ok = i == 0 ? rebases(image, &c, slide, stats) : binds(image, &c, i == 1, i == 3, resolve, context, stats, error, error_size);
+        bool ok = i == 0 ? rebases(image, &c, slide, &o, stats) : binds(image, &c, i == 1, i == 3, resolve, context, &o, stats, error, error_size);
         size_t consumed = (size_t)(c.p - bytes);
         free(bytes);
         if (!ok) { if (error_size && !error[0]) snprintf(error, error_size, "invalid or unsupported fixup stream %zu at byte %zu (rebases=%zu binds=%zu)", i, consumed, stats->rebases, stats->binds); return false; }

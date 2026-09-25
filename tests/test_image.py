@@ -1,6 +1,7 @@
 """Synthetic Mach-O inputs: no game bytes or extracted proprietary code."""
 import hashlib
 import pathlib
+import shutil
 import struct
 import subprocess
 import sys
@@ -205,6 +206,64 @@ class ImageTests(unittest.TestCase):
             self.probe(library_fixture(trie), False, ('--library', '--export', '_sample'))
         # A cycle consumes the query, then returns missing rather than looping.
         self.probe(library_fixture(b'\0\1a\0\0'), False, ('--library', '--export', 'aaaa'))
+
+
+CHAINED_SOURCE = r"""
+#include <cstdio>
+#include <cstdlib>
+int counter;
+static int bump() { return ++counter + (std::getenv("TOLKARA_FIXTURE") != nullptr); }
+static int initialized = bump();
+inline int shared_inline(int x) { return x + counter; }
+inline thread_local int tls_value = 7;
+int (*pointer)(int) = shared_inline;
+int *data_pointer = &counter;
+int main(int argc, char **) { tls_value += argc; std::printf("%d %d\n", pointer(argc), tls_value); return initialized + *data_pointer; }
+"""
+
+
+@unittest.skipUnless(shutil.which('dyld_info'), 'needs dyld_info from the Xcode command-line tools')
+class ChainedFixupTests(unittest.TestCase):
+    """A freshly linked chained-fixups executable, checked against Apple's dyld_info."""
+
+    def test_matches_dyld_info(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source, executable = pathlib.Path(tmp) / 'fixture.cpp', pathlib.Path(tmp) / 'fixture'
+            source.write_text(CHAINED_SOURCE)
+            subprocess.run(['xcrun', 'clang++', '-std=c++17', '-arch', 'arm64', '-mmacosx-version-min=13', '-O1',
+                            str(source), '-o', str(executable)], check=True)
+            output = ImageTests.probe(self, executable.read_bytes(), options=('--dump-fixups',))
+            reference = subprocess.run(['dyld_info', '-fixups', '-exports', str(executable)], text=True,
+                                       capture_output=True, check=True).stdout
+        self.assertIn('chained-fixups=yes', output)
+        self.assertIn('initializers=1 ', output)
+        self.assertIn(' (offsets)', output)
+        # dyld_info lists exports as header offsets (0x%08X) and fixups at
+        # their preferred addresses, the same addresses the dump uses.
+        exports, expected = {}, set()
+        for fields in map(str.split, reference.splitlines()):
+            if len(fields) >= 5 and fields[3] == 'rebase':
+                expected.add((int(fields[2], 16), 'rebase', int(fields[4], 16)))
+            elif len(fields) >= 5 and fields[3] == 'bind':
+                library, symbol = fields[4].split('/', 1)
+                expected.add((int(fields[2], 16), 'bind', symbol, library == '<weak-def-coalesce>'))
+            elif len(fields) >= 2 and fields[0].startswith('0x') and len(fields[0]) == 10:
+                exports[fields[1]] = BASE + int(fields[0], 16)
+        actual, values = set(), {}
+        for fields in (line.split() for line in output.splitlines() if line.startswith('[fixup] ')):
+            address = int(fields[1], 16)
+            if fields[2] == 'rebase':
+                actual.add((address, 'rebase', int(fields[3], 16)))
+            else:
+                values[fields[3]] = int(fields[4], 16)
+                actual.add((address, 'bind', fields[3], fields[3] in exports))
+        self.assertEqual(actual, expected)
+        # Weak definitions coalesce to the executable's own exports, a
+        # thread-local one to its TLV descriptor; other imports use the resolver.
+        self.assertEqual(values['__Z13shared_inlinei'], exports['__Z13shared_inlinei'])
+        self.assertEqual(values['_tls_value'], exports['_tls_value'])
+        self.assertEqual(values['_printf'], 0)
+        self.assertTrue({'rebase', 'bind'} <= {entry[1] for entry in actual})
 
 
 if __name__ == '__main__':
