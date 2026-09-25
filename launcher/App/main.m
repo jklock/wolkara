@@ -210,6 +210,8 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
         return;
     }
     self.window.rootViewController = [self statusController];
+    // Development runs can prepare for minutes before a guest starts; Auto-Lock must not end them.
+    UIApplication.sharedApplication.idleTimerDisabled=YES;
     self.status.text = @"Preparing original guest executable…";
     [self.window makeKeyAndVisible];
     // Timer callout, not dispatch_async: the guest never returns from main(), and a
