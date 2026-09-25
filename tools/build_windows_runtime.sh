@@ -42,7 +42,7 @@ need_brew() {
 
 step "Checking the host toolchain"
 xcrun --sdk macosx --show-sdk-path >/dev/null || { echo "error: Xcode with the macOS SDK is required (DEVELOPER_DIR=$DEVELOPER_DIR)"; exit 1; }
-need_brew bison pkgconf freetype gnutls cmake ninja
+need_brew bison pkgconf freetype gnutls cmake ninja autoconf
 # macOS ships bison 2.3; Wine wants 3.0 or later.
 export PATH="$(brew --prefix bison)/bin:$PATH"
 
@@ -82,6 +82,8 @@ build_fex aarch64-w64-mingw32 libwow64fex.dll
 
 step "Wine for arm64 macOS (arm64ec, aarch64 and i386 Windows sides)"
 WINE_BUILD="$OUT/wine-build"; mkdir -p "$WINE_BUILD"
+# Proton's tree carries configure.ac only; upstream tarballs ship configure.
+[ -x "$SRC/wine/configure" ] || (cd "$SRC/wine" && autoreconf -f 2>&1 | tail -3)
 if [ ! -f "$WINE_BUILD/.configured" ]; then
     MACSDK="$(xcrun --sdk macosx --show-sdk-path)"
     # Wine's configure builds the Unix side with the host clang and every PE
