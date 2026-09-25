@@ -113,6 +113,8 @@ build/emulation/test_guest_wait
 build/emulation/test_guest_wait_runloop
 "${CC[@]}" runtime/GuestMemory.c runtime/GuestImage.c runtime/GuestLink.c tests/test_link.c -o build/emulation/test_link
 build/emulation/test_link
+"${CC[@]}" runtime/GuestPaths.c tests/test_paths.c -o build/emulation/test_paths
+build/emulation/test_paths
 "${CC[@]}" runtime/GuestMemory.c runtime/GuestImage.c runtime/GuestFixups.c runtime/GuestLink.c tools/guest_probe.c -o build/emulation/guest_probe_sanitized
 python3 tests/test_image.py build/emulation/guest_probe_sanitized
 # An image with chained fixups: the probe walks the chains.

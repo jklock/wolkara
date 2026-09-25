@@ -9,6 +9,7 @@ static NativeCodeMemory local_quarantine;
 #endif
 #include "GuestFixups.h"
 #include "GuestLink.h"
+#include "GuestPaths.h"
 #include "NativeGuestPolicy.h"
 #include "GuestStubs.h"
 #include "GuestTLS.h"
@@ -18,6 +19,7 @@ static NativeCodeMemory local_quarantine;
 #include <mach-o/loader.h>
 #import <objc/objc-exception.h>
 #import <objc/runtime.h>
+#include <dirent.h>
 #include <errno.h>
 #include <libkern/OSCacheControl.h>
 #include <sys/mman.h>
@@ -528,6 +530,13 @@ static int guest_access(const char *, int);
 static FILE *guest_fopen(const char *, const char *);
 static int guest_mkdir(const char *, mode_t);
 static char *guest_getenv(const char *);
+// Experimental, opt-in (--case-insensitive-files): a file lookup that fails
+// with ENOENT or ENOTDIR is retried with each missing component matched
+// ignoring case, as on macOS. Off by default; a profile's caseAliases covers
+// known cases without it.
+static bool case_insensitive_files;
+static DIR *guest_opendir(const char *);
+static char *guest_realpath(const char *, char *);
 // Handles to the placed images a guest dlopen yields: the tag, RTLD_FIRST, and
 // the image in the low byte (0 the executable, n carried library n-1).
 #define GUEST_HANDLE_TAG 0x7400000000000000ULL
@@ -562,10 +571,12 @@ static void *hook(const char *name) {
     HOOK("dlopen",guest_dlopen); HOOK("dlclose",guest_dlclose); HOOK("dlerror",guest_dlerror);
     HOOK("system",guest_system); HOOK("popen",guest_popen); HOOK("posix_spawn",guest_posix_spawn);
     HOOK("exit",guest_exit); HOOK("abort",guest_abort);
-    if (trace_guest) {
+    if (trace_guest || case_insensitive_files) {
         HOOK("open",guest_open); HOOK("openat",guest_openat); HOOK("stat",guest_stat); HOOK("lstat",guest_lstat);
-        HOOK("access",guest_access); HOOK("fopen",guest_fopen); HOOK("mkdir",guest_mkdir); HOOK("getenv",guest_getenv);
+        HOOK("access",guest_access); HOOK("fopen",guest_fopen); HOOK("opendir",guest_opendir);
+        HOOK("realpath$DARWIN_EXTSN",guest_realpath); HOOK("realpath",guest_realpath);
     }
+    if (trace_guest) { HOOK("mkdir",guest_mkdir); HOOK("getenv",guest_getenv); }
     HOOK("mmap",guest_mmap); HOOK("mprotect",guest_mprotect); HOOK("munmap",guest_munmap);
     HOOK("memcpy",guest_memcpy); HOOK("memmove",guest_memmove); HOOK("memset",guest_memset);
     HOOK("pthread_jit_write_protect_np",guest_jit_protect);
@@ -658,15 +669,53 @@ static void log_once(const char *format, ...) {
 }
 // Logging must not change the errno the guest reads.
 static void trace_failure(const char *call, const char *path) {
+    if (!trace_guest) return;
     int code=errno;
     char shown[1024]; if (path) loggable_path(path,shown,sizeof shown);
     log_once("[native] %s(%s) failed errno=%d\n",call,path?shown:"NULL",code);
+    errno=code;
+}
+// --case-insensitive-files: the lookup's variant to retry, if any. Never for
+// creating files; Foundation's own file APIs are not covered.
+static bool case_variant(const char *path, char *found, size_t size) {
+    int code=errno;
+    bool retry=case_insensitive_files && path && (code==ENOENT || code==ENOTDIR) && gp_case_insensitive(NULL,path,found,size);
+    errno=code;
+    return retry;
+}
+// Relative to a directory descriptor: resolved through its path.
+static bool case_variant_at(int directory, const char *path, char *found, size_t size) {
+    if (!path || path[0]=='/' || directory==AT_FDCWD) return case_variant(path,found,size);
+    int code=errno;
+    char base[PATH_MAX], joined[PATH_MAX];
+    bool retry=case_insensitive_files && (code==ENOENT || code==ENOTDIR) && fcntl(directory,F_GETPATH,base)!=-1 &&
+        snprintf(joined,sizeof joined,"%s/%s",base,path)<(int)sizeof joined && gp_case_insensitive(NULL,joined,found,size);
+    errno=code;
+    return retry;
+}
+// Once per directory spelled differently, with the profile entry that avoids the lookup.
+static void case_found(const char *path, const char *found) {
+    int code=errno;
+    // Up to the last component that differs; a path made absolute is shown whole.
+    size_t length=strlen(path), last=0;
+    if (strlen(found)==length) {
+        for (size_t i=0;i<length;i++) if (path[i]!=found[i]) last=i;
+        while (last<length && path[last]!='/') last++;
+    }
+    char asked[PATH_MAX], actual[PATH_MAX], shown_asked[1024], shown_actual[1024];
+    snprintf(asked,sizeof asked,"%.*s",(int)(last?last:length),path);
+    snprintf(actual,sizeof actual,"%.*s",(int)(last?last:strlen(found)),found);
+    loggable_path(asked,shown_asked,sizeof shown_asked); loggable_path(actual,shown_actual,sizeof shown_actual);
+    log_once("[native] %s found as %s ignoring case (--case-insensitive-files); a caseAliases entry in the app's profile avoids the lookup\n",
+        shown_asked,shown_actual);
     errno=code;
 }
 static int guest_open(const char *path, int flags, ...) {
     int mode=0;
     if (flags&O_CREAT) { va_list arguments; va_start(arguments,flags); mode=va_arg(arguments,int); va_end(arguments); }
     int fd=open(path,flags,mode);
+    char found[PATH_MAX];
+    if (fd<0 && !(flags&O_CREAT) && case_variant(path,found,sizeof found) && (fd=open(found,flags,mode))>=0) case_found(path,found);
     if (fd<0) trace_failure("open",path);
     return fd;
 }
@@ -674,28 +723,54 @@ static int guest_openat(int directory, const char *path, int flags, ...) {
     int mode=0;
     if (flags&O_CREAT) { va_list arguments; va_start(arguments,flags); mode=va_arg(arguments,int); va_end(arguments); }
     int fd=openat(directory,path,flags,mode);
+    char found[PATH_MAX];
+    if (fd<0 && !(flags&O_CREAT) && case_variant_at(directory,path,found,sizeof found) &&
+        (fd=openat(directory,found,flags,mode))>=0) case_found(path,found);
     if (fd<0) trace_failure("openat",path);
     return fd;
 }
 static int guest_stat(const char *path, struct stat *buffer) {
     int result=stat(path,buffer);
+    char found[PATH_MAX];
+    if (result && case_variant(path,found,sizeof found) && !(result=stat(found,buffer))) case_found(path,found);
     if (result) trace_failure("stat",path);
     return result;
 }
 static int guest_lstat(const char *path, struct stat *buffer) {
     int result=lstat(path,buffer);
+    char found[PATH_MAX];
+    if (result && case_variant(path,found,sizeof found) && !(result=lstat(found,buffer))) case_found(path,found);
     if (result) trace_failure("lstat",path);
     return result;
 }
 static int guest_access(const char *path, int mode) {
     int result=access(path,mode);
+    char found[PATH_MAX];
+    if (result && case_variant(path,found,sizeof found) && !(result=access(found,mode))) case_found(path,found);
     if (result) trace_failure("access",path);
     return result;
 }
 static FILE *guest_fopen(const char *path, const char *mode) {
     FILE *file=fopen(path,mode);
+    char found[PATH_MAX];
+    bool creates=mode && (strchr(mode,'w') || strchr(mode,'a'));
+    if (!file && !creates && case_variant(path,found,sizeof found) && (file=fopen(found,mode))) case_found(path,found);
     if (!file) trace_failure("fopen",path);
     return file;
+}
+static DIR *guest_opendir(const char *path) {
+    DIR *directory=opendir(path);
+    char found[PATH_MAX];
+    if (!directory && case_variant(path,found,sizeof found) && (directory=opendir(found))) case_found(path,found);
+    if (!directory) trace_failure("opendir",path);
+    return directory;
+}
+static char *guest_realpath(const char *path, char *resolved) {
+    char *result=realpath(path,resolved);
+    char found[PATH_MAX];
+    if (!result && case_variant(path,found,sizeof found) && (result=realpath(found,resolved))) case_found(path,found);
+    if (!result) trace_failure("realpath",path);
+    return result;
 }
 static int guest_mkdir(const char *path, mode_t mode) {
     int result=mkdir(path,mode);
@@ -1102,6 +1177,8 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
     }
     trace_guest=[NSProcessInfo.processInfo.arguments containsObject:@"--trace-guest"];
     if (trace_guest) LOG("[native] tracing failed file access, created directories and getenv (--trace-guest)\n");
+    case_insensitive_files=[NSProcessInfo.processInfo.arguments containsObject:@"--case-insensitive-files"];
+    if (case_insensitive_files) LOG("[native] file lookups retried ignoring case (--case-insensitive-files; experimental)\n");
     if([NSProcessInfo.processInfo.arguments containsObject:@"--sample-native"]) signal_log_fd=open([[NSHomeDirectory() stringByAppendingPathComponent:@"Documents/native-signal.log"] fileSystemRepresentation],O_WRONLY|O_CREAT|O_TRUNC,0600);
     shader_wait_pending=dlsym(RTLD_DEFAULT,"AKShaderWaitPending");
     for (size_t i=0;i<carried.count;i++) {
