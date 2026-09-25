@@ -513,6 +513,12 @@ build/emulation/test_library_container build/emulation/container-fixture.metalli
 xcrun clang -fobjc-arc -Wall -Wextra -Werror -Wno-deprecated-declarations -O1 -g -fsanitize=address,undefined \
     -Itranslation/Metal tests/test_storage_modes.m -o build/emulation/test_storage_modes
 build/emulation/test_storage_modes
+# The Metal adapter's device-function wrappers: the fixture re-exports Metal as akMetal does.
+xcrun clang -fobjc-arc -Wall -Wextra -Werror -O1 -g -dynamiclib -DAK_FIXTURE_LIBRARY -Itranslation/Metal \
+    -framework Foundation -Wl,-reexport_framework,Metal tests/test_real_function.m -o build/emulation/libakMetalFixture.dylib
+xcrun clang -fobjc-arc -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -Itranslation/Metal \
+    -framework Foundation -framework Metal tests/test_real_function.m -o build/emulation/test_real_function
+build/emulation/test_real_function build/emulation/libakMetalFixture.dylib
 python3 tests/test_shader_translation.py
 python3 -m unittest tests.test_sign_guest_local
 python3 -m unittest tests.test_build_signed_container
