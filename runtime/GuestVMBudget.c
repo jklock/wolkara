@@ -19,6 +19,13 @@ bool gv_counts(const GVBudget *budget, const void *address, size_t size, int fla
 }
 
 static uintptr_t lesser(uintptr_t a, uintptr_t b) { return a < b ? a : b; }
+// Where the kernel's answer for [address, address+size) ends: a whole page; 0
+// past the end of the address space.
+static uintptr_t page_end(const GVBudget *budget, uintptr_t address, size_t size) {
+    uintptr_t end = address + size, rounded = end + (budget->page - 1);
+    if (end < address || rounded < end) return 0;
+    return rounded - rounded % budget->page;
+}
 typedef enum { OUTSIDE, GRANTED, GUARD, MISSING } Part;
 // What an operation starts in: a region's own mapping or a later mapping of
 // the application. That stays the application's even inside another region's
@@ -65,7 +72,7 @@ static void claim(GVBudget *budget, uintptr_t address, size_t size) {
         GVRegion *r = &budget->regions[i];
         if (address + size <= r->limit || address >= r->span) continue;
         if (budget->claim_count < GV_MAX_CLAIMS) {
-            budget->claims[budget->claim_count++] = (GVClaim){address, address + size};
+            budget->claims[budget->claim_count++] = (GVClaim){address, page_end(budget, address, size)};
             return;
         }
         r->span = address > r->limit ? address : r->limit;
@@ -81,16 +88,23 @@ static void unclaim(GVBudget *budget, uintptr_t from, uintptr_t to) {
     }
 }
 // [from, to) of a region's own mapping is gone. Its missing part stays
-// missing until the call is over (sweep), whatever else it unmapped.
+// missing until the call is over (sweep), whatever else it unmapped. A hole in
+// the middle splits it: what lies before the hole becomes a region of its own,
+// never downsized, so no byte is released twice. With no room for that, the
+// hole stays counted until the region goes.
 static void forget(GVBudget *budget, GVRegion *r, uintptr_t from, uintptr_t to) {
-    budget->reserved -= to - from;
     if (from <= r->start) {
         r->start = to;
         if (r->end < to) r->end = to;
     } else if (to >= r->limit) {
         if (r->end > from) r->end = from;
         r->limit = from;
-    }
+    } else if (budget->count < GV_MAX_REGIONS) {
+        budget->regions[budget->count++] = (GVRegion){r->start, lesser(r->end, from), from, from};
+        r->start = to;
+        if (r->end < to) r->end = to;
+    } else return;
+    budget->reserved -= to - from;
 }
 // Regions with nothing of their own left are gone.
 static void sweep(GVBudget *budget) {
@@ -156,18 +170,21 @@ void *gv_reserve(GVBudget *budget, size_t size, int prot, int flags, int fd, siz
     }
     if (result == MAP_FAILED) { os_unfair_lock_unlock(&budget->lock); return result; }
     uintptr_t start = (uintptr_t)result;
-    if (want < size && !unmapped(start + mapped, size - mapped)) {
+    uintptr_t asked = page_end(budget, start, size);
+    if (want < size && asked > start + mapped && !unmapped(start + mapped, asked - start - mapped)) {
         // Something lies where the missing part would be: move where the whole span is free.
         uintptr_t hole = free_span(start, size);
         void *moved = hole ? mmap((void *)hole, mapped, prot, flags, fd, 0) : MAP_FAILED;
         if (moved == (void *)hole) { munmap(result, mapped); result = moved; start = hole; }
         else if (moved != MAP_FAILED) munmap(moved, mapped);
     }
-    GVRegion region = {start, start + want, start + want, start + want};
+    uintptr_t own = page_end(budget, start, want);
+    GVRegion region = {start, own, own, own};
     if (want < size) {
         (void)mprotect((void *)region.end, page, PROT_NONE);
         region.limit = region.end + page;
-        region.span = start + size > region.limit ? start + size : region.limit;
+        asked = page_end(budget, start, size);
+        region.span = asked > region.limit ? asked : region.limit;
     }
     budget->regions[budget->count++] = region;
     budget->reserved += region.limit - region.start;
@@ -199,11 +216,26 @@ void *gv_map(GVBudget *budget, void *address, size_t size, int prot, int flags, 
 
 typedef enum { UNMAP, PROTECT, ADVISE } Operation;
 static int apply(GVBudget *budget, Operation operation, void *address, size_t size, int value) {
-    uintptr_t cursor = (uintptr_t)address, end = cursor + size, until, from, to;
-    if (end < cursor) { errno = EINVAL; return -1; }
+    // As the kernel does: a page-aligned start, a length to the end of its last page.
+    uintptr_t cursor = (uintptr_t)address, end = page_end(budget, cursor, size), until, from, to;
+    if (!size) return operation == UNMAP ? munmap(address, size) :
+                      operation == PROTECT ? mprotect(address, size, value) : madvise(address, size, value);
+    if (!end || cursor % budget->page) { errno = EINVAL; return -1; }
     int result = 0, code = 0;
     os_unfair_lock_lock(&budget->lock);
     anchor_at(budget, cursor, &from, &to);
+    // Memory the application was not given never becomes usable: as the kernel
+    // answers for an unmapped range, the call fails and changes nothing.
+    if (operation == PROTECT && value != PROT_NONE)
+        for (uintptr_t at = cursor; at < end; at = until) {
+            GVRegion *region;
+            Part kind = part(budget, at, end, from, to, &until, &region);
+            if (kind == GUARD || kind == MISSING) {
+                os_unfair_lock_unlock(&budget->lock);
+                errno = ENOMEM;
+                return -1;
+            }
+        }
     for (; cursor < end; cursor = until) {
         GVRegion *region;
         Part kind = part(budget, cursor, end, from, to, &until, &region);

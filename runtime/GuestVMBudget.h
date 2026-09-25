@@ -15,10 +15,11 @@
 // where the whole span asked for is free address space if such a place is
 // found. The application still believes it has the whole region, so the
 // missing part is never unmapped, protected or advised for it (other code's
-// mappings may come to live there), and a fixed mapping into it fails; the
-// application's own later mappings there stay its own. Touching memory past
-// what was granted faults at the guard page, or beyond it reaches whatever was
-// placed there since.
+// mappings may come to live there); a fixed mapping into it, or an mprotect
+// that would make any of it usable, fails with ENOMEM as for unmapped memory;
+// the application's own later mappings there stay its own. Touching memory
+// past what was granted faults at the guard page, or beyond it reaches
+// whatever was placed there since.
 enum { GV_MAX_REGIONS = 256, GV_MAX_CLAIMS = 1024 };
 // [start, end) granted; [end, limit) the guard; [limit, span) not mapped for
 // the application although it asked for it. Not downsized: end == limit == span.
@@ -52,7 +53,9 @@ void *gv_reserve(GVBudget *budget, size_t size, int prot, int flags, int fd, siz
 // hint into one is dropped.
 void *gv_map(GVBudget *budget, void *address, size_t size, int prot, int flags, int fd, off_t offset);
 // munmap, mprotect and madvise, skipping missing parts (and, but for munmap,
-// guard pages); the rest as asked.
+// guard pages); the rest as asked. An mprotect to anything but PROT_NONE that
+// reaches a guard page or a missing part fails with ENOMEM and changes nothing.
+// A hole unmapped inside a region splits it.
 int gv_unmap(GVBudget *budget, void *address, size_t size);
 int gv_protect(GVBudget *budget, void *address, size_t size, int prot);
 int gv_advise(GVBudget *budget, void *address, size_t size, int advice);

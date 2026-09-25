@@ -79,9 +79,17 @@ int main(void) {
     uintptr_t other = place(start + granted + 4 * page, page);
     GVRegion *region = &budget.regions[1];
     assert(region->start == start && region->end == start + granted && region->limit == start + granted + page);
+    // Making the guard page usable fails, as for memory never mapped, and changes nothing.
+    errno = 0;
+    assert(gv_protect(&budget, pool, granted + page, PROT_READ) == -1 && errno == ENOMEM);
+    assert(protection(start) == (VM_PROT_READ | VM_PROT_WRITE) && protection(start + granted) == VM_PROT_NONE);
     if (other && other < region->span) {
-        assert(!gv_protect(&budget, pool, 16 * MB, PROT_READ));
-        assert(protection(start) == VM_PROT_READ && protection(start + granted) == VM_PROT_NONE);
+        // So does making the missing part usable; PROT_NONE and advice skip it.
+        errno = 0;
+        assert(gv_protect(&budget, pool, 16 * MB, PROT_READ) == -1 && errno == ENOMEM);
+        assert(protection(start) == (VM_PROT_READ | VM_PROT_WRITE) && protection(other) == (VM_PROT_READ | VM_PROT_WRITE));
+        assert(!gv_protect(&budget, pool, 16 * MB, PROT_NONE));
+        assert(protection(start) == VM_PROT_NONE && protection(start + granted) == VM_PROT_NONE);
         assert(protection(other) == (VM_PROT_READ | VM_PROT_WRITE));
         assert(!gv_advise(&budget, pool, 16 * MB, MADV_DONTNEED));
         assert(gv_map(&budget, (void *)other, page, PROT_READ, ANON | MAP_FIXED, -1, 0) == MAP_FAILED && errno == ENOMEM);
@@ -97,6 +105,7 @@ int main(void) {
     assert(gv_map(&budget, pool, page, PROT_READ | PROT_WRITE, ANON | MAP_FIXED, -1, 0) == pool);
     // Trimming the tail of an aligned reservation touches only the missing part.
     assert(!gv_unmap(&budget, pool + 12 * MB, 4 * MB) && mapped(start) && budget.count == 2);
+    assert(budget.reserved == 4 * MB + page);
     // Trimming the head releases it.
     assert(!gv_unmap(&budget, pool, page) && !mapped(start) && mapped(start + page));
     assert(budget.reserved == 4 * MB && budget.regions[1].start == start + page);
@@ -123,6 +132,35 @@ int main(void) {
     assert(!gv_unmap(&budget, later, page) && !mapped((uintptr_t)later) && !budget.claim_count);
     assert(!gv_unmap(&budget, pool, 16 * MB) && !budget.count && !budget.reserved);
 
+    // A hole in the middle splits a region: nothing is released twice.
+    gv_init(&budget, 8 * MB, MB, MB);
+    char *holed = gv_reserve(&budget, 4 * MB, PROT_READ | PROT_WRITE, ANON, -1, &granted);
+    assert(holed != MAP_FAILED && granted == 4 * MB && budget.reserved == 4 * MB);
+    assert(!gv_unmap(&budget, holed + MB, MB) && budget.count == 2 && budget.reserved == 3 * MB);
+    assert(mapped((uintptr_t)holed) && !mapped((uintptr_t)holed + MB) && mapped((uintptr_t)holed + 2 * MB));
+    assert(!gv_unmap(&budget, holed, 4 * MB) && !budget.count && !budget.reserved);
+    // In a downsized one: a hole in what was granted, then the whole of it.
+    char *split = gv_reserve(&budget, 64 * MB, PROT_READ | PROT_WRITE, ANON, -1, &granted);
+    assert(split != MAP_FAILED && granted == 8 * MB && budget.reserved == 8 * MB + page);
+    assert(!gv_unmap(&budget, split + 2 * MB, MB) && budget.count == 2 && budget.reserved == 7 * MB + page);
+    split[0] = 1; split[granted - 1] = 1;
+    assert(!gv_unmap(&budget, split, 64 * MB) && !budget.count && !budget.reserved);
+    // Trimming the end of what was granted takes the guard, and with the
+    // region's own part the missing part, with it.
+    char *trimmed = gv_reserve(&budget, 64 * MB, PROT_READ | PROT_WRITE, ANON, -1, &granted);
+    assert(trimmed != MAP_FAILED && granted == 8 * MB);
+    assert(!gv_unmap(&budget, trimmed + 6 * MB, 58 * MB) && budget.count == 1 && budget.reserved == 6 * MB);
+    assert(budget.regions[0].end == budget.regions[0].span && !mapped((uintptr_t)trimmed + 8 * MB));
+    assert(!gv_unmap(&budget, trimmed, 6 * MB) && !budget.count && !budget.reserved);
+    // Lengths end at a page boundary, as the kernel counts them; a start inside a page is refused.
+    char *odd = gv_reserve(&budget, 4 * MB + 100, PROT_READ | PROT_WRITE, ANON, -1, &granted);
+    assert(odd != MAP_FAILED && granted == 4 * MB + 100 && budget.reserved == 4 * MB + page);
+    errno = 0;
+    assert(gv_unmap(&budget, odd + 1, page) == -1 && errno == EINVAL && mapped((uintptr_t)odd));
+    assert(!gv_unmap(&budget, odd + MB, 1) && !mapped((uintptr_t)odd + MB) && mapped((uintptr_t)odd + MB + page));
+    assert(budget.reserved == 4 * MB && budget.count == 2);
+    assert(!gv_unmap(&budget, odd, 4 * MB + 100) && !budget.count && !budget.reserved);
+
     // A full table maps as asked, uncounted.
     gv_init(&budget, 1, MB, MB);
     void *held[GV_MAX_REGIONS];
@@ -144,6 +182,6 @@ int main(void) {
     for (int i = 0; i < 8; i++) assert(!pthread_join(threads[i], NULL));
     assert(!shared.count && !shared.reserved);
 
-    puts("PASS: VM budget: counted reservations downsized with a guard page, missing parts never unmapped or protected, "
-         "trims, full table, threads");
+    puts("PASS: VM budget: counted reservations downsized with a guard page, missing parts never unmapped or made usable, "
+         "trims, holes, page rounding, full table, threads");
 }
