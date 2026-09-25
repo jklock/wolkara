@@ -510,6 +510,9 @@ xcrun clang -fobjc-arc -Wall -Wextra -Werror -Wno-deprecated-declarations -g -fs
     -Itranslation/Metal -framework Foundation translation/Metal/LibraryContainer.m tests/test_library_container.m \
     -o build/emulation/test_library_container
 build/emulation/test_library_container build/emulation/container-fixture.metallib
+xcrun clang -fobjc-arc -Wall -Wextra -Werror -Wno-deprecated-declarations -O1 -g -fsanitize=address,undefined \
+    -Itranslation/Metal tests/test_storage_modes.m -o build/emulation/test_storage_modes
+build/emulation/test_storage_modes
 python3 tests/test_shader_translation.py
 python3 -m unittest tests.test_sign_guest_local
 python3 -m unittest tests.test_build_signed_container
