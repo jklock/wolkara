@@ -15,11 +15,11 @@ helper=importlib.util.module_from_spec(spec)
 with patch.dict(sys.modules,{'lldb':SimpleNamespace(SBError=Error)}): spec.loader.exec_module(helper)
 
 class ArenaTests(unittest.TestCase):
-    def arena(self, data, name='host_debugger_publish_arena', token=bytes(8)):
+    def arena(self, data, name='host_debugger_publish_arena', token=bytes(8), size=None):
         memory=bytearray(data); completion=bytearray(token)
         address=0x100000000; token_address=0x200000000
         frame=Mock(); frame.GetFunctionName.return_value=name
-        regs={'x0':address,'x1':len(data),'x2':token_address}
+        regs={'x0':address,'x1':len(data) if size is None else size,'x2':token_address}
         frame.FindRegister.side_effect=lambda reg:SimpleNamespace(GetValueAsUnsigned=lambda:regs[reg])
         process=Mock(); process.GetSelectedThread.return_value.GetFrameAtIndex.return_value=frame
         def read(a,n,e): return bytes(completion if a==token_address else memory[a-address:a-address+n])
@@ -39,6 +39,13 @@ class ArenaTests(unittest.TestCase):
         debugger,process,_,_=self.arena(bytes(2*1024*1024-1)+b'x')
         with self.assertRaises(RuntimeError): helper.publish(debugger)
         process.WriteMemory.assert_not_called()
+    def test_size_ceiling(self):
+        # Exactly 512 MiB passes the range check and reaches the preflight (short here);
+        # one page more is refused before any memory is read.
+        for size,message,reads in [(512*1024*1024,'fresh zeroed',True),(512*1024*1024+16384,'invalid arena range',False)]:
+            debugger,process,_,_=self.arena(bytes(16384),size=size)
+            with self.assertRaisesRegex(RuntimeError,message): helper.publish(debugger)
+            self.assertEqual(process.ReadMemory.called,reads); process.WriteMemory.assert_not_called()
     def test_rejects_wrong_context_or_token(self):
         for kwargs in [{'name':'guest_code'},{'token':b'x'*8}]:
             debugger,process,_,_=self.arena(bytes(16384),**kwargs)

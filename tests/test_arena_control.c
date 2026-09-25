@@ -39,7 +39,12 @@ int main(void) {
     assert(!tkac_encode(&request,wire,sizeof wire));
     request.challenge_address=0x100000;request.address=UINT64_MAX;
     assert(!tkac_encode(&request,wire,sizeof wire));
-    request.address=0x200000;request.size=129*1024*1024;
+    request.address=0x200000;request.size=512*1024*1024; // Exactly the ceiling is accepted both ways.
+    assert(tkac_encode(&request,wire,sizeof wire));
+    assert(tkac_decode(wire,sizeof wire,&decoded) && decoded.size==512*1024*1024);
+    wire[30]=0x40; // The extension's decoder refuses 512 MiB + 16 KiB on the wire.
+    assert(!tkac_decode(wire,sizeof wire,&decoded));
+    request.size=512*1024*1024+16384;
     assert(!tkac_encode(&request,wire,sizeof wire));
     request.size=16384;memset(request.challenge,0,32);
     assert(!tkac_encode(&request,wire,sizeof wire));
