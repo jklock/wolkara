@@ -30,8 +30,9 @@ loading, executable memory, the desktop UI frameworks and the shader format.
   (`@rpath`, `@loader_path`, `@executable_path`; nothing outside the bundle is
   opened) and loads them as data like the executable. They are placed in the
   same arena, get their own thread-local storage, and run their initializers
-  before the application's, as with dyld. Local signing refuses such an
-  application: its container holds only the executable's pages.
+  before the application's, each after the carried libraries it links, as
+  with dyld. Local signing refuses such an application: its container holds
+  only the executable's pages.
 - `GuestFixups` applies dyld rebases and binds, from opcode streams or chained
   fixups (plain arm64 pointer formats; each chain stays on its page). Binds
   resolve through a short table of loader-owned functions (listed in the
@@ -52,6 +53,15 @@ loading, executable memory, the desktop UI frameworks and the shader format.
 - `GuestTLS` provides macOS thread-local variables. `NativeGuest` registers the
   image's Objective-C metadata with the runtime, runs the original initializers
   in order, and calls the original `main`.
+- `NativeGuest` also answers the application's own `dlopen`: the executable or
+  a carried library yields the placed image (`dlsym` searches its exports), a
+  library the map names opens its adapter, or nothing where the map marks it
+  absent on iPadOS, and any other code inside the application's folder is
+  refused rather than handed to the system's loader. `dladdr` names the carried
+  library an address belongs to.
+- `GuestPaths` (case-insensitive file lookups) and `GuestVMBudget` (a budget
+  for large virtual-memory reservations) back two experimental, opt-in
+  development aids; see [BUILDING.md](BUILDING.md#development-runs-on-the-ipad).
 - `GuestModule` and `tools/package_guest.py` import an executable as a separate,
   hash-verified module under Documents. It refuses to write into a signed bundle.
 - `GuestMemory`, `DarwinMemory` and `GuestCPU` are a software MMU and a scalar
