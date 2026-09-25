@@ -59,6 +59,12 @@ xcrun devicectl list devices
   [`profiles/`](../profiles). Every profile there is included automatically.
 - `TOLKARA_MODE` (optional): `developer-service` or `local-signing`, see step 4.
   Without it the app asks on first launch.
+- `TOLKARA_EXPERIMENTAL_ADAPTERS` (optional, experimental): adapters marked
+  `experimental` under `translation/` take part only when named here, separated
+  by `:`. Today `GameController` (reports no controllers, real gamepads
+  included) and `MetalFX` (presented as absent), both written for one game's
+  crashes and not yet validated on a device. They affect every application in
+  the build.
 
 Xcode signs automatically (`CODE_SIGN_STYLE: Automatic`). The first build
 registers the bundle IDs and the iPad with your team and creates the profiles.

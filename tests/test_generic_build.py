@@ -1,4 +1,5 @@
 """A build made for no particular application: adapters, no map."""
+import json
 import os
 import pathlib
 import shutil
@@ -8,6 +9,7 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 OUT = ROOT / 'build/emulation/generic-app'
+EXPERIMENTAL_OUT = ROOT / 'build/emulation/generic-app-experimental'
 sys.path.insert(0, str(ROOT / 'tools'))
 import classify
 
@@ -23,22 +25,31 @@ def written():
             yield leaf
 
 
+def generic_build(out, **settings):
+    shutil.rmtree(out, ignore_errors=True)
+    # What an earlier build for one executable leaves behind in the same place.
+    (out / 'Guest').mkdir(parents=True)
+    (out / 'Guest/libraries.json').write_text('{}')
+    (out / 'Guest/absent.json').write_text('["Stale"]')
+    # The build phase's own step, with no executable named.
+    env = dict(os.environ, NATIVE_GUEST_SHIMS='GENERIC', PLATFORM_NAME='iphoneos', **settings)
+    # The iOS SDK comes with Xcode, as for tools/run.sh and tools/install.sh.
+    env.setdefault('DEVELOPER_DIR', '/Applications/Xcode.app/Contents/Developer')
+    result = subprocess.run([str(ROOT / 'tools/build_emulated_guest.sh'), str(out), ''],
+                            cwd=ROOT, env=env, capture_output=True, text=True)
+    if result.returncode:
+        raise RuntimeError('generic build failed:\n' + result.stdout + result.stderr)
+
+
+def reexports(library):
+    return 'LC_REEXPORT_DYLIB' in subprocess.run(['otool', '-l', str(library)],
+                                                 capture_output=True, text=True, check=True).stdout
+
+
 class GenericBuildTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        shutil.rmtree(OUT, ignore_errors=True)
-        # What an earlier build for one executable leaves behind in the same place.
-        (OUT / 'Guest').mkdir(parents=True)
-        (OUT / 'Guest/libraries.json').write_text('{}')
-        (OUT / 'Guest/absent.json').write_text('["Stale"]')
-        # The build phase's own step, with no executable named.
-        env = dict(os.environ, NATIVE_GUEST_SHIMS='GENERIC', PLATFORM_NAME='iphoneos')
-        # The iOS SDK comes with Xcode, as for tools/run.sh and tools/install.sh.
-        env.setdefault('DEVELOPER_DIR', '/Applications/Xcode.app/Contents/Developer')
-        result = subprocess.run([str(ROOT / 'tools/build_emulated_guest.sh'), str(OUT), ''],
-                                cwd=ROOT, env=env, capture_output=True, text=True)
-        if result.returncode:
-            raise RuntimeError('generic build failed:\n' + result.stdout + result.stderr)
+        generic_build(OUT)
 
     def test_one_adapter_per_written_framework(self):
         expected = {'ak%s.dylib' % leaf for leaf in written()}
@@ -51,6 +62,27 @@ class GenericBuildTests(unittest.TestCase):
 
     def test_nothing_presented_as_absent(self):
         self.assertFalse((OUT / 'Guest/absent.json').exists())
+
+    def test_experimental_adapters_left_out(self):
+        self.assertFalse((OUT / 'Frameworks/akGameController.dylib').exists())
+        self.assertTrue(reexports(OUT / 'Frameworks/akMetal.dylib'))
+
+
+class ExperimentalGenericBuildTests(unittest.TestCase):
+    """TOLKARA_EXPERIMENTAL_ADAPTERS opts into translation/<Leaf>/ marked experimental."""
+
+    @classmethod
+    def setUpClass(cls):
+        generic_build(EXPERIMENTAL_OUT, TOLKARA_EXPERIMENTAL_ADAPTERS='GameController:MetalFX')
+
+    def test_standalone_adapter_reexports_nothing(self):
+        self.assertFalse(reexports(EXPERIMENTAL_OUT / 'Frameworks/akGameController.dylib'))
+        self.assertTrue(reexports(EXPERIMENTAL_OUT / 'Frameworks/akMetal.dylib'))
+
+    def test_absent_libraries_listed_for_the_runtime(self):
+        self.assertEqual(json.loads((EXPERIMENTAL_OUT / 'Guest/absent.json').read_text()), ['MetalFX'])
+        self.assertFalse((EXPERIMENTAL_OUT / 'Frameworks/akMetalFX.dylib').exists())
+        self.assertFalse((EXPERIMENTAL_OUT / 'Guest/libraries.json').exists())
 
 
 if __name__ == '__main__':
