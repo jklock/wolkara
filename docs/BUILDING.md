@@ -263,6 +263,10 @@ library, for example `xcrun devicectl device process launch --device <iPad>
 screen. Diagnostics that change what the runtime does are opt-in and never on
 for apps started from the library:
 
+- `--local-native-authorization` (Tolkara build, with `--native-startup` or
+  `--native-initializer`): this iPad's Developer service prepares memory, as
+  for a library launch, instead of a debugger on the Mac. It needs the
+  enrolment from step 4; the setup report is `Documents/local-game-setup.txt`.
 - `--sample-native`: samples the guest's threads every 10 seconds and keeps
   crash evidence in `Documents/native-signal.log`.
 - `--trace-guest`: logs the guest's failed file access (with errno), the
