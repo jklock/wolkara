@@ -383,7 +383,23 @@ static void *guest_memset(void *destination, int value, size_t size) {
     if (alias != destination) { sys_dcache_flush(alias,size); sys_icache_invalidate(destination,size); }
     return destination;
 }
+// The carried library an address lies in, once the arena is laid out.
+static const GuestLibrary *carried_library_at(const void *address) {
+    for (size_t i=0;i<carried.count;i++) {
+        const GuestLibrary *library=&carried.libraries[i];
+        uint64_t low, reach=gi_extent(&library->image,&low);
+        uintptr_t base=(uintptr_t)(low+library->slide);
+        if (library->slide && (uintptr_t)address>=base && (uintptr_t)address-base<reach) return library;
+    }
+    return NULL;
+}
 static int guest_dladdr(const void *address, Dl_info *info) {
+    // Libraries find their own file and header this way, as they would with dyld.
+    const GuestLibrary *library=carried_library_at(address);
+    if (library) {
+        *info = (Dl_info){.dli_fname=library->path,.dli_fbase=(void *)(uintptr_t)(library->image.header_address+library->slide)};
+        LOG("[native] dladdr(%p) -> %s base=%p\n",address,library->install_name,info->dli_fbase); return 1;
+    }
     if (inside(address,1)) {
         *info = (Dl_info){.dli_fname=guest.path,.dli_fbase=guest.arena.executable};
         LOG("[native] dladdr(%p) -> original image base=%p\n",address,info->dli_fbase); return 1;
