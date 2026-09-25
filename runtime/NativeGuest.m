@@ -874,6 +874,14 @@ fail:
     dlclose(handle);
     return false;
 }
+// Libraries a generic build presents as unavailable: the leaves its
+// Guest/absent.json names (translation/<Leaf>/absent). A build made for one
+// executable says so in its map instead, with a target of "".
+static NSSet *absent_leaves;
+static bool leaf_absent(NSString *install_name) {
+    NSString *leaf=install_name.lastPathComponent;
+    return [absent_leaves containsObject:[leaf hasSuffix:@".dylib"]?[leaf stringByDeletingPathExtension]:leaf];
+}
 // Our adapter for an install name's leaf, if this build has one.
 static NSString *adapter_path(NSString *install_name, const char *frameworks) {
     NSString *leaf=install_name.lastPathComponent;
@@ -881,8 +889,9 @@ static NSString *adapter_path(NSString *install_name, const char *frameworks) {
         [NSString stringWithFormat:@"ak%@.dylib",[leaf hasSuffix:@".dylib"]?[leaf stringByDeletingPathExtension]:leaf]];
     return [NSFileManager.defaultManager fileExistsAtPath:adapter] ? adapter : nil;
 }
-// No map: our adapter for the leaf name, else iOS.
+// No map: our adapter for the leaf name, else iOS; "" for an absent one.
 static NSString *library_path(NSString *install_name, const char *frameworks) {
+    if (leaf_absent(install_name)) return @"";
     NSString *leaf=install_name.lastPathComponent, *adapter=adapter_path(install_name,frameworks);
     if (adapter) return adapter;
     if ([leaf hasSuffix:@".dylib"]) return [@"/usr/lib" stringByAppendingPathComponent:leaf];
@@ -924,7 +933,7 @@ static NSString *guest_frameworks;
 // when there is one.
 static NSString *mapped_library(NSString *original) {
     if (!guest_frameworks || !original) return nil;
-    if (!guest_mapping) return adapter_path(original,guest_frameworks.fileSystemRepresentation);
+    if (!guest_mapping) return leaf_absent(original) ? @"" : adapter_path(original,guest_frameworks.fileSystemRepresentation);
     id target=guest_mapping[original];
     if (!target) for (NSString *key in guest_mapping)
         if ([key isKindOfClass:NSString.class] && gl_same_install_name(key.UTF8String,original.UTF8String)) { target=guest_mapping[key]; break; }
@@ -1153,6 +1162,13 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
         }
         guest_generic=!mapping;
         guest_mapping=mapping; guest_frameworks=@(frameworks);
+        // A generic build lists the libraries it presents as absent.
+        if (!mapping) {
+            NSString *list=[[@(library_map) stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"absent.json"];
+            NSData *absent=[NSData dataWithContentsOfFile:list];
+            NSArray *leaves=absent?[NSJSONSerialization JSONObjectWithData:absent options:0 error:NULL]:nil;
+            if ([leaves isKindOfClass:NSArray.class]) absent_leaves=[NSSet setWithArray:leaves];
+        }
         NSString *support=[@(frameworks) stringByAppendingPathComponent:@"libAKSupport.dylib"];
         if (!dlopen(support.fileSystemRepresentation,RTLD_NOW|RTLD_GLOBAL)) { LOG("[native] support load failed: %s\n",dlerror()); goto done; }
         open_dependencies(&guest.image,guest.path,mapping,frameworks,guest.libraries);
