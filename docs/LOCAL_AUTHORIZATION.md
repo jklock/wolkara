@@ -357,8 +357,11 @@ NativeGuest selects this publisher only with the opt-in
 `--local-native-authorization` argument alongside the existing native startup/
 initializer argument. The owning app sends its request through its connected
 NETunnelProviderSession; it never starts a VPN or requests consent implicitly.
-Without a configured route/helper it rejects. Normal Mac-assisted startup still
-uses host_debugger_publish_arena. This is not a finished iPad launch UI.
+Without a configured route/helper it rejects. For such a development run the
+Tolkara launcher first prepares the route and helper exactly as a library
+launch does (report in `Documents/local-game-setup.txt`) and enters the guest
+from a timer callout once they are ready, so it needs no Mac. Without the
+argument, Mac-assisted startup still uses host_debugger_publish_arena.
 
 The bundled provider now passes binary arena messages to `ArenaPreparationService`.
 Its default is a definite rejection: no debugger connection is attempted until

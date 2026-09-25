@@ -38,6 +38,8 @@
 @property(nonatomic,copy) NSString *executionModeSource;
 #if TOLKARA_INTEGRATED_AUTH
 @property(nonatomic,strong) TKLocalAuthorization *localAuthorization;
+// A development run's startup kind, kept while this iPad's Developer service prepares.
+@property(nonatomic) BOOL nativeFullStartup;
 #endif
 @end
 
@@ -621,8 +623,36 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
             [self refuseNativeGame:unavailable?:@"External JIT could not be selected for this run."];return;
         }
     }
+#if TOLKARA_INTEGRATED_AUTH
+    // Opt-in: without it these runs wait for a Mac-side debugger as before.
+    if (!container && app && [NSProcessInfo.processInfo.arguments containsObject:@"--local-native-authorization"]) {
+        [self prepareNativeDiagnostic:fullStartup app:app];return;
+    }
+#endif
     [self runNativeGame:fullStartup app:app container:container];
 }
+#if TOLKARA_INTEGRATED_AUTH
+// --local-native-authorization: this iPad's Developer service prepares memory,
+// as for a library launch (launchLocalApp). It must be ready and selected
+// before ng_initialize, which reads the same argument; the service detaches
+// before any application code runs.
+- (void)prepareNativeDiagnostic:(BOOL)fullStartup app:(TKApp *)app {
+    self.launchingApp=app;
+    self.nativeFullStartup=fullStartup;
+    self.status.text=@"Preparing Developer service on this iPad…";
+    [self.localAuthorization startAndPrepareLocalAuthorization:^(NSString *report) {
+        [report writeToFile:TKDocumentsPath(@"local-game-setup.txt") atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+        if(!self.localAuthorization.localSessionReady || !ng_use_local_authorization()) {
+            [self refuseNativeGame:@"Developer service could not prepare; see Documents/local-game-setup.txt."];
+            self.status.text=[@"Developer service could not prepare. Close and reopen the app to retry.\n" stringByAppendingString:report];
+            [self showStartStopped];return;
+        }
+        // Guest main must enter from a timer callout, never a dispatch block.
+        [self performSelector:@selector(startPreparedNativeDiagnostic) withObject:nil afterDelay:0];
+    }];
+}
+- (void)startPreparedNativeDiagnostic { [self runNativeGame:self.nativeFullStartup app:self.launchingApp container:nil]; }
+#endif
 // container: Local signing's validated page container, or nil for the
 // Developer-service/debugger path. Callers choose it; this only applies it.
 - (void)runNativeGame:(BOOL)fullStartup app:(TKApp *)app container:(NSString *)container {
