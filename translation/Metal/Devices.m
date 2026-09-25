@@ -172,6 +172,7 @@ static id<MTLLibrary> captureLibrary(id receiver,SEL selector,dispatch_data_t da
     return library;
 }
 extern void AKInstallMetalPresentationDiagnostics(id<MTLDevice> device);
+extern void AKInstallManagedStorage(Class device);   // opt-in; see ManagedStorage.m
 static void addDesktopProperties(id<MTLDevice> device) {
     AKInstallMetalPresentationDiagnostics(device);
     Class cls=object_getClass(device);
@@ -181,6 +182,7 @@ static void addDesktopProperties(id<MTLDevice> device) {
         Method method=class_getInstanceMethod(cls,selector);
         originalLibraryLoader=(LibraryLoader)method_getImplementation(method);
         class_replaceMethod(cls,selector,(IMP)captureLibrary,method_getTypeEncoding(method));
+        AKInstallManagedStorage(cls);
     });
     for(NSString *name in @[@"isLowPower",@"isHeadless",@"isRemovable",@"isDepth24Stencil8PixelFormatSupported"])
         if(![device respondsToSelector:NSSelectorFromString(name)]) class_addMethod(cls,NSSelectorFromString(name),(IMP)desktopFalse,"B@:");
