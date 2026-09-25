@@ -650,6 +650,9 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     fprintf(log,"[host] app=%s sha256=%s\n",app.name.UTF8String,app.sha256.UTF8String);
     if (chdir(directory.fileSystemRepresentation)) fprintf(log,"[host] app working directory failed: %s\n",strerror(errno));
     else fprintf(log,"[host] app working directory=%s\n",directory.fileSystemRepresentation);
+    // A profile's caseAliases: folders the application names in another case
+    // than its installer wrote them, which only macOS's file system ignores.
+    for (NSString *line in [self.library linkCaseAliasesForApp:app]) fprintf(log,"[host] %s\n",line.UTF8String);
     // Local signing: the runtime validates the container against this
     // executable and refuses it after Developer service was selected.
     if (container) {

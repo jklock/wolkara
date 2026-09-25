@@ -20,6 +20,14 @@ no patches, no settings for the application itself.
   Keeping the `.app` bundle structure lets the application find its resources.
 - Both paths must be relative and stay inside Documents; `tools/check_profile.py`
   rejects anything else and any unknown key.
+- `caseAliases` (optional): `{"archive/mac": "Mac"}` means the application
+  opens `archive/mac/…` while its installer wrote `archive/Mac`. macOS's file
+  system ignores case by default and iPadOS's does not, so before each start
+  the launcher adds `archive/mac` as a relative symbolic link to `Mac` when the
+  link is missing and `archive/Mac` exists. Each alias is a path relative to
+  `workingDirectory`; its target is the alias's last component in another case,
+  in the same folder. Nothing outside the working directory is created or
+  followed. The link stays in your copy of the files, visible in the Files app.
 
 Every profile in `profiles/` is built into the app. When the files a profile
 describes are present in Documents, the launcher adds that app to its library
