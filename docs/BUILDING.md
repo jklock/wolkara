@@ -269,6 +269,12 @@ for apps started from the library:
   directories it creates and the environment variables it reads, each distinct
   line once, with paths shortened as elsewhere in the log. Meant for bringing
   up a new application; it slows file access.
+- `--case-insensitive-files` (experimental): a file lookup that fails is
+  retried with each missing folder or file name matched ignoring case, as on
+  macOS, and the log names the folder. Files being created and Foundation's
+  own file APIs are not covered, and each miss costs a directory listing. For
+  a known case, prefer a profile's `caseAliases` (see
+  [profiles/README.md](../profiles/README.md)).
 
 ## Things that will bite you
 
