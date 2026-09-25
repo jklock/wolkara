@@ -5,7 +5,7 @@ tolkara_load_env() {
     local given
     # Re-export: 'declare -x', as bash lists it, would be local to this function.
     # POSIX mode lists 'export NAME=' instead; accept both.
-    given=$(export -p | sed -n -E 's/^(declare -x|export) ((DEVELOPMENT_TEAM|TOLKARA_[A-Z_]+|DEVICE|SIMULATOR|GUEST_EXE|SIGN_IDENTITY)=)/export \2/p')
+    given=$(export -p | sed -n -E 's/^(declare -x|export) ((DEVELOPMENT_TEAM|TOLKARA_[A-Z_]+|DEVICE|SIMULATOR|GUEST_EXE|NATIVE_GUEST_SHIMS|SIGN_IDENTITY)=)/export \2/p')
     if [ -f local.env ]; then set -a; . ./local.env; set +a; fi
     eval "$given"
 }

@@ -26,6 +26,23 @@ void *gt_address(GuestTLS *tls, const uint64_t descriptor[3]) {
     }
     return (char *)storage+descriptor[2];
 }
+bool gt_register(GTImage *image, const char *name, const void *bytes, size_t size, size_t alignment,
+                 uintptr_t descriptors, size_t descriptors_size) {
+    if (!image || !descriptors_size || descriptors_size%24 || descriptors_size>UINTPTR_MAX-descriptors) return false;
+    GTImage staged={.name=name,.descriptors=descriptors,.descriptors_size=descriptors_size};
+    if (size && !gt_create(&staged.tls,bytes,size,alignment,descriptors,descriptors_size)) return false;
+    *image=staged; return true;
+}
+void *gt_find(GTImage *images, size_t count, const uint64_t descriptor[3], const char **owner) {
+    uintptr_t address=(uintptr_t)descriptor;
+    if (owner) *owner=NULL;
+    for (size_t i=0;i<count;i++) {
+        if (address-images[i].descriptors>=images[i].descriptors_size) continue;
+        if (owner) *owner=images[i].name;
+        return gt_address(&images[i].tls,descriptor);
+    }
+    return NULL;
+}
 void gt_destroy(GuestTLS *tls) {
     if (tls->initialized) {
         free(pthread_getspecific(tls->key)); pthread_setspecific(tls->key,NULL);

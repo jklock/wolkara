@@ -16,6 +16,17 @@ typedef struct {
 // The publisher must verify its own initialization handshake and return false if
 // unavailable. Mapping success alone does not prove execution is permitted.
 typedef bool (*NCPublish)(void *executable, size_t size, void *context);
+// A ceiling on any one arena, whatever the device allows.
+#define NC_MAX_ARENA (1024u * 1024u * 1024u)
+// The largest arena a launch accepts now: the ceiling, or what the system says
+// is left to this process if that is less. Page aligned.
+size_t nc_launch_limit(void);
+// What External JIT first asks an enabler for: a quarter of what is left (the
+// writable alias and the application's own allocations count too), at most
+// the ceiling. Page aligned.
+size_t nc_arena_limit(void);
+// What the system says this process may still allocate.
+size_t nc_available_memory(void);
 // Zero-initialize memory before use. On error returns false and sets errno.
 bool nc_create(NativeCodeMemory *memory, size_t size, NCPublish publish, void *context);
 typedef enum { NC_REJECTED, NC_PREPARED, NC_UNCERTAIN } NCPreparation;
@@ -27,7 +38,10 @@ typedef NCPreparation (*NCPrepare)(void *executable, size_t size, void *context)
 // confirmed prepared-and-detached receipt may produce NC_PREPARED.
 bool nc_create_managed(NativeCodeMemory *memory, size_t size, NCPrepare prepare,
                        void *context, NativeCodeMemory *quarantine);
+// Adopt a region made outside; it is ours from then.
+bool nc_adopt(NativeCodeMemory *memory, void *executable, size_t size);
 // Caller must ensure no thread is executing the range while it is being changed.
 // Copies through RW, flushes caches, and keeps the RX protection unchanged.
 bool nc_write(NativeCodeMemory *memory, size_t offset, const void *bytes, size_t size);
+// Unmaps both views, adopted ones too; quarantine is kept.
 void nc_destroy(NativeCodeMemory *memory);

@@ -9,7 +9,8 @@ OUT=$1; EXES=()
 mkdir -p "$ROOT/build"
 if [ ${#EXES[@]} -eq 0 ]; then
     EXES=("$ROOT/build/TestGuest")
-    # Classic dyld info: the native loader does not apply chained fixups.
+    # Classic dyld info keeps the opcode binds covered on the device; chained
+    # fixups are covered by tools/test_emulation.sh.
     xcrun --sdk macosx clang -fobjc-arc -arch arm64 -O1 -mmacosx-version-min=14.0 -Wl,-no_fixup_chains -o "${EXES[0]}" \
       "$ROOT/testguest/main.m" -framework Cocoa -framework Metal -framework QuartzCore
 fi
@@ -19,6 +20,8 @@ EXE=${EXES[0]}
 mkdir -p "$OUT/Guest"
 # Remove resources left by older builds, including the proprietary executable.
 rm -f "$OUT/Guest/OriginalExecutable.bin" "$OUT/Guest/manifest.json"
+# A library map left by a build for one executable would turn a generic build's stubs off.
+rm -f "$OUT/Guest/libraries.json"
 rm -rf "$OUT/Guest/Nibs"
 MODULE="$ROOT/build/guest-module"
 rm -rf "$MODULE/Nibs"
@@ -44,17 +47,28 @@ if [ -n "${TOLKARA_PROFILE:-}" ]; then
 fi
 
 # Build/sign only our compatibility libraries. The original is never patched.
-if [ "${NATIVE_GUEST_SHIMS:-NO}" = YES ]; then
+# GENERIC: one adapter per translation/<Framework>/, no executable classified.
+if [ "${NATIVE_GUEST_SHIMS:-NO}" = YES ] || [ "${NATIVE_GUEST_SHIMS:-NO}" = GENERIC ]; then
     if [ "${PLATFORM_NAME:-iphoneos}" = iphonesimulator ]; then P=iossim; else P=ios; fi
     W="$ROOT/build/native-$P"; mkdir -p "$W" "$OUT/Frameworks"
-    python3 "$ROOT/tools/classify.py" "${EXES[@]}" --out "$W/SURFACE.md" --map "$W/map.json" --raw "$W/surface.json"
-    python3 "$ROOT/tools/build_shims.py" "$P" "$W/surface.json" "$OUT/Frameworks"
-    cp "$W/map.json" "$OUT/Guest/libraries.json"
-    MACSDK=$(xcrun --sdk macosx --show-sdk-path)
-    xcrun --sdk macosx clang -target arm64-apple-macos14.0 -isysroot "$MACSDK" \
-      -fobjc-arc -Wno-deprecated-declarations -framework Foundation -framework Security \
-      "$ROOT/tools/export_system_anchors.m" -o "$ROOT/build/export_system_anchors"
-    "$ROOT/build/export_system_anchors" "$OUT/CompatibilityRootCertificates.plist"
+    if [ "$NATIVE_GUEST_SHIMS" = GENERIC ]; then
+        python3 "$ROOT/tools/build_shims.py" "$P" generic "$OUT/Frameworks"
+    else
+        python3 "$ROOT/tools/classify.py" "${EXES[@]}" --out "$W/SURFACE.md" --map "$W/map.json" --raw "$W/surface.json"
+        python3 "$ROOT/tools/build_shims.py" "$P" "$W/surface.json" "$OUT/Frameworks"
+        cp "$W/map.json" "$OUT/Guest/libraries.json"
+    fi
+    # The builder's own Mac's public root certificates. TOLKARA_SYSTEM_ROOTS=NO
+    # leaves them out, as the published release build does: it is not built on
+    # the user's Mac, and nothing exported from macOS is redistributed.
+    rm -f "$OUT/CompatibilityRootCertificates.plist"
+    if [ "${TOLKARA_SYSTEM_ROOTS:-YES}" != NO ]; then
+        MACSDK=$(xcrun --sdk macosx --show-sdk-path)
+        xcrun --sdk macosx clang -target arm64-apple-macos14.0 -isysroot "$MACSDK" \
+          -fobjc-arc -Wno-deprecated-declarations -framework Foundation -framework Security \
+          "$ROOT/tools/export_system_anchors.m" -o "$ROOT/build/export_system_anchors"
+        "$ROOT/build/export_system_anchors" "$OUT/CompatibilityRootCertificates.plist"
+    fi
     for exe in "${EXES[@]}"; do
         RESOURCES="$(dirname "$(dirname "$exe")")/Resources"
         [ -d "$RESOURCES" ] || continue

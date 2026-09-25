@@ -1,8 +1,10 @@
 # Building and installing Tolkara
 
-Tolkara is not distributed as a built app. You build it, you sign it with your
-own Apple developer identity, and it runs on your own iPad. This page takes you
-from a fresh clone to a running application.
+Tolkara is meant to be built by you: you build it, you sign it with your own
+Apple developer identity, and it runs on your own iPad. (External JIT is the one
+exception to the signing: you build it unsigned and your sideloading tool signs
+it; see step 4.) This page takes you from a fresh clone to a running
+application.
 
 ## What you need
 
@@ -66,6 +68,11 @@ signing under Signing & Capabilities.
 
 ## 3. Build and install
 
+This builds the Tolkara app, which offers Developer service and Local signing.
+For External JIT, skip to [External JIT](#external-jit-sideload-an-unsigned-build)
+in step 4: it needs the TolkaraDiagnostics app built unsigned instead, and no
+signing team of yours.
+
 ```bash
 tools/install.sh
 ```
@@ -82,8 +89,8 @@ Settings > General > VPN & Device Management.
 
 ## 4. Set up your execution mode
 
-Tolkara runs the application's code in one of two ways; the README's
-[Two ways to run code](../README.md#two-ways-to-run-code) compares them. Choose
+Tolkara runs the application's code in one of three ways; the README's
+[Three ways to run code](../README.md#three-ways-to-run-code) compares them. Choose
 one. The app asks on first launch unless `TOLKARA_MODE` preselected a mode, and
 **Execution mode…** in the app changes it later. You only need to set up the
 mode you use.
@@ -153,6 +160,42 @@ what its own startup code produces, stops the launch before any more
 application code runs; the app may close, and `Documents/native-guest.log` says
 why (`[signed-image] FATAL …` or a rejection). Rebuild the container whenever
 the application is updated.
+
+### External JIT: sideload an unsigned build
+
+External JIT needs no signing team of yours and no Mac after the build. A
+sideloading tool (SideStore or similar) signs the app with your Apple ID, and
+JIT is enabled when the app opens, by that tool or by a JIT enabler such as
+StikDebug. A free Apple ID can sign it, but free signing drops the
+increased-memory-limit and extended-virtual-addressing capabilities, so large
+applications may not fit in memory.
+
+```bash
+tools/package_ipa.sh
+```
+
+It builds `Tolkara-unsigned.ipa`: the TolkaraDiagnostics target with no signing
+team (only an ad hoc signature that declares the two memory capabilities, so
+your sideloading tool knows to request them), as a generic build (`NATIVE_GUEST_SHIMS=GENERIC`, one adapter per framework and no
+`GUEST_EXE`), with External JIT preselected. As a convenience, each `v*`
+release carries the same build, made by `.github/workflows/release.yml`, with
+install links for SideStore and LiveContainer in its notes; building it
+yourself remains the supported way. The release build leaves out the public
+root certificates a build exports from your own Mac, so an application that
+reads macOS's system root certificate store finds none there. Install it with your sideloading
+tool, open it with JIT enabled, then add your application in the app. Opened
+without JIT, Tolkara says so instead of starting the application. Sideloading
+tools usually change the app's bundle identifier: copy your application's files
+with Finder or the Files app, or set `TOLKARA_BUNDLE_ID` to the installed
+identifier before running a profile's `install.py` (step 5). This mode has
+not been run on a device yet; report what you find in
+[COMPATIBILITY.md](../COMPATIBILITY.md).
+
+A generic build also works with the other modes where they are available:
+`NATIVE_GUEST_SHIMS=GENERIC tools/install.sh` needs no `GUEST_EXE` (with Local
+signing, set `GUEST_EXE` anyway so its page containers are built). Imports that
+no adapter or iPadOS library provides become stubs at launch and are listed in
+`Documents/native-guest.log` (`[native] stub …`).
 
 ## 5. Copy your application's files
 
