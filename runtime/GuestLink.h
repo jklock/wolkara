@@ -43,6 +43,11 @@ const GuestLibrary *gl_carried(const GuestLinkSet *set, const GuestImage *from, 
 // (weak ones as dyld coalesces: the first non-weak definition wins).
 bool gl_lookup(const GuestLinkSet *set, const GuestImage *from, const char *from_path,
                int ordinal, const char *symbol, uint64_t *value, const char **answered_by);
+// dyld's initialization order: each library after the carried libraries it
+// links, depth first from the executable's list, each once (a cycle is cut
+// where it closes); libraries nothing reaches follow in load order. Fills
+// order with indices into libraries; returns how many, set->count.
+size_t gl_initialization_order(const GuestLinkSet *set, size_t order[GL_MAX_LIBRARIES]);
 // Memory all the libraries need together, page aligned.
 uint64_t gl_span(const GuestLinkSet *set);
 void gl_destroy(GuestLinkSet *set);

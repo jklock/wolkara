@@ -875,9 +875,11 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
         asprintf(&executable_argument,"executable_path=%s",guest.path);
         const char *argv[]={guest.path,NULL}, *env[]={NULL}, *apple[]={executable_argument,NULL};
         int argc=1;
-        // dyld order: a library's initializers before the client's.
-        for (size_t i=0;full_startup && i<carried.count;i++) {
-            GuestLibrary *library=&carried.libraries[i];
+        // dyld order: a library's initializers before the client's, and
+        // before those of the carried libraries that link it.
+        size_t order[GL_MAX_LIBRARIES], ordered=gl_initialization_order(&carried,order);
+        for (size_t n=0;full_startup && n<ordered;n++) {
+            GuestLibrary *library=&carried.libraries[order[n]];
             LOG("[native] registering %s\n",library->install_name);
             if (!register_objc_image(library->path,(const struct mach_header *)(library->image.header_address+library->slide)) ||
                 !run_initializers(&library->image,library->slide,library->install_name,argc,argv,env,apple)) { ok=false; goto done; }
