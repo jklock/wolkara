@@ -93,6 +93,56 @@ int main(void) {
     assert(!gl_resolve(&set, &set.libraries[0].image, set.libraries[0].path,
                        "@rpath/elsewhere.dylib", out, sizeof out));
 
+    // The application's own dlopen: what it carries is the placed image, by
+    // leaf, path, or a prefix from the calling image; 0 is the executable.
+    size_t index = 99;
+    assert(gl_placed(&set, &main_image, executable, "libcarried.dylib", &index) && index == 1);
+    assert(gl_placed(&set, &main_image, executable, "App", &index) && index == 0);
+    assert(gl_placed(&set, &main_image, executable, "@rpath/libcarried.dylib", &index) && index == 1);
+    assert(gl_placed(&set, &main_image, executable, carried, &index) && index == 1);
+    assert(gl_placed(&set, &main_image, executable, executable, &index) && index == 0);
+    assert(gl_placed(&set, &main_image, executable, "@executable_path/App", &index) && index == 0);
+    assert(gl_placed(&set, &set.libraries[0].image, set.libraries[0].path, "@loader_path/../MacOS/App", &index) &&
+           index == 0);
+    // The leaf of an install name that differs from the file's.
+    free(set.libraries[0].install_name);
+    set.libraries[0].install_name = strdup("@rpath/libnamed.1.dylib");
+    assert(set.libraries[0].install_name);
+    assert(gl_placed(&set, &main_image, executable, "libnamed.1.dylib", &index) && index == 1);
+    // Anything else is not placed: another name, a file outside, the system, nothing.
+    index = 99;
+    assert(!gl_placed(&set, &main_image, executable, "libother.dylib", &index));
+    assert(!gl_placed(&set, &main_image, executable, outside, &index));
+    assert(!gl_placed(&set, &main_image, executable, "/usr/lib/libSystem.B.dylib", &index));
+    assert(!gl_placed(&set, &main_image, executable, "@rpath/absent.dylib", &index));
+    assert(!gl_placed(&set, &main_image, executable, "", &index) && !gl_placed(&set, &main_image, executable, NULL, &index));
+    assert(!gl_placed(NULL, &main_image, executable, "App", &index) && index == 99);
+    // Code inside the application is only ever placed: @ names and paths that
+    // resolve inside, even through a link, are its own; the rest is not.
+    char inward[512], outward[512];
+    snprintf(inward, sizeof inward, "%s/inward.dylib", root);
+    snprintf(outward, sizeof outward, "%s/outward.dylib", frameworks);
+    assert(!symlink(carried, inward) && !symlink(outside, outward));
+    assert(gl_inside(&set, "@rpath/anything.dylib") && gl_inside(&set, "@executable_path/../Frameworks/x.dylib"));
+    assert(gl_inside(&set, carried) && gl_inside(&set, executable) && gl_inside(&set, frameworks) && gl_inside(&set, inward));
+    assert(!gl_inside(&set, outside) && !gl_inside(&set, outward) && !gl_inside(&set, root));
+    assert(!gl_inside(&set, "/usr/lib/libSystem.B.dylib") && !gl_inside(&set, "/nonexistent/lib.dylib"));
+    assert(!gl_inside(&set, NULL) && !gl_inside(NULL, carried));
+    unlink(inward); unlink(outward);
+
+    // A framework's /Versions/<v>/ may be left out of a dlopen.
+    assert(gl_same_install_name("/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+                                "/System/Library/Frameworks/Metal.framework/Metal"));
+    assert(gl_same_install_name("/S/OpenGL.framework/Versions/Current/OpenGL", "/S/OpenGL.framework/Versions/A/OpenGL"));
+    assert(gl_same_install_name("/S/A.framework/Versions/B/Frameworks/C.framework/Versions/D/C",
+                                "/S/A.framework/Frameworks/C.framework/C"));
+    assert(gl_same_install_name("/usr/lib/libz.1.dylib", "/usr/lib/libz.1.dylib"));
+    assert(!gl_same_install_name("/usr/lib/libz.1.dylib", "/usr/lib/libz.dylib"));
+    assert(!gl_same_install_name("/S/Metal.framework/Versions/A/Metal", "/S/MetalFX.framework/MetalFX"));
+    assert(!gl_same_install_name("/S/Metal.framework/Versions/A/Metal", "/S/Metal.framework/Versions/A/Metal2"));
+    assert(!gl_same_install_name("/S/Metal.framework/Versions/A", "/S/Metal.framework"));
+    assert(!gl_same_install_name(NULL, "/S/Metal.framework/Metal") && !gl_same_install_name("x", NULL));
+
     gl_destroy(&set);
     assert(!set.root && !set.executable && !set.count && !set.executable_image);
 
@@ -160,7 +210,17 @@ int main(void) {
     static GuestLinkSet measured = {.count = 2};
     measured.libraries[0].image = gap; measured.libraries[1].image = below;
     assert(gl_span(&measured) == 0x14000 + 0xC000);
+    // Which placed library an address lies in (dladdr, a dlopen's caller);
+    // nothing until the libraries are placed.
+    assert(!gl_library_at(&measured, 0) && !gl_library_at(&measured, 0x8000));
+    measured.libraries[0].slide = 0x100000; measured.libraries[1].slide = 0x200000;
+    assert(gl_library_at(&measured, 0x100000) == &measured.libraries[0]);
+    assert(gl_library_at(&measured, 0x108000) == &measured.libraries[0]);   // the gap between its segments
+    assert(gl_library_at(&measured, 0x113fff) == &measured.libraries[0] && !gl_library_at(&measured, 0x114000));
+    assert(!gl_library_at(&measured, 0xfffff) && gl_library_at(&measured, 0x20bfff) == &measured.libraries[1]);
+    assert(!gl_library_at(&measured, 0x20c000) && !gl_library_at(NULL, 0x100000));
 
     puts("PASS: carried library paths resolve inside the application only (@rpath, @loader_path, @executable_path),"
-         " extent from the lowest mapped segment, initialization after linked libraries");
+         " extent from the lowest mapped segment, initialization after linked libraries,"
+         " the application's own dlopen and dladdr");
 }
