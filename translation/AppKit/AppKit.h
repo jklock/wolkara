@@ -112,6 +112,10 @@ typedef NS_OPTIONS(NSUInteger, NSEventModifierFlags) {
 @property (readonly, getter=isKeyWindow) BOOL keyWindow;
 @property (readonly, getter=isVisible) BOOL visible;
 @property (readonly) NSUInteger occlusionState;
+@property NSUInteger collectionBehavior;
+@property (readonly) NSRect contentLayoutRect;
+- (NSPoint)convertPointToScreen:(NSPoint)p;
+- (NSPoint)convertPointFromScreen:(NSPoint)p;
 - (void)makeKeyAndOrderFront:(id)sender;
 - (void)orderOut:(id)sender;
 - (BOOL)makeFirstResponder:(NSResponder *)r;
@@ -143,6 +147,13 @@ typedef NS_OPTIONS(NSUInteger, NSEventModifierFlags) {
 
 extern NSApplication *NSApp;
 extern int NSApplicationMain(int argc, const char *argv[]);
+
+@interface NSWindowController : NSResponder
+- (instancetype)initWithWindow:(NSWindow *)window;
+@property (nonatomic, strong) NSWindow *window;
+- (void)showWindow:(id)sender;
+- (void)close;
+@end
 
 // Shim-internal
 @interface NSWindow (AKInternal)

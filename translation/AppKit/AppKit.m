@@ -337,7 +337,7 @@ static void logLayer(CALayer *layer,unsigned depth) {
     AKLog(@"layer depth=%u ptr=%p class=%@ frame=%@ bounds=%@ hidden=%d opacity=%g super=%p",depth,layer,NSStringFromClass(layer.class),NSStringFromCGRect(layer.frame),NSStringFromCGRect(layer.bounds),layer.hidden,layer.opacity,layer.superlayer);
     for(CALayer *child in layer.sublayers) logLayer(child,depth+1);
 }
-@implementation NSWindow { UIWindow *_uiWindow; AKHostView *_host; NSRect _contentRect; NSResponder *_firstResponder; }
+@implementation NSWindow { UIWindow *_uiWindow; AKHostView *_host; NSRect _contentRect; NSResponder *_firstResponder; NSUInteger _collectionBehavior; }
 - (instancetype)initWithContentRect:(NSRect)r styleMask:(NSUInteger)m backing:(NSUInteger)b defer:(BOOL)d {
     if ((self = [super init])) { _contentRect = r; _styleMask=m; self.nextResponder = NSApp; }
     return self;
@@ -364,6 +364,16 @@ static void logLayer(CALayer *layer,unsigned depth) {
 - (BOOL)isVisible { return _uiWindow && !_uiWindow.hidden; }
 - (NSUInteger)occlusionState { return self.isVisible && _uiWindow.windowScene.activationState!=UISceneActivationStateBackground ? 2 : 0; }
 - (NSPoint)mouseLocationOutsideOfEventStream { return _ak_mouseLocation; }
+// Struct and scalar results: the stub forwarding would leave them undefined.
+- (NSRect)contentLayoutRect { return _contentView ? _contentView.frame : (NSRect){CGPointZero,_contentRect.size}; }
+// One surface: the window's frame is the screen space it is shown in.
+- (NSPoint)convertPointToScreen:(NSPoint)p { NSRect f=self.frame; return (NSPoint){f.origin.x+p.x,f.origin.y+p.y}; }
+- (NSPoint)convertPointFromScreen:(NSPoint)p { NSRect f=self.frame; return (NSPoint){p.x-f.origin.x,p.y-f.origin.y}; }
+- (void)setCollectionBehavior:(NSUInteger)b { _collectionBehavior=b; }
+- (NSUInteger)collectionBehavior { return _collectionBehavior; }
+- (void)setMinSize:(NSSize)size { _contentMinSize=size; }   // frame and content sizes coincide here
+- (NSSize)minSize { return _contentMinSize; }
+- (void)setFrameOrigin:(NSPoint)origin { _contentRect.origin=origin; }
 - (NSResponder *)firstResponder { return _firstResponder ?: self; }
 - (BOOL)makeFirstResponder:(NSResponder *)r {
     if (r && ![r acceptsFirstResponder]) return NO;
@@ -428,6 +438,8 @@ static void logLayer(CALayer *layer,unsigned depth) {
 }
 - (void)orderFront:(id)s { [self makeKeyAndOrderFront:s]; }
 - (void)orderOut:(id)sender { _uiWindow.hidden = YES; }
+- (void)setIsVisible:(BOOL)visible { visible ? [self makeKeyAndOrderFront:nil] : [self orderOut:nil]; }
+- (void)makeMainWindow { }   // single game surface; already key
 - (void)close { [self orderOut:nil]; [(NSMutableArray *)NSApp.windows removeObject:self]; }
 - (void)sendEvent:(NSEvent *)e {
     switch (e.type) {
@@ -445,6 +457,16 @@ static void logLayer(CALayer *layer,unsigned depth) {
         case NSEventTypeScrollWheel: [_contentView scrollWheel:e]; break;
     }
 }
+@end
+
+#pragma mark - NSWindowController
+
+@implementation NSWindowController { NSWindow *_window; }
+- (instancetype)initWithWindow:(NSWindow *)window { if ((self=[super init])) _window=window; return self; }
+- (NSWindow *)window { return _window; }
+- (void)setWindow:(NSWindow *)window { _window=window; }
+- (void)showWindow:(id)sender { [_window makeKeyAndOrderFront:sender]; }
+- (void)close { [_window close]; }
 @end
 
 #pragma mark - NSApplication
