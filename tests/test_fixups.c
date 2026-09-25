@@ -194,6 +194,39 @@ int main(void) {
         assert(gm_populate(&i.memory, 0x100000430, &beyond, sizeof beyond) == GM_OK);
         assert(!gf_apply(&i, 0, resolve, NULL, &stats, error, sizeof error) && strstr(error, "outside segment"));
         gi_destroy(&i);
+        // Reserved bits set in a rebase or a bind, at either end of their range.
+        const uint64_t reserved[][2] = {{rebase | (1ULL << 44), bind}, {rebase | (1ULL << 50), bind},
+                                        {rebase, bind | (1ULL << 32)}, {rebase, bind | (1ULL << 50)}};
+        for (size_t k = 0; k < sizeof reserved / sizeof *reserved; k++) {
+            chained_setup(&i, DYLD_CHAINED_PTR_64, reserved[k][0], reserved[k][1]);
+            assert(!gf_apply(&i, 0, resolve, NULL, &stats, error, sizeof error) && strstr(error, "reserved bits"));
+            gi_destroy(&i);
+        }
+        // The bits beside those ranges still decode: a full high8 and a full
+        // inline addend below them, and above them an odd next (bit 51), as a
+        // pointer aligned to four bytes only has. The chain starts at 0x100.
+        chained_setup(&i, DYLD_CHAINED_PTR_64, 0, 0);
+        const uint16_t edge_start = 0x100;
+        const uint64_t edge_rebase = 0x100000800ULL | (0xFFULL << 36) | (3ULL << 51);
+        const uint64_t edge_bind = (1ULL << 63) | (0xFFULL << 24) | (3ULL << 51), edge_last = 0x100000900ULL;
+        assert(gm_populate(&i.memory, 0x10000043E, &edge_start, sizeof edge_start) == GM_OK);
+        assert(gm_populate(&i.memory, 0x100000100, &edge_rebase, 8) == GM_OK);
+        assert(gm_populate(&i.memory, 0x10000010C, &edge_bind, 8) == GM_OK);
+        assert(gm_populate(&i.memory, 0x100000118, &edge_last, 8) == GM_OK);
+        assert(gf_apply(&i, 0x200000, resolve, NULL, &stats, error, sizeof error) && stats.rebases == 2 && stats.binds == 1);
+        assert(gm_read(&i.memory, 0x100000100, &value, 8) == GM_OK && value == (0x100200800ULL | (0xFFULL << 56)));
+        assert(gm_read(&i.memory, 0x10000010C, &value, 8) == GM_OK && value == 0x123400FF);
+        assert(gm_read(&i.memory, 0x100000118, &value, 8) == GM_OK && value == 0x100200900);
+        gi_destroy(&i);
+        // Chained fixups beside any dyld info opcode stream.
+        for (unsigned k = 0; k < 4; k++) {
+            chained_setup(&i, DYLD_CHAINED_PTR_64, rebase, bind);
+            uint32_t *sizes[] = {&i.rebase_size, &i.bind_size, &i.lazy_bind_size, &i.weak_bind_size};
+            *sizes[k] = 4;
+            assert(!gf_apply(&i, 0, resolve, NULL, &stats, error, sizeof error) && strstr(error, "dyld info opcodes"));
+            assert(stats.rebases == 0 && stats.binds == 0);
+            gi_destroy(&i);
+        }
     }
     puts("PASS: Mach-O pointer relocation, import binding, signed addends, observed fixups, malformed fixup bounds");
     puts("PASS: lazy binds first, chained fixups, chained initializers read after fixups");
