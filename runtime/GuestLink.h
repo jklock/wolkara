@@ -48,6 +48,21 @@ bool gl_lookup(const GuestLinkSet *set, const GuestImage *from, const char *from
 // where it closes); libraries nothing reaches follow in load order. Fills
 // order with indices into libraries; returns how many, set->count.
 size_t gl_initialization_order(const GuestLinkSet *set, size_t order[GL_MAX_LIBRARIES]);
+// The application's own dlopen of an image this set holds, by any name dyld
+// takes: a leaf name (of its file or, for a library, its install name), a
+// path, or @rpath/@loader_path/@executable_path from `from`. *index: 0 the
+// executable, n carried library n-1.
+bool gl_placed(const GuestLinkSet *set, const GuestImage *from, const char *from_path, const char *name,
+               size_t *index);
+// Whether a dlopen names the application's own code, which only this loader
+// places: an @ name (it resolves only against the application), or a path
+// that resolves inside the application's folder.
+bool gl_inside(const GuestLinkSet *set, const char *path);
+// The carried library an address lies in, once the libraries are placed.
+const GuestLibrary *gl_library_at(const GuestLinkSet *set, uint64_t address);
+// Whether two install names name the same file, a framework's /Versions/<v>/
+// aside (a dlopen may leave it out).
+bool gl_same_install_name(const char *a, const char *b);
 // Memory all the libraries need together, page aligned.
 uint64_t gl_span(const GuestLinkSet *set);
 void gl_destroy(GuestLinkSet *set);

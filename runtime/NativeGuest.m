@@ -391,19 +391,9 @@ static void *guest_memset(void *destination, int value, size_t size) {
     if (alias != destination) { sys_dcache_flush(alias,size); sys_icache_invalidate(destination,size); }
     return destination;
 }
-// The carried library an address lies in, once the arena is laid out.
-static const GuestLibrary *carried_library_at(const void *address) {
-    for (size_t i=0;i<carried.count;i++) {
-        const GuestLibrary *library=&carried.libraries[i];
-        uint64_t low, reach=gi_extent(&library->image,&low);
-        uintptr_t base=(uintptr_t)(low+library->slide);
-        if (library->slide && (uintptr_t)address>=base && (uintptr_t)address-base<reach) return library;
-    }
-    return NULL;
-}
 static int guest_dladdr(const void *address, Dl_info *info) {
     // Libraries find their own file and header this way, as they would with dyld.
-    const GuestLibrary *library=carried_library_at(address);
+    const GuestLibrary *library=gl_library_at(&carried,(uint64_t)(uintptr_t)address);
     if (library) {
         *info = (Dl_info){.dli_fname=library->path,.dli_fbase=(void *)(uintptr_t)(library->image.header_address+library->slide)};
         LOG("[native] dladdr(%p) -> %s base=%p\n",address,library->install_name,info->dli_fbase); return 1;
@@ -598,20 +588,26 @@ static void *hook(const char *name) {
 #undef HOOK
     return NULL;
 }
+// What this loader refuses or does not find is reported once by the guest's
+// dlerror, as dyld would; like dyld, each dlopen and dlsym starts without one.
+static _Thread_local char guest_dl_error[512];
 static void *guest_dlsym(void *handle, const char *name) {
-    void *value = hook(name);
+    guest_dl_error[0]=0;
+    void *value = name ? hook(name) : NULL;
     size_t index; bool first;
-    if (!value && guest_handle(handle,&index,&first)) value = placed_symbol(index,name,first);
+    if (!value && guest_handle(handle,&index,&first)) {
+        value = placed_symbol(index,name,first);
+        (void)dlerror();   // a library it links lacking the name is not the guest's error
+        if (!value) snprintf(guest_dl_error,sizeof guest_dl_error,"dlsym(%p, %s): symbol not found",handle,name?name:"(null)");
+    }
     else if (!value) value = dlsym(handle,name);
-    LOG("[native] dlsym(%s) -> %p\n",name,value); return value;
+    LOG("[native] dlsym(%s) -> %p\n",name?name:"(null)",value); return value;
 }
 // Placed images stay for the life of the guest.
 static int guest_dlclose(void *handle) {
     size_t index; bool first;
     return guest_handle(handle,&index,&first) ? 0 : dlclose(handle);
 }
-// A dlopen this loader refuses is reported once by the guest's dlerror, as dyld would.
-static _Thread_local char guest_dl_error[512];
 static char *guest_dlerror(void) {
     static _Thread_local char reported[sizeof guest_dl_error];
     if (!guest_dl_error[0]) return dlerror();
@@ -906,62 +902,19 @@ static void open_dependencies(const GuestImage *image, const char *image_path, N
 // once before guest code runs.
 static NSDictionary *guest_mapping;
 static NSString *guest_frameworks;
-// A framework's install name carries /Versions/<letter>/; dlopen may omit it.
-static NSString *unversioned_framework_path(NSString *path) {
-    NSRange marker=[path rangeOfString:@".framework/Versions/"];
-    if (marker.location==NSNotFound) return path;
-    NSUInteger head=marker.location+[@".framework" length];
-    NSArray *parts=[[path substringFromIndex:head] pathComponents];   // / Versions A <leaf>
-    if (parts.count<4) return path;
-    return [[path substringToIndex:head] stringByAppendingPathComponent:parts[3]];
-}
 // What the map says a dlopen of this path opens: an adapter, an iOS library,
-// "" when absent, nil when it says nothing. A generic build has no map and
-// uses our adapter for the leaf name when there is one.
+// "" when absent, nil when it says nothing; a framework's /Versions/<v>/ may be
+// left out. A generic build has no map and uses our adapter for the leaf name
+// when there is one.
 static NSString *mapped_library(NSString *original) {
-    if (!guest_frameworks) return nil;
+    if (!guest_frameworks || !original) return nil;
     if (!guest_mapping) return adapter_path(original,guest_frameworks.fileSystemRepresentation);
     id target=guest_mapping[original];
     if (!target) for (NSString *key in guest_mapping)
-        if ([unversioned_framework_path(key) isEqualToString:unversioned_framework_path(original)]) { target=guest_mapping[key]; break; }
+        if ([key isKindOfClass:NSString.class] && gl_same_install_name(key.UTF8String,original.UTF8String)) { target=guest_mapping[key]; break; }
     if (![target isKindOfClass:NSString.class]) return nil;
     if ([target hasPrefix:@"@rpath/"]) return [guest_frameworks stringByAppendingPathComponent:[target lastPathComponent]];
     return target;
-}
-static bool same_leaf(const char *path, const char *leaf) {
-    const char *slash=path?strrchr(path,'/'):NULL;
-    return path && !strcmp(slash?slash+1:path,leaf);
-}
-// The placed image a dlopen names, by any name dyld would take: a leaf (of its
-// file or its install name), a path, or @rpath/@loader_path/@executable_path
-// from the calling image.
-static bool placed_image(const char *path, const void *caller, size_t *index) {
-    if (!strchr(path,'/')) {
-        for (size_t i=0;i<=carried.count;i++) {
-            const GuestLibrary *library=i?&carried.libraries[i-1]:NULL;
-            if (same_leaf(library?library->path:guest.path,path) || (library && same_leaf(library->install_name,path))) { *index=i; return true; }
-        }
-        return false;
-    }
-    const GuestLibrary *from=carried_library_at(caller);
-    char resolved[PATH_MAX];
-    if (!gl_resolve(&carried,from?&from->image:&guest.image,from?from->path:guest.path,path,resolved,sizeof resolved)) return false;
-    for (size_t i=0;i<=carried.count;i++) {
-        const char *candidate=i?carried.libraries[i-1].path:carried.executable;
-        if (candidate && !strcmp(candidate,resolved)) { *index=i; return true; }
-    }
-    return false;
-}
-// Original code inside the application folder is placed by this loader or not
-// at all: never handed to the host's dyld. @-prefixed names resolve only
-// against the application.
-static bool inside_application(const char *path) {
-    if (!carried.root) return false;
-    if (path[0]=='@') return true;
-    char real[PATH_MAX];
-    if (!realpath(path,real)) return false;
-    size_t length=strlen(carried.root);
-    return !strncmp(real,carried.root,length) && (real[length]=='/' || !real[length]);
 }
 static void *refuse_dlopen(const char *shown, const char *reason) {
     (void)dlerror();   // ours is the most recent error now
@@ -970,10 +923,14 @@ static void *refuse_dlopen(const char *shown, const char *reason) {
     return NULL;
 }
 static void *guest_dlopen(const char *path, int mode) {
+    guest_dl_error[0]=0;
     if (!path) return dlopen(path,mode);   // the main program: the host's answer, as before
     char shown[1024]; loggable_path(path,shown,sizeof shown);
+    // The executable or a carried library, by any name dyld takes, resolved
+    // from the calling image (@loader_path, its @rpath).
+    const GuestLibrary *caller=gl_library_at(&carried,(uint64_t)(uintptr_t)__builtin_return_address(0));
     size_t index;
-    if (placed_image(path,__builtin_return_address(0),&index)) {
+    if (gl_placed(&carried,caller?&caller->image:&guest.image,caller?caller->path:guest.path,path,&index)) {
         LOG("[native] dlopen(%s) -> placed %s\n",shown,index?carried.libraries[index-1].install_name:"executable");
         return (void *)(uintptr_t)(GUEST_HANDLE_TAG|index|((mode&RTLD_FIRST)?GUEST_HANDLE_FIRST:0));
     }
@@ -985,7 +942,9 @@ static void *guest_dlopen(const char *path, int mode) {
         LOG("[native] dlopen(%s) mapped to %s -> %p\n",shown,target.lastPathComponent.UTF8String,handle);
         return handle;
     }
-    if (inside_application(path)) return refuse_dlopen(shown,"not a library this application carries; only its placed images open");
+    // Original code inside the application folder is placed by this loader or
+    // not at all: never handed to the host's dyld.
+    if (gl_inside(&carried,path)) return refuse_dlopen(shown,"not a library this application carries; only its placed images open");
     void *handle=dlopen(path,mode);
     LOG("[native] dlopen(%s) -> %p\n",shown,handle);
     return handle;

@@ -300,6 +300,66 @@ size_t gl_initialization_order(const GuestLinkSet *set, size_t order[GL_MAX_LIBR
     return count;
 }
 
+static bool same_leaf(const char *path, const char *leaf) {
+    if (!path) return false;
+    const char *slash = strrchr(path, '/');
+    return !strcmp(slash ? slash + 1 : path, leaf);
+}
+bool gl_placed(const GuestLinkSet *set, const GuestImage *from, const char *from_path, const char *name, size_t *index) {
+    if (!set || !set->executable || !name || !*name || !index) return false;
+    if (!strchr(name, '/')) {
+        for (size_t i = 0; i <= set->count; i++) {
+            const GuestLibrary *library = i ? &set->libraries[i - 1] : NULL;
+            if (same_leaf(library ? library->path : set->executable, name) ||
+                (library && same_leaf(library->install_name, name))) { *index = i; return true; }
+        }
+        return false;
+    }
+    char resolved[PATH_MAX];
+    if (!gl_resolve(set, from, from_path, name, resolved, sizeof resolved)) return false;
+    for (size_t i = 0; i <= set->count; i++)
+        if (!strcmp(i ? set->libraries[i - 1].path : set->executable, resolved)) { *index = i; return true; }
+    return false;
+}
+
+bool gl_inside(const GuestLinkSet *set, const char *path) {
+    if (!set || !set->root || !path) return false;
+    if (path[0] == '@') return true;
+    char real[PATH_MAX];
+    return realpath(path, real) && inside(set->root, real);
+}
+
+const GuestLibrary *gl_library_at(const GuestLinkSet *set, uint64_t address) {
+    for (size_t i = 0; set && i < set->count; i++) {
+        const GuestLibrary *library = &set->libraries[i];
+        uint64_t low, reach = gi_extent(&library->image, &low), base = low + library->slide;
+        if (library->slide && address >= base && address - base < reach) return library;
+    }
+    return NULL;
+}
+
+// A framework binary's path without its /Versions/<v>/ parts.
+static bool unversioned(const char *name, char *out, size_t size) {
+    static const char marker[] = ".framework/Versions/";
+    size_t used = 0;
+    for (const char *at; (at = strstr(name, marker));) {
+        const char *version = at + sizeof marker - 1, *rest = strchr(version, '/');
+        if (!rest || rest == version) break;
+        size_t keep = (size_t)(at - name) + strlen(".framework");
+        if (used + keep >= size) return false;
+        memcpy(out + used, name, keep);
+        used += keep;
+        name = rest;
+    }
+    return snprintf(out + used, size - used, "%s", name) < (int)(size - used);
+}
+bool gl_same_install_name(const char *a, const char *b) {
+    if (!a || !b) return false;
+    if (!strcmp(a, b)) return true;
+    char plain_a[PATH_MAX], plain_b[PATH_MAX];
+    return unversioned(a, plain_a, sizeof plain_a) && unversioned(b, plain_b, sizeof plain_b) && !strcmp(plain_a, plain_b);
+}
+
 uint64_t gl_span(const GuestLinkSet *set) {
     uint64_t total = 0;
     for (size_t i = 0; i < set->count; i++) total += gi_extent(&set->libraries[i].image, NULL);
