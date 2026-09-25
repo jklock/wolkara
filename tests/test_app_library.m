@@ -37,8 +37,17 @@ int main(int argc, const char **argv) {
         write_text(@"{\"id\":\"x\",\"name\":\"Escape\",\"workingDirectory\":\"../x\",\"executable\":\"X\"}",[profiles stringByAppendingPathComponent:@"c.json"]);
         write_text(@"{\"id\":\"y\",\"name\":\"Absolute\",\"workingDirectory\":\"Y\",\"executable\":\"/bin/sh\"}",[profiles stringByAppendingPathComponent:@"d.json"]);
         write_text(@"[]",[profiles stringByAppendingPathComponent:@"e.json"]);
+        // A compatibility runtime elsewhere in Documents with a command line (data only).
+        write_text(@"{\"id\":\"w\",\"name\":\"Layered\",\"workingDirectory\":\"W/game\",\"runtime\":\"W/Runtime\",\"executable\":\"bin/run\","
+            "\"arguments\":[\"game.exe\",\"--windowed\"],\"environment\":{\"PREFIX\":\"${Documents}/W/prefix\",\"_X1\":\"\"}}",[profiles stringByAppendingPathComponent:@"f.json"]);
+        write_text(@"{\"id\":\"g\",\"name\":\"Escape\",\"workingDirectory\":\"G\",\"runtime\":\"../R\",\"executable\":\"run\"}",[profiles stringByAppendingPathComponent:@"g.json"]);
+        write_text(@"{\"id\":\"h\",\"name\":\"Text\",\"workingDirectory\":\"H\",\"executable\":\"run\",\"arguments\":\"game.exe\"}",[profiles stringByAppendingPathComponent:@"h.json"]);
+        write_text(@"{\"id\":\"i\",\"name\":\"Name\",\"workingDirectory\":\"I\",\"executable\":\"run\",\"environment\":{\"1X\":\"a\"}}",[profiles stringByAppendingPathComponent:@"i.json"]);
+        write_text(@"{\"id\":\"j\",\"name\":\"Value\",\"workingDirectory\":\"J\",\"executable\":\"run\",\"environment\":{\"X\":1}}",[profiles stringByAppendingPathComponent:@"j.json"]);
         NSArray *known=[TKAppLibrary profilesInDirectory:profiles];
-        assert(known.count==1 && [known[0][@"name"] isEqual:@"Profiled"]);
+        assert(known.count==2 && [known[0][@"name"] isEqual:@"Profiled"] && [known[1][@"name"] isEqual:@"Layered"]);
+        assert([[TKAppLibrary executableOfProfile:known[0]] isEqual:@"P/_retail_/P.app/Contents/MacOS/P"]);
+        assert([[TKAppLibrary executableOfProfile:known[1]] isEqual:@"W/Runtime/bin/run"]);
 
         TKAppLibrary *library=open_library(documents,storage,known);
         assert(!library.apps.count && !library.defaultApp && !library.loadWarning);
@@ -122,7 +131,21 @@ int main(int argc, const char **argv) {
         assert([fm fileExistsAtPath:profiled]); // files in Documents are never removed
         TKApp *again=[library importExecutable:profiled copy:NO error:&error];
         assert(again && [again.profile isEqual:@"p"] && [again.name isEqual:@"Profiled"]);
+        assert(!again.arguments.count && !again.environment.count);
         assert([library removeApp:again error:&error]);
+        // A runtime profile: the executable is the runtime's, the working
+        // directory the application's, and the command line comes along.
+        NSString *layered=[documents stringByAppendingPathComponent:@"W/Runtime/bin/run"];
+        copy_file(fixture,layered);
+        assert(![library discover].count); // the working directory must exist too
+        assert([fm createDirectoryAtPath:[documents stringByAppendingPathComponent:@"W/game"] withIntermediateDirectories:YES attributes:nil error:NULL]);
+        found=[library discover];
+        assert(found.count==1 && [found[0].profile isEqual:@"w"] && [found[0].executable isEqual:@"W/Runtime/bin/run"]);
+        assert([found[0].workingDirectory isEqual:@"W/game"] && [found[0].arguments isEqual:(@[@"game.exe",@"--windowed"])]);
+        assert([found[0].environment isEqual:(@{@"PREFIX":@"${Documents}/W/prefix",@"_X1":@""})]);
+        assert([[library workingDirectoryForApp:found[0] error:&error] isEqual:[documents stringByAppendingPathComponent:@"W/game"]]);
+        assert([[library appWithIdentifier:found[0].identifier].arguments count]==2);
+        assert([library removeApp:found[0] error:&error] && ![library discover].count);
 
         // Integrity at launch.
         NSString *copyPath=[library executablePathForApp:copied error:&error];

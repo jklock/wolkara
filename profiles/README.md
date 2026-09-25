@@ -29,6 +29,28 @@ no patches, no settings for the application itself.
   in the same folder. Nothing outside the working directory is created or
   followed. The link stays in your copy of the files, visible in the Files app.
 
+An application that is itself run by a compatibility runtime (a Windows
+program under Wine, say) names that runtime instead of a macOS `.app`:
+
+```json
+{
+  "id": "example-windows",
+  "name": "Example (Windows)",
+  "workingDirectory": "Example/prefix/drive_c/Example",
+  "runtime": "Example/Wine",
+  "executable": "bin/wine",
+  "arguments": ["Example.exe"],
+  "environment": { "WINEPREFIX": "${Documents}/Example/prefix" }
+}
+```
+
+- `runtime`: folder under Documents holding the runtime; `executable` is then
+  relative to it, and `workingDirectory` stays the application's own folder.
+- `arguments`: the runtime's command line after its executable, at most 64
+  strings. `environment`: variables set before it starts, at most 64;
+  `${Documents}` in a value stands for the absolute Documents folder.
+  Both are plain strings: no code, and nothing that changes the application.
+
 Every profile in `profiles/` is built into the app. When the files a profile
 describes are present in Documents, the launcher adds that app to its library
 under the profile's name. A profile outside this folder can be added with

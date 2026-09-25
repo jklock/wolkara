@@ -685,6 +685,23 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     // A profile's caseAliases: folders the application names in another case
     // than its installer wrote them, which only macOS's file system ignores.
     for (NSString *line in [self.library linkCaseAliasesForApp:app]) fprintf(log,"[host] %s\n",line.UTF8String);
+    // A profile's command line for a compatibility runtime (data from the
+    // profile; nothing here changes the application). `${Documents}` in a
+    // variable's value stands for the absolute Documents folder.
+    NSString *documents=TKDocumentsPath(@"");
+    for (NSString *name in [app.environment.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
+        NSString *value=[app.environment[name] stringByReplacingOccurrencesOfString:@"${Documents}" withString:documents];
+        setenv(name.UTF8String,value.UTF8String,1);
+        fprintf(log,"[host] environment %s=%s\n",name.UTF8String,TKHomeDisplayPath(value,NSHomeDirectory()).UTF8String);
+    }
+    NSMutableArray<NSString *> *launchArguments=[app.arguments mutableCopy];
+    for (NSString *argument in arguments) if ([argument hasPrefix:@"--guest-arguments="]) {
+        // Development launches may replace the profile's arguments (tab-separated).
+        [launchArguments setArray:[[argument substringFromIndex:18] componentsSeparatedByString:@"\t"]];
+    }
+    const char *argv[64]; size_t argc=0;
+    for (NSString *argument in launchArguments) if (argc<64) { argv[argc++]=argument.UTF8String; fprintf(log,"[host] argument %s\n",argument.UTF8String); }
+    ng_set_arguments(argv,argc);
     // Local signing: the runtime validates the container against this
     // executable and refuses it after Developer service was selected.
     if (container) {
