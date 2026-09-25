@@ -7,7 +7,9 @@ int main(int argc, const char **argv) {
     @autoreleasepool {
         assert(argc==2);
         NSFileManager *fm=NSFileManager.defaultManager;
-        NSString *tmp=[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
+        // NSTemporaryDirectory ignores TMPDIR, which the suite sets.
+        NSString *base=NSProcessInfo.processInfo.environment[@"TMPDIR"]?:NSTemporaryDirectory();
+        NSString *tmp=[base stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
         NSString *root=[tmp stringByAppendingPathComponent:@"modules"];
         NSError *error=nil;
         assert(!guest_module_selected(root,&error) && error);
