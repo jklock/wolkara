@@ -802,13 +802,18 @@ static int guest_mkdir(const char *path, mode_t mode) {
     errno=code;
     return result;
 }
-// Values as paths are shown elsewhere in the log: inside the app's home as
-// ~/..., other absolute paths by their last component.
+// A value is shown only inside the app's home, as ~/...; any other (a user
+// name, another home folder, an identifier) only by its length.
 static char *guest_getenv(const char *name) {
     int code=errno;
     char *value=getenv(name);
-    char shown[1024]; if (value) loggable_path(value,shown,sizeof shown);
-    log_once("[native] getenv(%s) -> %s\n",name?name:"NULL",value?shown:"(unset)");
+    char shown[1024];
+    if (!value) snprintf(shown,sizeof shown,"(unset)");
+    else {
+        home_relative(value,shown,sizeof shown);
+        if (shown[0]!='~') snprintf(shown,sizeof shown,"set, %zu bytes",strlen(value));
+    }
+    log_once("[native] getenv(%s) -> %s\n",name?name:"NULL",shown);
     errno=code;
     return value;
 }

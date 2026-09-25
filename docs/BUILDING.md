@@ -271,8 +271,9 @@ for apps started from the library:
   crash evidence in `Documents/native-signal.log`.
 - `--trace-guest`: logs the guest's failed file access (with errno), the
   directories it creates and the environment variables it reads, each distinct
-  line once, with paths shortened as elsewhere in the log. Meant for bringing
-  up a new application; it slows file access.
+  line once, with paths shortened as elsewhere in the log; a variable's value
+  appears only when it lies in the app's home, otherwise only its length.
+  Meant for bringing up a new application; it slows file access.
 - `--case-insensitive-files` (experimental): a file lookup that fails is
   retried with each missing folder or file name matched ignoring case, as on
   macOS, and the log names the folder. Files being created and Foundation's
