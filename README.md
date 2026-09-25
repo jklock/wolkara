@@ -11,10 +11,17 @@ patched, and its executable is never modified or re-signed. Only the
 operating-system calls underneath it are translated. The application's own code,
 logic, assets and network protocol are left exactly as the vendor shipped them.
 
-Tolkara is a do-it-yourself developer project. You build it with your own Apple
-developer account, sign it yourself, and bring your own legally obtained copy of
-the macOS application. Nothing here is distributed through the App Store, and
-the repository contains no third-party application code or assets.
+Tolkara is a do-it-yourself developer project. You build it yourself
+([docs/BUILDING.md](docs/BUILDING.md)) and bring your own legally obtained copy
+of the macOS application; that is the way Tolkara is meant to be used. For
+Developer service and Local signing you sign it with your own Apple developer
+account. For External JIT you build it without a signing team
+(`tools/package_ipa.sh`) and the tool you sideload it with signs it. As a convenience for External JIT only,
+each [release](https://github.com/tolkara/tolkara/releases) also carries that
+unsigned build, `Tolkara-unsigned.ipa`, made from the tagged source and holding
+only Tolkara's own code; it is not the main way to get Tolkara. Nothing here is distributed through the App
+Store, and the repository and releases contain no third-party application code
+or assets.
 
 ## Status
 
@@ -29,21 +36,24 @@ Notable limits today: with Developer service, preparing executable memory takes
 roughly 80 seconds per launch, and switching apps during startup can interrupt
 it. With Local signing, an earlier build reached the application's original
 `main` on a device; the current build has not been re-run there yet, and login
-and gameplay are not validated. Helper processes that an app launches separately
+and gameplay are not validated. External JIT has not been run on a device yet.
+Helper processes that an app launches separately
 (for example a voice-chat helper) are not supported.
 
-## Two ways to run code
+## Three ways to run code
 
 iPadOS executes only code whose pages are covered by a valid code signature,
-with one exception for development: memory that the device's developer service
-has prepared. Tolkara supports both routes. Each user chooses one: the app asks
+with one exception for development: memory that a debugger has prepared, either
+the device's own developer service or a JIT enabler: your sideloading tool, or a
+separate one such as StikDebug. Tolkara supports three routes. Each user chooses one: the app asks
 on first launch, and **Execution mode…** in the app changes it later.
 
-| | Developer service | Local signing |
-| --- | --- | --- |
-| What it does | Tolkara's bundled packet-tunnel extension reaches the iPad's own developer service, which prepares executable memory and detaches before any application code runs. Tolkara then copies the original code in. | The application's final code pages are put into a small library, a *page container*, signed with your own developer identity. iPadOS validates it when Tolkara loads it, and Tolkara maps those validated pages into place. |
-| What it requires | Developer Mode, a one-time enrolment from a Mac (`tools/enroll.sh`), and permission for Tolkara's own VPN-style tunnel. About 80 seconds of preparation per launch. | Developer Mode and your developer identity. For now the container is built and signed on a Mac (`tools/build_signed_container.py`) and copied to the iPad. For an application that rewrites its own code at launch, this needs a capture of its final code pages, which Tolkara cannot produce yet. |
-| What it does with the application's code | Runs the original code unchanged. Nothing of the application is ever signed. | Leaves the executable unchanged, but keeps a derived copy of its final code pages on your iPad (and in your build folder), signed under your identity. Tolkara refuses to start if the container does not match the executable or what the application's own startup code produces. |
+| | Developer service | Local signing | External JIT |
+| --- | --- | --- | --- |
+| What it does | Tolkara's bundled packet-tunnel extension reaches the iPad's own developer service, which prepares executable memory and detaches before any application code runs. Tolkara then copies the original code in. | The application's final code pages are put into a small library, a *page container*, signed with your own developer identity. iPadOS validates it when Tolkara loads it, and Tolkara maps those validated pages into place. | You sideload Tolkara (for example with SideStore) and open it with JIT enabled, by your sideloading tool or a JIT enabler such as StikDebug. The enabler's debugger prepares executable memory and is asked to detach. Tolkara does not run application code while any debugger is attached, then copies the original code in. |
+| What it requires | Developer Mode, a one-time enrolment from a Mac (`tools/enroll.sh`), and permission for Tolkara's own VPN-style tunnel. About 80 seconds of preparation per launch. | Developer Mode and your developer identity. For now the container is built and signed on a Mac (`tools/build_signed_container.py`) and copied to the iPad. For an application that rewrites its own code at launch, this needs a capture of its final code pages, which Tolkara cannot produce yet. | Developer Mode, a sideloading tool and a JIT enabler. A free Apple ID can sign the app, but free signing drops the increased-memory-limit and extended-virtual-addressing capabilities, so large applications may not fit. Not yet run on a device. |
+| Which build | The Tolkara app (`tools/install.sh`). | Either build. | The TolkaraDiagnostics app, unsigned (`tools/package_ipa.sh`). |
+| What it does with the application's code | Runs the original code unchanged. Nothing of the application is ever signed. | Leaves the executable unchanged, but keeps a derived copy of its final code pages on your iPad (and in your build folder), signed under your identity. Tolkara refuses to start if the container does not match the executable or what the application's own startup code produces. | Runs the original code unchanged. Nothing of the application is ever signed. |
 
 Choose one. [COMPATIBILITY.md](COMPATIBILITY.md) says which mode each result
 was obtained with.
@@ -52,7 +62,7 @@ was obtained with.
 
 | Module | Role |
 | --- | --- |
-| [`runtime/`](runtime) | Mach-O loader: maps the original image, applies dyld rebases and binds, sets up TLS and Objective-C metadata, and enters the original initializers and `main`. For Local signing it validates the page container against the executable and maps its signed pages (`SignedImage`). Also a software MMU and a small interpreter used for testing. |
+| [`runtime/`](runtime) | Mach-O loader: maps the original image and the libraries it carries in its own bundle, applies dyld rebases and binds (including chained fixups), sets up TLS and Objective-C metadata, and enters the original initializers and `main`. For Local signing it validates the page container against the executable and maps its signed pages (`SignedImage`). Also a software MMU and a small interpreter used for testing. |
 | [`translation/`](translation) | The macOS API layer: AppKit on UIKit, Metal device/shader-library adaptation, CoreAudio/AudioToolbox, Carbon keyboard, CoreGraphics displays, Security. One library per macOS framework; anything not hand-written gets a generated logging stub. |
 | [`authorization/`](authorization) | Developer service. iPadOS only lets a development-signed app run code it did not sign after a debugger has prepared that memory. This module does that on the iPad itself: a bundled packet-tunnel extension reaches the device's own developer service, prepares the memory, and detaches before any application code runs. No Mac is needed after the one-time enrollment. |
 | [`launcher/`](launcher) | The UIKit app: the app library, the execution-mode choice, starting apps, and a separate Diagnostics menu. |
@@ -116,13 +126,21 @@ So that you can judge this yourself rather than take our word for it:
   `dyld_stub_binder`, `__ulock_wait` and `sigaction` (the last only when you
   opt into crash logging). The list is in
   [`runtime/NativeGuest.m`](runtime/NativeGuest.m).
-- Everything else the application imports resolves to the real iPadOS framework
-  or to a translation library in [`translation/`](translation).
+- Everything else the application imports resolves to the real iPadOS framework,
+  to a translation library in [`translation/`](translation), or to a library the
+  application carries in its own bundle. An import that nothing provides
+  becomes a stub that logs and returns zero: generated at build time for the
+  executable of a build made for it, and made at launch in a generic build (made
+  for no particular application) and for the libraries an application carries.
+  In a build made for one application, an import of its executable that nothing
+  provides at launch stops the launch instead.
 - Nothing in Tolkara exists to hide the environment from the application. It does
   not conceal debuggers, processes, the device model or the operating system.
   With Developer service, the debugger used to prepare memory detaches before
   the first application instruction runs, and nothing attaches afterwards.
-  Local signing uses no debugger.
+  With External JIT, Tolkara asks the enabler's debugger to detach and does not
+  start the application while any debugger is attached. Local signing uses no
+  debugger.
 
 ## Policy
 

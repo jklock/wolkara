@@ -1,6 +1,7 @@
 #import "Diagnostics.h"
 #import "CPUProbe.h"
 #import "GuestImage.h"
+#import "HostDiagnostics.h"
 #import "LocalShaderProbe.h"
 #import "MemoryProbe.h"
 #import "ShaderPauseProbe.h"
@@ -9,6 +10,16 @@
 
 NSString *TKDocumentsPath(NSString *name) {
     return [[NSHomeDirectory() stringByAppendingPathComponent:@"Documents"] stringByAppendingPathComponent:name];
+}
+
+NSString *TKHostDiagnosticsReport(void) {
+    HostDiagnostics report;
+    hd_collect(&report,false,NULL);
+    char text[4096];
+    hd_format(&report,text,sizeof text);
+    NSString *result=[NSString stringWithUTF8String:text];
+    [result writeToFile:TKDocumentsPath(@"host-diagnostics.txt") atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+    return result;
 }
 
 NSString *TKLoaderCheck(NSString *executable, NSString *missing) {

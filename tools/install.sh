@@ -11,9 +11,12 @@ export DEVELOPER_DIR=${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer
 . tools/localenv.sh; tolkara_load_env
 [ -n "${DEVELOPMENT_TEAM:-}" ] || { echo "Set DEVELOPMENT_TEAM in local.env (see local.env.example)."; exit 2; }
 [ -n "${DEVICE:-}" ] || { echo "Set DEVICE=<iPad UDID> in local.env (xcrun devicectl list devices)."; exit 2; }
-[ -n "${GUEST_EXE:-}" ] || { echo "Set GUEST_EXE to the macOS executable you own (several: separate with ':'). It is analysed, never bundled or modified."; exit 2; }
+# A generic build is analysed against no executable at all.
+SHIMS=${NATIVE_GUEST_SHIMS:-YES}
+GUEST_EXE=${GUEST_EXE:-}
+[ "$SHIMS" = GENERIC ] || [ -n "$GUEST_EXE" ] || { echo "Set GUEST_EXE to the macOS executable you own (several: separate with ':'), or NATIVE_GUEST_SHIMS=GENERIC to build for none. It is analysed, never bundled or modified."; exit 2; }
 IFS=: read -r -a EXES <<< "$GUEST_EXE"
-for exe in "${EXES[@]}"; do [ -f "$exe" ] || { echo "GUEST_EXE entry not found: $exe"; exit 2; }; done
+for exe in ${EXES[@]+"${EXES[@]}"}; do [ -f "$exe" ] || { echo "GUEST_EXE entry not found: $exe"; exit 2; }; done
 case "${TOLKARA_MODE:-}" in
     ""|developer-service|local-signing) ;;
     *) echo "TOLKARA_MODE must be empty, developer-service or local-signing (see local.env.example)."; exit 2;;
@@ -29,9 +32,10 @@ mkdir -p logs; LOG=logs/install-$(date +%Y%m%d-%H%M%S).log
 tools/generate.sh
 # NATIVE_GUEST_SHIMS=YES builds and signs only Tolkara's translation libraries
 # for the API surface those executables import. They stay outside the app.
+# GENERIC builds one adapter per framework instead, for no executable.
 xcodebuild -project Tolkara.xcodeproj -scheme Tolkara -destination "platform=iOS,id=$DEVICE" \
     -derivedDataPath build/device -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
-    GUEST_EXE="$GUEST_EXE" NATIVE_GUEST_SHIMS=YES TOLKARA_PROFILE="${TOLKARA_PROFILE:-}" TOLKARA_MODE="${TOLKARA_MODE:-}" \
+    GUEST_EXE="$GUEST_EXE" NATIVE_GUEST_SHIMS="$SHIMS" TOLKARA_PROFILE="${TOLKARA_PROFILE:-}" TOLKARA_MODE="${TOLKARA_MODE:-}" \
     build > "$LOG" 2>&1 \
     || { grep -E "error:" "$LOG" | head -20; echo "BUILD FAILED -> $LOG"; exit 1; }
 xcrun devicectl device install app --device "$DEVICE" build/device/Build/Products/Debug-iphoneos/Tolkara.app

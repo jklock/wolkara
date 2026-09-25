@@ -1,20 +1,22 @@
-// Tolkara's two execution modes, the user's persisted choice and how one
+// Tolkara's execution modes, the user's persisted choice and how one
 // launch resolves it. Foundation only, so it is unit-testable on the Mac.
 #pragma once
 #import <Foundation/Foundation.h>
 
-typedef NS_ENUM(NSInteger, TKExecutionMode) { TKExecutionModeNone, TKExecutionModeDeveloperService, TKExecutionModeLocalSigning };
+typedef NS_ENUM(NSInteger, TKExecutionMode) { TKExecutionModeNone, TKExecutionModeDeveloperService, TKExecutionModeLocalSigning,
+    TKExecutionModeExternalJIT };
 
-// Stable identifiers "developer-service" / "local-signing" (TOLKARA_MODE,
+// Stable identifiers "developer-service" / "local-signing" / "external-jit" (TOLKARA_MODE,
 // --execution-mode=<id>, the saved choice). nil for None; unknown -> None.
 NSString *TKExecutionModeIdentifier(TKExecutionMode mode);
 TKExecutionMode TKExecutionModeFromIdentifier(NSString *identifier);
-// "Developer service" / "Local signing", and a two-sentence summary: what the
+// "Developer service" / "Local signing" / "External JIT", and a two-sentence summary: what the
 // mode needs, and what it does with the application's code. nil for None.
 NSString *TKExecutionModeName(TKExecutionMode mode);
 NSString *TKExecutionModeSummary(TKExecutionMode mode);
 // Developer service is built only into the Tolkara target
 // (TOLKARA_INTEGRATED_AUTH). When unavailable, *reason explains it for the UI.
+// External JIT is built only into TolkaraDiagnostics.
 BOOL TKExecutionModeAvailable(TKExecutionMode mode, NSString **reason);
 
 extern NSString *const TKExecutionModeDefaultsKey;       // "TolkaraExecutionMode": the saved identifier

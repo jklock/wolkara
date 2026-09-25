@@ -20,7 +20,8 @@ protocols and formats. No code was copied or translated from these projects.
 `translation/CoreServices/USKeyMap.h` is a table of the characters produced by
 a standard US ANSI keyboard, checked against macOS behaviour. System trust roots
 are not stored in this repository; `tools/export_system_anchors.m` exports the
-public certificates from the builder's own Mac at build time.
+public certificates from the builder's own Mac at build time. The unsigned build
+published with releases leaves them out.
 
 If you contribute code derived from another project, say so in the pull request
 and add its licence here.

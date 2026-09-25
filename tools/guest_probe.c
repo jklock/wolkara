@@ -1,16 +1,30 @@
 #include "GuestImage.h"
 #include "GuestFixups.h"
-#include <string.h>
-static bool inspect_import(const char *s, int o, bool w, uint64_t *v, void *c) {
-    (void)s; (void)o; (void)w; (void)c; *v=0; return true;
-}
+#include "GuestLink.h"
 #include <stdio.h>
+#include <string.h>
+// Only the application itself answers; the rest is zero.
+static struct { size_t answered, executable, missing; } imports;
+// The image whose fixups are walked; ordinals index its list.
+typedef struct { GuestLinkSet *set; const GuestImage *image; const char *path; } Binder;
+static bool inspect_import(const char *s, int o, bool w, bool l, uint64_t *v, void *c) {
+    (void)w; (void)l;
+    Binder *binder = c;
+    const char *answer;
+    if (gl_lookup(binder->set, binder->image, binder->path, o, s, v, &answer)) {
+        if (!strcmp(answer, GL_EXECUTABLE)) imports.executable++; else imports.answered++;
+        printf("[import] %s <- %s\n", s, answer);
+        return true;
+    }
+    imports.missing++; *v=0; return true;
+}
 int main(int argc, char **argv) {
-    if (argc < 2) { fprintf(stderr, "usage: guest_probe <original Mach-O> [--library] [--validate-fixups] [--export symbol ...]\n"); return 2; }
-    bool library = false, fixups = false;
+    if (argc < 2) { fprintf(stderr, "usage: guest_probe <original Mach-O> [--library] [--carried-libraries] [--validate-fixups] [--export symbol ...]\n"); return 2; }
+    bool library = false, fixups = false, carried = false;
     for (int i = 2; i < argc; i++) {
         if (!strcmp(argv[i], "--library")) library = true;
         else if (!strcmp(argv[i], "--validate-fixups")) fixups = true;
+        else if (!strcmp(argv[i], "--carried-libraries")) carried = true;
         else if (!strcmp(argv[i], "--export") && i + 1 < argc) i++;
         else { fprintf(stderr, "invalid probe option\n"); return 2; }
     }
@@ -20,21 +34,50 @@ int main(int argc, char **argv) {
     gi_report(&image, stdout);
     for (int i = 2; i < argc; i++) {
         if (strcmp(argv[i], "--export")) continue;
-        const char *symbol = argv[++i]; uint64_t address; bool absolute;
-        GIExportResult result = gi_export(&image, symbol, &address, &absolute, error, sizeof error);
+        const char *symbol = argv[++i]; GIExport found;
+        GIExportResult result = gi_export(&image, symbol, &found, error, sizeof error);
+        if (result == GI_EXPORT_REEXPORT) {
+            printf("[export] %s re-exported from %s as %s\n", symbol,
+                   image.dylibs[found.ordinal - 1], found.name ? found.name : symbol);
+            continue;
+        }
         if (result != GI_EXPORT_FOUND) {
             fprintf(stderr, "export %s: %s\n", symbol, result == GI_EXPORT_MISSING ? "not found" : error);
             gi_destroy(&image); return 1;
         }
-        printf("[export] %s=%#llx absolute=%d\n", symbol, (unsigned long long)address, absolute);
+        printf("[export] %s=%#llx absolute=%d%s%s\n", symbol, (unsigned long long)found.address, found.absolute,
+               found.weak ? " weak" : "", found.per_thread ? " per-thread" : "");
     }
-    if (fixups) {
-        GFStats stats;
-        if (!gf_apply(&image, 0x200000, inspect_import, NULL, &stats, error, sizeof error)) {
+    GuestLinkSet set = {0};
+    if (carried) {
+        if (!gl_load(&set, &image, argv[1], error, sizeof error)) {
             fprintf(stderr, "%s\n", error); gi_destroy(&image); return 1;
         }
-        printf("[fixups] validated rebases=%zu binds=%zu (diagnostic addresses only; no execution)\n", stats.rebases, stats.binds);
+        gl_report(&set, stdout);
     }
+    // The executable answers for itself even with no carried libraries read.
+    set.executable_image = &image;
+    set.executable_slide = 0x200000;
+    if (fixups) {
+        GFStats stats;
+        // Carried libraries bind first: a miss here is real.
+        for (size_t i = 0; i < set.count; i++) {
+            Binder binder = {&set, &set.libraries[i].image, set.libraries[i].path};
+            if (!gf_apply(&set.libraries[i].image, 0x200000, inspect_import, &binder, &stats, error, sizeof error)) {
+                fprintf(stderr, "%s: %s\n", set.libraries[i].install_name, error);
+                gl_destroy(&set); gi_destroy(&image); return 1;
+            }
+            printf("[fixups] %s rebases=%zu binds=%zu\n", set.libraries[i].install_name, stats.rebases, stats.binds);
+        }
+        Binder binder = {&set, &image, argv[1]};
+        if (!gf_apply(&image, 0x200000, inspect_import, &binder, &stats, error, sizeof error)) {
+            fprintf(stderr, "%s\n", error); gl_destroy(&set); gi_destroy(&image); return 1;
+        }
+        printf("[fixups] validated rebases=%zu binds=%zu (diagnostic addresses only; no execution)\n", stats.rebases, stats.binds);
+        printf("[fixups] imports from carried libraries=%zu elsewhere=%zu, from the executable itself=%zu\n",
+               imports.answered, imports.missing, imports.executable);
+    }
+    gl_destroy(&set);
     gi_destroy(&image);
     return 0;
 }

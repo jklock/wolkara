@@ -1,8 +1,23 @@
 #import "AppKit.h"
+#import "NibArchive.h"
 #import <objc/message.h>
 
 static NSString *nibDirectory;
 void AKSetGuestNibDirectory(const char *path) { nibDirectory=path?@(path):nil; }
+
+// The application's own nib, where no prepared graph exists.
+static NSDictionary *AKGuestNib(NSBundle *bundle, NSString *name) {
+    NSString *path=[[[bundle.bundlePath stringByAppendingPathComponent:@"Contents/Resources"]
+        stringByAppendingPathComponent:name.lastPathComponent] stringByAppendingPathExtension:@"nib"];
+    BOOL directory=NO;
+    if(![NSFileManager.defaultManager fileExistsAtPath:path isDirectory:&directory]) return nil;
+    // A compiled nib is a file or a folder.
+    if(directory) path=[path stringByAppendingPathComponent:@"keyedobjects.nib"];
+    NSData *data=[NSData dataWithContentsOfFile:path];
+    NSDictionary *archive=data?AKReadNibArchive(data):nil;
+    AKLog(@"Reading nib %@: %@",path,archive?@"read":@"unreadable");
+    return archive;
+}
 
 // The build-time parser produces a faithful data graph from the original nib.
 // This instantiator handles the application object and menu graph used at startup.
@@ -90,6 +105,7 @@ void AKSetGuestNibDirectory(const char *path) { nibDirectory=path?@(path):nil; }
     NSString *file=[[nibDirectory stringByAppendingPathComponent:name.lastPathComponent] stringByAppendingPathExtension:@"nib.json"];
     NSData *data=[NSData dataWithContentsOfFile:file];
     NSDictionary *archive=data?[NSJSONSerialization JSONObjectWithData:data options:0 error:NULL]:nil;
+    if(!archive) archive=AKGuestNib(self,name);
     NSArray *records=archive[@"objects"];
     if([archive[@"format"] intValue]!=1 || ![records isKindOfClass:NSArray.class] || records.count>100000) { AKLog(@"Cannot load translated nib %@",file); return NO; }
     AKNibGraph *graph=[AKNibGraph new]; graph.objects=records; graph.instances=[NSMutableDictionary new]; graph.owner=owner; graph.root=NSNotFound;
