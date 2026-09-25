@@ -1,0 +1,6 @@
+Experimental, off by default: this directory takes part in a build only when
+TOLKARA_EXPERIMENTAL_ADAPTERS names GameController (see tools/classify.py).
+It was written to get one game past a crash in its controller-connect handler.
+It hides every controller from every application in the build, including
+real gamepads a validated application such as World of Warcraft would use,
+so it must stay opt-in. Not yet validated on a device beyond that game.

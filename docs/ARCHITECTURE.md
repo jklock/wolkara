@@ -81,6 +81,11 @@ present on iPadOS (re-exported from the real framework), hand-written in
 `translation/<Framework>/`, or missing. `tools/build_shims.py` then builds one
 library per macOS framework. Missing functions become stubs that log their first
 call and return zero, which is how new applications reveal what they need.
+Marker files in an adapter's directory change that: `standalone` replaces a
+library iOS has instead of re-exporting it, `absent` presents the library as
+unavailable (the runtime neither opens it nor binds anything to it), and
+`experimental` keeps the directory out of every build that does not name it in
+`TOLKARA_EXPERIMENTAL_ADAPTERS`.
 
 A generic build (`NATIVE_GUEST_SHIMS=GENERIC`) is made for no particular
 executable: one adapter per hand-written `translation/<Framework>/` and no import
@@ -102,6 +107,9 @@ Hand-written areas today:
   layout services, **CoreGraphics** display queries, and **Security** (system
   trust roots exported from the builder's own Mac at build time, a keychain
   subset, and the legacy CDSA crypto calls on CommonCrypto).
+- Experimental and opt-in (`TOLKARA_EXPERIMENTAL_ADAPTERS`): **GameController**
+  as a Mac with no controllers, and **MetalFX** presented as absent. Both work
+  around one game's crashes and are not yet validated on a device.
 
 ## Executable memory: three modes
 
