@@ -2,7 +2,7 @@
 
 Applications that people have actually run with Tolkara. Add a row through a
 pull request; say what you tested, on what hardware, with which execution mode
-(Developer service or Local signing), and what did not work.
+(Developer service, Local signing or External JIT), and what did not work.
 
 | Application | Version | Device / OS | Execution mode | Works | Known problems | Profile |
 | --- | --- | --- | --- | --- | --- | --- |

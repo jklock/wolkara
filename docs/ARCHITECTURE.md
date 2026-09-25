@@ -15,20 +15,35 @@ loading, executable memory, the desktop UI frameworks and the shader format.
         └────────┬────────┘                │   authorization/             │
                  │ imports resolve to      │ Local signing: signed page   │
         ┌────────▼────────┐                │   container (SignedImage)    │
-        │  translation/   │                └──────────────────────────────┘
-        └────────┬────────┘
-                 │ calls
+        │  translation/   │                │ External JIT: a JIT          │
+        └────────┬────────┘                │   enabler's debugger         │
+                 │ calls                   └──────────────────────────────┘
           iPadOS frameworks (UIKit, Metal, AVFAudio, Security, …)
 ```
-
 ## runtime/: the loader
 
-- `GuestImage` parses thin and fat arm64 `MH_EXECUTE` files with bounds checks
-  and maps segments at their preferred addresses in a guest address space.
-- `GuestFixups` applies dyld rebases and binds. Binds resolve through a short
-  table of loader-owned functions (listed in the README), then the translation
-  library mapped for that import, then the process's own symbols.
-- `NativeCodeMemory` (Developer service) holds the image in memory with two
+- `GuestImage` parses thin and fat arm64 `MH_EXECUTE` and `MH_DYLIB` files with
+  bounds checks (including `LC_RPATH`, re-exports and `__init_offsets`
+  initializers) and maps segments at their preferred addresses in a guest
+  address space.
+- `GuestLink` finds the libraries an application carries in its own bundle
+  (`@rpath`, `@loader_path`, `@executable_path`; nothing outside the bundle is
+  opened) and loads them as data like the executable. They are placed in the
+  same arena, get their own thread-local storage, and run their initializers
+  before the application's, as with dyld. Local signing refuses such an
+  application: its container holds only the executable's pages.
+- `GuestFixups` applies dyld rebases and binds, from opcode streams or chained
+  fixups (plain arm64 pointer formats; each chain stays on its page). Binds
+  resolve through a short table of loader-owned functions (listed in the
+  README), then the application itself as dyld would search it (the carried
+  library a bind names; the executable's own exports for weak-definition,
+  flat and main-executable binds, before any carried library), then the
+  translation library mapped for that import, then the process's own symbols.
+  Where no build-time analysis covered an import (a generic build, or a carried
+  library's imports, which `classify.py` does not read), one that nothing
+  provides becomes a runtime stub (`GuestStubs`) that logs and returns zero;
+  in a build for one application, its executable's unresolved imports fail.
+- `NativeCodeMemory` (Developer service, External JIT) holds the image in memory with two
   views: a read-write view used for loading and for the program's own later
   code writes, and a read-execute view the CPU runs from. The executable view is
   never writable.
@@ -55,6 +70,13 @@ present on iPadOS (re-exported from the real framework), hand-written in
 library per macOS framework. Missing functions become stubs that log their first
 call and return zero, which is how new applications reveal what they need.
 
+A generic build (`NATIVE_GUEST_SHIMS=GENERIC`) is made for no particular
+executable: one adapter per hand-written `translation/<Framework>/` and no import
+map. On the device the runtime finds each library by name (our adapter, else the
+iPadOS library), stubs at load time what `classify.py` would have stubbed, and
+AppKit reads the application's own compiled nibs (`NibArchive`) where no
+build-time nib metadata exists.
+
 Hand-written areas today:
 
 - **AppKit** on UIKit: application and event loop, windows and views, keyboard,
@@ -69,10 +91,10 @@ Hand-written areas today:
   trust roots exported from the builder's own Mac at build time, a keychain
   subset, and the legacy CDSA crypto calls on CommonCrypto).
 
-## Executable memory: two modes
+## Executable memory: three modes
 
 iPadOS refuses to execute pages that are not covered by a valid code signature.
-Tolkara has two ways to satisfy that, and each user chooses one.
+Tolkara has three ways to satisfy that, and each user chooses one.
 
 ### Developer service (authorization/)
 
@@ -125,6 +147,29 @@ difference stops startup before more application code runs, and later writes
 into signed pages must reproduce the signed bytes exactly. Custom file mappings
 of the container are not executable on iPadOS; only pages dyld has validated
 are remapped. No debugger is involved.
+
+### External JIT (runtime/DebuggerArena)
+
+Only in the TolkaraDiagnostics build, which `tools/package_ipa.sh` produces as a
+generic build without a signing team (ad hoc, only to declare the two memory
+capabilities), for a sideloading tool to sign with the user's Apple ID. JIT is enabled by the sideloading tool or a separate JIT enabler such
+as StikDebug, which attaches a debugger when the app opens and so marks the
+process `CS_DEBUGGED`.
+
+On current iPadOS the enabler also provides the executable region: Tolkara asks
+for it with a breakpoint (`brk #0xf00d`, command in `x16`) that the enabler's
+script services, and maps a writable alias of what it returns. The launcher asks
+as soon as the app opens, because an enabler stays attached only briefly; a
+reserved region another route uses instead is given back, and one too small for
+the application stops the launch, since nothing is attached to ask again. Where
+no enabler answers
+but the process may run unsigned code, Tolkara maps its own region, as JIT apps
+did on earlier systems. The breakpoint is only executed while a debugger is
+attached; with none it would stop the process.
+
+Before any application code runs, the runtime asks the debugger to detach and
+refuses entry while any debugger is still attached or the region is not
+executable. Nothing of the application is signed.
 
 ## launcher/ and profiles/
 

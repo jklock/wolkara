@@ -29,8 +29,8 @@ Open Tolkara, choose an execution mode if it asks, tap World of Warcraft Classic
 in the library (it appears once the files are copied), and log in inside the
 game as usual.
 
-**Execution mode.** Both modes are described in the
-[README](../../README.md#two-ways-to-run-code); choose one. This client has been
+**Execution mode.** The execution modes are described in the
+[README](../../README.md#three-ways-to-run-code); choose one. This client has been
 played with Developer service. With Local signing, an earlier build started it
 as far as its original `main`; the current build has not yet been re-run on a
 device, and login and gameplay are not yet validated. This client unpacks its

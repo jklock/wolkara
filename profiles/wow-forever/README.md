@@ -29,11 +29,11 @@ Open Tolkara, choose an execution mode if it asks, tap World of Warcraft Forever
 in the library (it appears once the files are copied), and log in inside the
 game as usual.
 
-**Execution mode.** Both modes are described in the
-[README](../../README.md#two-ways-to-run-code); choose one. With Local signing,
+**Execution mode.** The execution modes are described in the
+[README](../../README.md#three-ways-to-run-code); choose one. With Local signing,
 the client's startup has run on an iPad Pro M5: the unpacked code matched the
 signed page container byte for byte and all 13,280 initializers ran into the
-original `main`. Login and gameplay are not yet validated, with either mode.
+original `main`. Login and gameplay are not yet validated, in any mode.
 Like the Era client, this client unpacks its own code at launch, so its Local
 signing page container must be built from a capture of its final code pages —
 producing such a capture in the app is not wired yet (see

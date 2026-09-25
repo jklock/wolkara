@@ -4,11 +4,12 @@
 > They include historical intermediate states. `build/*.log` and `logs/` paths
 > are local evidence files on the author's machine and are not in the repository.
 > For a how-to, read [BUILDING.md](BUILDING.md) first. This is the
-> **Developer service** execution mode; the other mode, Local signing, is
-> described in [ARCHITECTURE.md](ARCHITECTURE.md).
+> **Developer service** execution mode; the other modes, Local signing and
+> External JIT, are described in [ARCHITECTURE.md](ARCHITECTURE.md).
 
-Tolkara is one installed app. It does not rely on an external JIT-enabler app
-or an embedded third-party JIT library: the app bundles its own packet-tunnel
+In this mode Tolkara is one installed app. It does not rely on an external
+JIT-enabler app (External JIT is the separate mode that does) or an embedded
+third-party JIT library: the app bundles its own packet-tunnel
 extension and speaks to the iPad's own developer services over a local route.
 The imported macOS executable stays unchanged data outside the signed app; in
 this mode nothing of it is ever signed.
