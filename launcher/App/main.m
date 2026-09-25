@@ -168,11 +168,13 @@ static NSString *ExecutableMemoryState(void) {
     (void)scene;
     return UISceneWindowingControlStyle.minimalStyle;
 }
-// An outside enabler is attached only briefly; take its arena now, whether or
-// not this launch ends up needing it.
+// An enabler attaches only briefly: take its arena now.
 - (void)reserveExecutableMemory {
-    if(ng_arena_reserved() || !hd_debugger_attached()) return;
+#if !TOLKARA_INTEGRATED_AUTH
+    // Only where needed: Xcode's debugger stops at the request.
+    if(ng_arena_reserved() || !hd_debugger_attached() || !CanStartApps()) return;
     ng_reserve_arena(NULL);
+#endif
 }
 - (void)sceneDidBecomeActive:(UIScene *)scene {
     (void)scene; [self reserveExecutableMemory];
