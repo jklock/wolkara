@@ -17,7 +17,7 @@ SHIMS=${NATIVE_GUEST_SHIMS:-YES}
 GUEST_EXE=${GUEST_EXE:-}
 [ "$SHIMS" = GENERIC ] || [ -n "$GUEST_EXE" ] || { echo "Set GUEST_EXE to the macOS executable you own (several: separate with ':'), or NATIVE_GUEST_SHIMS=GENERIC to build for none. It is analysed, never bundled or modified."; exit 2; }
 IFS=: read -r -a EXES <<< "$GUEST_EXE"
-for exe in "${EXES[@]}"; do [ -f "$exe" ] || { echo "GUEST_EXE entry not found: $exe"; exit 2; }; done
+for exe in ${EXES[@]+"${EXES[@]}"}; do [ -f "$exe" ] || { echo "GUEST_EXE entry not found: $exe"; exit 2; }; done
 case "${TOLKARA_MODE:-}" in
     ""|developer-service|local-signing) ;;
     *) echo "TOLKARA_MODE must be empty, developer-service or local-signing (see local.env.example)."; exit 2;;
