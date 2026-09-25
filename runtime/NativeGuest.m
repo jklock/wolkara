@@ -29,7 +29,10 @@ static NativeCodeMemory local_quarantine;
 #include <spawn.h>
 #include <sys/ucontext.h>
 #include <fcntl.h>
+#include <os/lock.h>
+#include <stdarg.h>
 #include <stdatomic.h>
+#include <sys/stat.h>
 static atomic_bool initialization_attempted;
 #if TOLKARA_INTEGRATED_AUTH
 static atomic_bool use_local_authorization;
@@ -513,6 +516,18 @@ static int guest_posix_spawn(pid_t *, const char *, const posix_spawn_file_actio
                              char *const *, char *const *);
 static void guest_exit(int) __attribute__((noreturn));
 static void guest_abort(void) __attribute__((noreturn));
+// Opt-in tracing (--trace-guest): the guest's failed file access, the
+// directories it creates and the environment variables it reads. Off by
+// default, and then the guest binds straight to libc for these.
+static bool trace_guest;
+static int guest_open(const char *, int, ...);
+static int guest_openat(int, const char *, int, ...);
+static int guest_stat(const char *, struct stat *);
+static int guest_lstat(const char *, struct stat *);
+static int guest_access(const char *, int);
+static FILE *guest_fopen(const char *, const char *);
+static int guest_mkdir(const char *, mode_t);
+static char *guest_getenv(const char *);
 // Handles to the placed images a guest dlopen yields: the tag, RTLD_FIRST, and
 // the image in the low byte (0 the executable, n carried library n-1).
 #define GUEST_HANDLE_TAG 0x7400000000000000ULL
@@ -547,6 +562,10 @@ static void *hook(const char *name) {
     HOOK("dlopen",guest_dlopen); HOOK("dlclose",guest_dlclose); HOOK("dlerror",guest_dlerror);
     HOOK("system",guest_system); HOOK("popen",guest_popen); HOOK("posix_spawn",guest_posix_spawn);
     HOOK("exit",guest_exit); HOOK("abort",guest_abort);
+    if (trace_guest) {
+        HOOK("open",guest_open); HOOK("openat",guest_openat); HOOK("stat",guest_stat); HOOK("lstat",guest_lstat);
+        HOOK("access",guest_access); HOOK("fopen",guest_fopen); HOOK("mkdir",guest_mkdir); HOOK("getenv",guest_getenv);
+    }
     HOOK("mmap",guest_mmap); HOOK("mprotect",guest_mprotect); HOOK("munmap",guest_munmap);
     HOOK("memcpy",guest_memcpy); HOOK("memmove",guest_memmove); HOOK("memset",guest_memset);
     HOOK("pthread_jit_write_protect_np",guest_jit_protect);
@@ -615,6 +634,88 @@ static int guest_posix_spawn(pid_t *pid, const char *path, const posix_spawn_fil
 }
 static void guest_exit(int code) { LOG("[native] exit(%d)\n",code); exit(code); }
 static void guest_abort(void) { LOG("[native] abort()\n"); abort(); }
+// Each distinct line once: games probe the same missing files in loops. A
+// full table stops the logging, never the guest.
+static void log_once(const char *format, ...) __attribute__((format(printf,1,2)));
+static void log_once(const char *format, ...) {
+    char line[1536]; va_list arguments;
+    va_start(arguments,format); vsnprintf(line,sizeof line,format,arguments); va_end(arguments);
+    uint64_t hash=14695981039346656037ULL;   // FNV-1a
+    for (const char *c=line;*c;c++) hash=(hash^(unsigned char)*c)*1099511628211ULL;
+    enum { SLOTS=1<<14, LIMIT=SLOTS*3/4 };
+    static uint64_t seen[SLOTS]; static size_t used; static os_unfair_lock lock=OS_UNFAIR_LOCK_INIT;
+    bool fresh=false; size_t count=0;
+    if (!hash) hash=1;
+    os_unfair_lock_lock(&lock);
+    if (used<LIMIT) {
+        size_t slot=hash&(SLOTS-1);
+        while (seen[slot] && seen[slot]!=hash) slot=(slot+1)&(SLOTS-1);
+        if (!seen[slot]) { seen[slot]=hash; fresh=true; count=++used; }
+    }
+    os_unfair_lock_unlock(&lock);
+    if (fresh) LOG("%s",line);
+    if (fresh && count==LIMIT) LOG("[native] %zu distinct trace lines logged; later ones are not\n",count);
+}
+// Logging must not change the errno the guest reads.
+static void trace_failure(const char *call, const char *path) {
+    int code=errno;
+    char shown[1024]; if (path) loggable_path(path,shown,sizeof shown);
+    log_once("[native] %s(%s) failed errno=%d\n",call,path?shown:"NULL",code);
+    errno=code;
+}
+static int guest_open(const char *path, int flags, ...) {
+    int mode=0;
+    if (flags&O_CREAT) { va_list arguments; va_start(arguments,flags); mode=va_arg(arguments,int); va_end(arguments); }
+    int fd=open(path,flags,mode);
+    if (fd<0) trace_failure("open",path);
+    return fd;
+}
+static int guest_openat(int directory, const char *path, int flags, ...) {
+    int mode=0;
+    if (flags&O_CREAT) { va_list arguments; va_start(arguments,flags); mode=va_arg(arguments,int); va_end(arguments); }
+    int fd=openat(directory,path,flags,mode);
+    if (fd<0) trace_failure("openat",path);
+    return fd;
+}
+static int guest_stat(const char *path, struct stat *buffer) {
+    int result=stat(path,buffer);
+    if (result) trace_failure("stat",path);
+    return result;
+}
+static int guest_lstat(const char *path, struct stat *buffer) {
+    int result=lstat(path,buffer);
+    if (result) trace_failure("lstat",path);
+    return result;
+}
+static int guest_access(const char *path, int mode) {
+    int result=access(path,mode);
+    if (result) trace_failure("access",path);
+    return result;
+}
+static FILE *guest_fopen(const char *path, const char *mode) {
+    FILE *file=fopen(path,mode);
+    if (!file) trace_failure("fopen",path);
+    return file;
+}
+static int guest_mkdir(const char *path, mode_t mode) {
+    int result=mkdir(path,mode);
+    if (result) { trace_failure("mkdir",path); return result; }
+    int code=errno;
+    char shown[1024]; loggable_path(path,shown,sizeof shown);
+    log_once("[native] mkdir(%s)\n",shown);
+    errno=code;
+    return result;
+}
+// Values as paths are shown elsewhere in the log: inside the app's home as
+// ~/..., other absolute paths by their last component.
+static char *guest_getenv(const char *name) {
+    int code=errno;
+    char *value=getenv(name);
+    char shown[1024]; if (value) loggable_path(value,shown,sizeof shown);
+    log_once("[native] getenv(%s) -> %s\n",name?name:"NULL",value?shown:"(unset)");
+    errno=code;
+    return value;
+}
 // dlopen the signed container (dyld validates its CodeDirectory and maps its
 // pages), check its layout and bind it to this guest before anything is
 // mapped, then reserve the guest arena anonymously. Pages after the rewritten
@@ -999,6 +1100,8 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
         void (*set_nibs)(const char *)=dlsym(RTLD_DEFAULT,"AKSetGuestNibDirectory");
         if(set_nibs) set_nibs([NSHomeDirectory() stringByAppendingPathComponent:@"Documents/GuestCompatibility/Nibs"].fileSystemRepresentation);
     }
+    trace_guest=[NSProcessInfo.processInfo.arguments containsObject:@"--trace-guest"];
+    if (trace_guest) LOG("[native] tracing failed file access, created directories and getenv (--trace-guest)\n");
     if([NSProcessInfo.processInfo.arguments containsObject:@"--sample-native"]) signal_log_fd=open([[NSHomeDirectory() stringByAppendingPathComponent:@"Documents/native-signal.log"] fileSystemRepresentation],O_WRONLY|O_CREAT|O_TRUNC,0600);
     shader_wait_pending=dlsym(RTLD_DEFAULT,"AKShaderWaitPending");
     for (size_t i=0;i<carried.count;i++) {
