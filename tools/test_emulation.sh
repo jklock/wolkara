@@ -90,6 +90,8 @@ build/emulation/test_native_memory
 build/emulation/test_host_diagnostics
 "${CC[@]}" runtime/DebuggerArena.c runtime/HostDiagnostics.c runtime/HostExecutionProbe.c runtime/NativeCodeMemory.c tests/test_debugger_arena.c -o build/emulation/test_debugger_arena
 build/emulation/test_debugger_arena
+"${CC[@]}" tests/test_native_policy.c -o build/emulation/test_native_policy
+build/emulation/test_native_policy
 "${CC[@]}" runtime/GuestMemory.c runtime/SignedImage.c tests/test_signed_image.c -o build/emulation/test_signed_image
 build/emulation/test_signed_image
 "${CC[@]}" -Ilauncher/App launcher/App/SignedFileProbe.c tests/test_signed_file_probe.c -o build/emulation/test_signed_file_probe
@@ -199,6 +201,144 @@ xcrun --sdk macosx clang -arch arm64 -mmacosx-version-min=12.0 -dynamiclib \
 build/emulation/guest_probe_sanitized build/emulation/Ambiguous.app/Contents/MacOS/Ambiguous \
     --carried-libraries --validate-fixups > build/emulation/ambiguous-imports.txt
 grep -q "_carried_shared <- @rpath/libsecond.dylib" build/emulation/ambiguous-imports.txt
+# A carried library that later exports a system name does not take it.
+rm -rf build/emulation/Shadow.app
+mkdir -p build/emulation/Shadow.app/Contents/MacOS build/emulation/Shadow.app/Contents/Frameworks
+cat > build/emulation/plain.c <<'C'
+int plain_value(void) { return 1; }
+C
+cat > build/emulation/plain_system.c <<'C'
+#include <stddef.h>
+int plain_value(void) { return 1; }
+size_t strlen(const char *text) { (void)text; return 0; }
+C
+cat > build/emulation/system_user.c <<'C'
+#include <string.h>
+int plain_value(void);
+int main(int argc, char **argv) { (void)argc; return (int)strlen(argv[0]) + plain_value(); }
+C
+xcrun --sdk macosx clang -arch arm64 -mmacosx-version-min=12.0 -dynamiclib \
+    -install_name @rpath/libplain.dylib build/emulation/plain.c \
+    -o build/emulation/Shadow.app/Contents/Frameworks/libplain.dylib
+xcrun --sdk macosx clang -arch arm64 -mmacosx-version-min=12.0 build/emulation/system_user.c \
+    build/emulation/Shadow.app/Contents/Frameworks/libplain.dylib \
+    -Wl,-rpath,@executable_path/../Frameworks -o build/emulation/Shadow.app/Contents/MacOS/Shadow
+xcrun --sdk macosx clang -arch arm64 -mmacosx-version-min=12.0 -fno-builtin -dynamiclib \
+    -install_name @rpath/libplain.dylib build/emulation/plain_system.c \
+    -o build/emulation/Shadow.app/Contents/Frameworks/libplain.dylib
+build/emulation/guest_probe_sanitized build/emulation/Shadow.app/Contents/MacOS/Shadow \
+    --carried-libraries --validate-fixups > build/emulation/shadow-imports.txt
+grep -q "_plain_value <- @rpath/libplain.dylib" build/emulation/shadow-imports.txt
+if grep -q "_strlen <- " build/emulation/shadow-imports.txt; then echo "a carried library took a system import"; exit 1; fi
+# The probe's imports for one image, which end with its "[fixups] <name>" line.
+group_of() { awk -v end="[fixups] $2" 'index($0, end) == 1 { printf "%s", buffer; exit }
+    /^\[fixups\] / { buffer = ""; next } { buffer = buffer $0 "\n" }' "$1"; }
+# C++ weak definitions coalesce to the executable, as dyld's load order has it,
+# for the executable's own binds and for a carried library's.
+rm -rf build/emulation/Coalesce.app
+mkdir -p build/emulation/Coalesce.app/Contents/MacOS build/emulation/Coalesce.app/Contents/Frameworks
+cat > build/emulation/counter.h <<'C'
+#include <cstdlib>
+inline int &counter() { static int c = std::rand(); return c; }
+C
+cat > build/emulation/coalesce_lib.cpp <<'C'
+#include "counter.h"
+int library_counter() { return counter(); }
+C
+cat > build/emulation/coalesce.cpp <<'C'
+#include "counter.h"
+int library_counter();
+int main() { return counter() + library_counter(); }
+C
+xcrun --sdk macosx clang++ -arch arm64 -mmacosx-version-min=12.0 -dynamiclib \
+    -install_name @rpath/libcoalesce.dylib build/emulation/coalesce_lib.cpp \
+    -o build/emulation/Coalesce.app/Contents/Frameworks/libcoalesce.dylib
+xcrun --sdk macosx clang++ -arch arm64 -mmacosx-version-min=12.0 build/emulation/coalesce.cpp \
+    build/emulation/Coalesce.app/Contents/Frameworks/libcoalesce.dylib \
+    -Wl,-rpath,@executable_path/../Frameworks -o build/emulation/Coalesce.app/Contents/MacOS/Coalesce
+build/emulation/guest_probe_sanitized build/emulation/Coalesce.app/Contents/MacOS/Coalesce \
+    --carried-libraries --validate-fixups > build/emulation/coalesce-imports.txt
+group_of build/emulation/coalesce-imports.txt @rpath/libcoalesce.dylib > build/emulation/coalesce-library.txt
+group_of build/emulation/coalesce-imports.txt validated > build/emulation/coalesce-executable.txt
+for group in library executable; do
+    for symbol in __Z7counterv __ZGVZ7countervE1c __ZZ7countervE1c; do
+        grep -q "^\[import\] $symbol <- <executable>$" build/emulation/coalesce-$group.txt
+    done
+done
+grep -q "^\[import\] __Z15library_counterv <- @rpath/libcoalesce.dylib$" build/emulation/coalesce-executable.txt
+grep -q "from the executable itself=6" build/emulation/coalesce-imports.txt
+# A library binding to itself, and a flat lookup, answered inside the application.
+rm -rf build/emulation/Ordinals.app
+mkdir -p build/emulation/Ordinals.app/Contents/MacOS build/emulation/Ordinals.app/Contents/Frameworks
+cat > build/emulation/provider.c <<'C'
+int provider_value(void) { return 2; }
+C
+cat > build/emulation/flat.c <<'C'
+int provider_value(void);
+int flat_value(void) { return provider_value(); }
+C
+cat > build/emulation/self.c <<'C'
+int self_value(void) { return 3; }
+int self_caller(void) { return self_value(); }
+C
+cat > build/emulation/ordinals.c <<'C'
+int flat_value(void); int self_caller(void); int provider_value(void);
+int main(void) { return flat_value() + self_caller() + provider_value(); }
+C
+xcrun --sdk macosx clang -arch arm64 -mmacosx-version-min=12.0 -dynamiclib \
+    -install_name @rpath/libprovider.dylib build/emulation/provider.c \
+    -o build/emulation/Ordinals.app/Contents/Frameworks/libprovider.dylib
+# Its one import is left to a flat lookup at load time.
+xcrun --sdk macosx clang -arch arm64 -mmacosx-version-min=12.0 -dynamiclib -Wl,-undefined,dynamic_lookup \
+    -install_name @rpath/libflat.dylib build/emulation/flat.c \
+    -o build/emulation/Ordinals.app/Contents/Frameworks/libflat.dylib 2>/dev/null
+# Interposable: its own call goes through a bind to itself.
+xcrun --sdk macosx clang -arch arm64 -mmacosx-version-min=12.0 -dynamiclib -Wl,-interposable \
+    -install_name @rpath/libself.dylib build/emulation/self.c \
+    -o build/emulation/Ordinals.app/Contents/Frameworks/libself.dylib
+xcrun --sdk macosx clang -arch arm64 -mmacosx-version-min=12.0 build/emulation/ordinals.c \
+    build/emulation/Ordinals.app/Contents/Frameworks/libprovider.dylib \
+    build/emulation/Ordinals.app/Contents/Frameworks/libflat.dylib \
+    build/emulation/Ordinals.app/Contents/Frameworks/libself.dylib \
+    -Wl,-rpath,@executable_path/../Frameworks -o build/emulation/Ordinals.app/Contents/MacOS/Ordinals
+build/emulation/guest_probe_sanitized build/emulation/Ordinals.app/Contents/MacOS/Ordinals \
+    --carried-libraries --validate-fixups > build/emulation/ordinals-imports.txt
+group_of build/emulation/ordinals-imports.txt @rpath/libflat.dylib > build/emulation/ordinals-flat.txt
+group_of build/emulation/ordinals-imports.txt @rpath/libself.dylib > build/emulation/ordinals-self.txt
+grep -q "^\[import\] _provider_value <- @rpath/libprovider.dylib$" build/emulation/ordinals-flat.txt
+grep -q "^\[import\] _self_value <- @rpath/libself.dylib$" build/emulation/ordinals-self.txt
+# The executable's own thread-local weak definitions bind to its TLV descriptors.
+cat > build/emulation/tlv.cpp <<'C'
+inline int &slot() { static thread_local int value = 7; return value; }
+int main() { return slot(); }
+C
+xcrun --sdk macosx clang++ -arch arm64 -mmacosx-version-min=12.0 build/emulation/tlv.cpp -o build/emulation/tlv
+build/emulation/guest_probe_sanitized build/emulation/tlv --validate-fixups > build/emulation/tlv-imports.txt
+grep -q "^\[import\] __ZZ4slotvE5value <- <executable>$" build/emulation/tlv-imports.txt
+DESCRIPTOR=$(xcrun dyld_info -exports build/emulation/tlv | awk '$2 == "__ZZ4slotvE5value" { print $1 }')
+build/emulation/guest_probe_sanitized build/emulation/tlv --export __ZZ4slotvE5value > build/emulation/tlv-export.txt
+grep -q "__ZZ4slotvE5value=$(printf '%#x' $((0x100000000 + DESCRIPTOR))) absolute=0 weak per-thread$" build/emulation/tlv-export.txt
+# A strong definition in a carried library wins over the executable's weak one.
+rm -rf build/emulation/Strong.app
+mkdir -p build/emulation/Strong.app/Contents/MacOS build/emulation/Strong.app/Contents/Frameworks
+cat > build/emulation/strong_lib.c <<'C'
+__attribute__((weak)) int library_dummy(void) { return 0; }
+int shared_value(void) { return 2; }
+C
+cat > build/emulation/strong_main.c <<'C'
+int library_dummy(void);
+__attribute__((weak)) int shared_value(void) { return 1; }
+int main(void) { return shared_value() + library_dummy(); }
+C
+xcrun --sdk macosx clang -arch arm64 -mmacosx-version-min=12.0 -dynamiclib \
+    -install_name @rpath/libstrong.dylib build/emulation/strong_lib.c \
+    -o build/emulation/Strong.app/Contents/Frameworks/libstrong.dylib
+xcrun --sdk macosx clang -arch arm64 -mmacosx-version-min=12.0 build/emulation/strong_main.c \
+    build/emulation/Strong.app/Contents/Frameworks/libstrong.dylib \
+    -Wl,-rpath,@executable_path/../Frameworks -o build/emulation/Strong.app/Contents/MacOS/Strong
+build/emulation/guest_probe_sanitized build/emulation/Strong.app/Contents/MacOS/Strong \
+    --carried-libraries --validate-fixups > build/emulation/strong-imports.txt
+grep -q "^\[import\] _shared_value <- @rpath/libstrong.dylib$" build/emulation/strong-imports.txt
 # A library that re-exports another answers for its names.
 rm -rf build/emulation/Reexport.app
 mkdir -p build/emulation/Reexport.app/Contents/MacOS build/emulation/Reexport.app/Contents/Frameworks

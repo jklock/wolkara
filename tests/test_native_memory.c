@@ -106,11 +106,13 @@ int main(void) {
     assert(calls==old_calls); // No second helper attempt or allocation.
     // Quarantined mappings intentionally live until process exit.
 
-    // What may be prepared follows the device, not a constant.
+    // Any route accepts up to the ceiling (more than the old 128 MiB); only a
+    // launch compares with what the device has left (nc_launch_limit).
     NativeCodeMemory large={0},spare={0};
     size_t big=160u*1024u*1024u;
-    assert(nc_arena_limit()<=NC_MAX_ARENA && !(nc_arena_limit()%page));
-    if(big<=nc_arena_limit()) {
+    assert(nc_arena_limit()<=nc_launch_limit() && nc_launch_limit()<=NC_MAX_ARENA);
+    assert(!(nc_arena_limit()%page) && !(nc_launch_limit()%page));
+    if(big<=nc_launch_limit()) {
         assert(nc_create_managed(&large,big,accept_without_reading,NULL,&spare));
         assert(large.size==big && large.published);
         nc_destroy(&large);

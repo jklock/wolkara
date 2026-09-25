@@ -537,8 +537,8 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     }
     // Opened without JIT: say so; the session stays usable.
     if(!PreparedFromOutside()) {
-        [self alert:@"JIT Not Enabled" message:@"Tolkara was opened without JIT. Enable JIT for it in the tool you sideloaded it with, "
-            "such as SideStore or StikDebug, then open it again."];
+        [self alert:@"JIT Not Enabled" message:@"Tolkara was opened without JIT. Enable JIT for it with the tool you sideloaded it with "
+            "(such as SideStore) or a JIT enabler such as StikDebug, then open it again."];
         return;
     }
     [self endSession:[NSString stringWithFormat:@"%@ was started in this session. Close Tolkara in the app switcher and open it again to start an app.",app.name]];
@@ -611,8 +611,14 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
             [self refuseNativeGame:reason];return;
         }
     }
-    // External JIT names its route; nothing infers it.
-    if (!container && self.executionMode==TKExecutionModeExternalJIT) (void)ng_use_external_authorization();
+    // External JIT names its route; nothing infers it. A build without it
+    // refuses rather than taking another route under that name.
+    if (!container && self.executionMode==TKExecutionModeExternalJIT) {
+        NSString *unavailable=nil;
+        if (!TKExecutionModeAvailable(TKExecutionModeExternalJIT,&unavailable) || !ng_use_external_authorization()) {
+            [self refuseNativeGame:unavailable?:@"External JIT could not be selected for this run."];return;
+        }
+    }
     [self runNativeGame:fullStartup app:app container:container];
 }
 // container: Local signing's validated page container, or nil for the

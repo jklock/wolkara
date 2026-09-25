@@ -18,7 +18,12 @@ typedef struct {
 typedef bool (*NCPublish)(void *executable, size_t size, void *context);
 // A ceiling on any one arena, whatever the device allows.
 #define NC_MAX_ARENA (1024u * 1024u * 1024u)
-// The largest arena this process may prepare now, page aligned.
+// The largest arena a launch accepts now: the ceiling, or what the system says
+// is left to this process if that is less. Page aligned.
+size_t nc_launch_limit(void);
+// What External JIT first asks an enabler for: a quarter of what is left (the
+// writable alias and the application's own allocations count too), at most
+// the ceiling. Page aligned.
 size_t nc_arena_limit(void);
 // What the system says this process may still allocate.
 size_t nc_available_memory(void);

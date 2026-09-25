@@ -175,6 +175,21 @@ class ImageTests(unittest.TestCase):
         trie = b'\0\1_sample\0\x0b\0\1\0\x0f\3\0\x80\x20\0'
         self.assertIn('_sample=0x1000 absolute=0', self.probe(
             library_fixture(trie), options=('--library', '--export', '_sample')))
+        # That terminal's node may also lead on to longer symbols; the empty
+        # edge matches whatever remains, as in dyld.
+        trie = (b'\0\1_sample\0\x0b' b'\0\1\0\x0f'
+                b'\3\0\x80\x20\1Wait\0\x1a' b'\3\0\x84\x20\0')
+        output = self.probe(library_fixture(trie), options=(
+            '--library', '--export', '_sample', '--export', '_sampleWait'))
+        self.assertIn('_sample=0x1000 absolute=0', output)
+        self.assertIn('_sampleWait=0x1004 absolute=0', output)
+        self.probe(library_fixture(trie), False, ('--library', '--export', '_sampleWai'))
+        # C++ template names can run to kilobytes.
+        name = b'_' + b'x' * 5000
+        child = 2 + len(name) + 1 + 2  # terminal size, child count, edge, NUL, two-byte ULEB
+        trie = b'\0\1' + name + b'\0' + bytes([child & 0x7f | 0x80, child >> 7]) + b'\3\0\x80\x20\0'
+        self.assertIn(name.decode() + '=0x1000 absolute=0', self.probe(
+            library_fixture(trie), options=('--library', '--export', name.decode())))
 
     def test_malformed_and_unsupported_exports(self):
         root = b'\0\1_sample\0\x0b'
@@ -185,6 +200,7 @@ class ImageTests(unittest.TestCase):
                      root + b'\3\0\x80\x80\1\0',  # wrong terminal size
                      root + b'\4\0\x80\x80\1\0',  # address beyond mapping
                      root + b'\x0b\0' + b'\xff' * 9 + b'\2\0',
+                     # 1 is thread-local, refused outside the image's TLS descriptors.
                      *[root + b'\3' + bytes([flag]) + b'\x80\x20\0' for flag in (1, 3, 8, 16, 32)]]:
             self.probe(library_fixture(trie), False, ('--library', '--export', '_sample'))
         # A cycle consumes the query, then returns missing rather than looping.

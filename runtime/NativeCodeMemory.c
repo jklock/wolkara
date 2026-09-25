@@ -18,6 +18,12 @@ size_t nc_available_memory(void) {
     return 0;
 #endif
 }
+size_t nc_launch_limit(void) {
+    size_t limit = NC_MAX_ARENA, available = nc_available_memory();
+    if (available && available < limit) limit = available;
+    size_t page = (size_t)getpagesize();
+    return limit - limit % page;
+}
 size_t nc_arena_limit(void) {
     size_t limit = NC_MAX_ARENA, available = nc_available_memory();
     // Twice for the alias, and the application allocates beside it.
@@ -38,7 +44,7 @@ bool nc_create_managed(NativeCodeMemory *memory, size_t size, NCPrepare prepare,
     if (!memory || !quarantine || memory == quarantine ||
         memory->size || memory->executable || memory->writable ||
         quarantine->size || quarantine->executable || quarantine->writable || !size ||
-        size % page || size > nc_arena_limit() || !prepare) {
+        size % page || size > NC_MAX_ARENA || !prepare) {
         errno = EINVAL; return false;
     }
     NativeCodeMemory staged = {.size = size};

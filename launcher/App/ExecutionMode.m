@@ -47,8 +47,8 @@ NSString *TKExecutionModeSummary(TKExecutionMode mode) {
             "tools/build_signed_container.py and copied to Documents/LocalSigning. The application's executable is never changed, "
             "but the container is a copy of its final code pages, signed under your identity and kept on this iPad.";
     case TKExecutionModeExternalJIT:
-        return @"Needs JIT enabled for Tolkara by the tool you sideloaded it with, such as SideStore or StikDebug. "
-            "The application's code is never signed or changed: that tool's debugger prepares memory, then Tolkara copies the original code in.";
+        return @"Needs JIT enabled when Tolkara opens, by the tool you sideloaded it with (such as SideStore) or a JIT enabler such as StikDebug. "
+            "The application's code is never signed or changed: the enabler's debugger prepares memory, then Tolkara copies the original code in.";
     case TKExecutionModeNone: break;
     }
     return nil;

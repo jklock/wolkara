@@ -71,7 +71,8 @@ void hd_collect(HostDiagnostics *report, bool probe_execution, FILE *log) {
     if (!sysctlbyname("hw.memsize", &memory, &size, NULL, 0)) report->physical_memory = memory;
     report->footprint = footprint();
     report->page_size = (size_t)getpagesize();
-    report->arena_limit = nc_arena_limit();
+    report->arena_limit = nc_launch_limit();
+    report->reservation_size = nc_arena_limit();
     report->available_memory = -1;
 #if TARGET_OS_IPHONE
     report->available_memory = (int64_t)os_proc_available_memory();
@@ -118,6 +119,7 @@ size_t hd_format(const HostDiagnostics *report, char *out, size_t size) {
         used = append(out, size, used, "  left before we are killed unknown here\n");
     used = append(out, size, used, "  page size              %zu bytes\n", report->page_size);
     used = append(out, size, used, "  largest guest arena    %.0f MiB\n", mib(report->arena_limit));
+    used = append(out, size, used, "  first JIT reservation  %.0f MiB\n", mib(report->reservation_size));
     used = append(out, size, used, "\nExecutable memory (our own two-instruction sample)\n");
     if (!report->execution_probed) return append(out, size, used, "  not probed\n");
     used = probe_line(out, size, used, "write then execute", report->write_then_execute);

@@ -13,9 +13,11 @@ int main(void) {
     hd_collect(&report, false, NULL);
     assert(!report.execution_probed);
     assert(report.page_size == (size_t)getpagesize());
-    // What may be prepared follows the system, under the ceiling.
-    assert(report.arena_limit == nc_arena_limit() && report.arena_limit <= NC_MAX_ARENA);
-    assert(!(report.arena_limit % (size_t)getpagesize()));
+    // What a launch accepts follows the system, under the ceiling; External JIT
+    // first asks for no more than that.
+    assert(report.arena_limit == nc_launch_limit() && report.arena_limit <= NC_MAX_ARENA);
+    assert(report.reservation_size == nc_arena_limit() && report.reservation_size <= report.arena_limit);
+    assert(!(report.arena_limit % (size_t)getpagesize()) && !(report.reservation_size % (size_t)getpagesize()));
     assert(report.physical_memory > 0);
     assert(report.footprint > 0);
 
@@ -29,7 +31,7 @@ int main(void) {
     size_t written = hd_format(&report, text, sizeof text);
     assert(written == wanted && written < sizeof text);
     assert(strstr(text, "debugger attached now"));
-    assert(strstr(text, "largest guest arena"));
+    assert(strstr(text, "largest guest arena") && strstr(text, "first JIT reservation"));
     assert(strstr(text, "not probed"));       // the probe results are opt-in
 
     // Protections are read from the mapping itself.

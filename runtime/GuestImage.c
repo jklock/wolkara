@@ -63,6 +63,7 @@ static bool load(FILE *f, GuestImage *image, uint32_t file_type, char *error, si
         (mh.cpusubtype & 0xffffff) != CPU_SUBTYPE_ARM64_ALL || mh.filetype != file_type)
         BAD("expected original arm64 %s Mach-O", file_type == MH_EXECUTE ? "MH_EXECUTE" : "MH_DYLIB");
     image->file_type = mh.filetype;
+    image->weak_defines = (mh.flags & MH_WEAK_DEFINES) != 0;
     if (!mh.ncmds || mh.ncmds > 65536 || mh.sizeofcmds > 16 * 1024 * 1024 ||
         !within(sizeof mh, mh.sizeofcmds, slice_size)) BAD("invalid load-command range");
     image->slice_offset = slice; image->slice_size = slice_size;
@@ -289,6 +290,7 @@ uint64_t gi_extent(const GuestImage *image, uint64_t *low) {
     return (end - start + GM_PAGE_SIZE - 1) & ~(uint64_t)(GM_PAGE_SIZE - 1);
 }
 uint64_t gi_placed_initializer(const GuestImage *image, uint64_t slide, uint64_t index) {
+    if (index >= image->initializer_count) return 0;
     if (image->initializer_offsets) return image->initializers[index] + slide;
     return ((const uint64_t *)(uintptr_t)(image->initializer_address + slide))[index];
 }
@@ -308,15 +310,20 @@ GIExportResult gi_export(const GuestImage *image, const char *symbol, GIExport *
     if (error_size) error[0] = 0;
     if (!symbol || !out) INVALID("invalid export query");
     *out = (GIExport){0};
-    size_t remaining = strnlen(symbol, 4097);
-    if (!remaining || remaining > 4096) INVALID("invalid export symbol length");
+    if (!*symbol) INVALID("invalid export symbol length");
     if (!image->export_size) return GI_EXPORT_MISSING;
     if (!image->exports) INVALID("missing export trie data");
+    // C++ template names run to kilobytes; one longer than the trie is not in it.
+    size_t remaining = strnlen(symbol, (size_t)image->export_size + 1);
+    if (remaining > image->export_size) return GI_EXPORT_MISSING;
     const unsigned char *end = image->exports + image->export_size;
     uint64_t node = 0;
-    // Some Apple linkers put a prefix symbol's terminal on an empty edge. Bound
-    // traversal explicitly so those edges cannot form an infinite malformed cycle.
-    for (size_t steps = 0; steps < 8192; steps++) {
+    // Some Apple linkers put a prefix symbol's terminal on an empty edge, and
+    // that node may also carry the longer symbols' edges. As in dyld, an empty
+    // edge always matches and the first matching edge wins. Bound traversal
+    // explicitly so those edges cannot form an infinite malformed cycle.
+    // Each labelled edge consumes at least one character.
+    for (size_t steps = 0, budget = remaining + 8192; steps < budget; steps++) {
         if (node >= image->export_size) INVALID("export node outside trie");
         const unsigned char *cursor = image->exports + node;
         uint64_t terminal_size;
@@ -328,7 +335,8 @@ GIExportResult gi_export(const GuestImage *image, const char *symbol, GIExport *
             unsigned kind = flags & EXPORT_SYMBOL_FLAGS_KIND_MASK;
             if ((flags & ~(uint64_t)(EXPORT_SYMBOL_FLAGS_KIND_MASK | EXPORT_SYMBOL_FLAGS_WEAK_DEFINITION |
                                      EXPORT_SYMBOL_FLAGS_REEXPORT)) ||
-                (kind != EXPORT_SYMBOL_FLAGS_KIND_REGULAR && kind != EXPORT_SYMBOL_FLAGS_KIND_ABSOLUTE))
+                (kind != EXPORT_SYMBOL_FLAGS_KIND_REGULAR && kind != EXPORT_SYMBOL_FLAGS_KIND_ABSOLUTE &&
+                 kind != EXPORT_SYMBOL_FLAGS_KIND_THREAD_LOCAL))
                 INVALID("unsupported export kind/flags %#" PRIx64, flags);
             // A re-export names a library and a name.
             if (flags & EXPORT_SYMBOL_FLAGS_REEXPORT) {
@@ -353,25 +361,33 @@ GIExportResult gi_export(const GuestImage *image, const char *symbol, GIExport *
                 }
                 if (!mapped) INVALID("export outside mapped image");
             }
-            out->address = value; out->absolute = is_absolute;
+            // A thread-local export names one of the image's own TLV descriptors.
+            bool per_thread = kind == EXPORT_SYMBOL_FLAGS_KIND_THREAD_LOCAL;
+            if (per_thread && (value < image->tls_descriptors || value - image->tls_descriptors >= image->tls_descriptors_size ||
+                                 (value - image->tls_descriptors) % 24))
+                INVALID("thread-local export outside the TLS descriptors");
+            out->address = value; out->absolute = is_absolute; out->per_thread = per_thread;
+            out->weak = (flags & EXPORT_SYMBOL_FLAGS_WEAK_DEFINITION) != 0;
             return GI_EXPORT_FOUND;
         }
         if (children == end) INVALID("missing export child count");
         cursor = children;
         unsigned count = *cursor++;
-        bool found = false; uint64_t next = 0; size_t consumed = 0;
+        bool found = false, labelled = false; uint64_t next = 0; size_t consumed = 0;
         for (unsigned i = 0; i < count; i++) {
             const unsigned char *nul = memchr(cursor, 0, (size_t)(end - cursor));
             if (!nul) INVALID("invalid export edge");
             size_t length = (size_t)(nul - cursor);
-            bool matches = length ? length <= remaining && !memcmp(cursor, symbol, length) : !remaining;
+            bool matches = !length || (length <= remaining && !memcmp(cursor, symbol, length));
             cursor = nul + 1;
             uint64_t offset;
             if (!export_uleb(&cursor, end, &offset) || offset >= image->export_size) INVALID("invalid export child offset");
-            if (matches) {
-                if (found) INVALID("ambiguous export edges");
-                found = true; next = offset; consumed = length;
+            // Two labelled edges cannot both lead on in a valid trie.
+            if (matches && length) {
+                if (labelled) INVALID("ambiguous export edges");
+                labelled = true;
             }
+            if (matches && !found) { found = true; next = offset; consumed = length; }
         }
         if (!found) return GI_EXPORT_MISSING;
         node = next; symbol += consumed; remaining -= consumed;

@@ -15,7 +15,8 @@ typedef struct {
     uint64_t footprint;           // what the system counts against our limit
     int64_t available_memory;     // left before this process is killed; -1 unknown
     size_t page_size;
-    size_t arena_limit;           // largest arena the runtime will prepare
+    size_t arena_limit;           // largest arena a launch accepts (nc_launch_limit)
+    size_t reservation_size;      // what External JIT first asks an enabler for (nc_arena_limit)
     bool execution_probed;
     HPResult write_then_execute, read_write_execute, dual_mapping;
 } HostDiagnostics;

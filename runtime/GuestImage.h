@@ -30,6 +30,7 @@ typedef struct {
     size_t rpath_count;
     bool chained_fixups, has_tls;
     bool initializer_offsets;     // S_INIT_FUNC_OFFSETS rather than pointers
+    bool weak_defines;            // MH_WEAK_DEFINES: takes part in weak-definition coalescing
     uint64_t *initializers;       // those offsets, as preferred addresses
 } GuestImage;
 // Reads a thin or universal original executable. Never dlopens or writes it.
@@ -42,9 +43,12 @@ bool gi_load(const char *path, GuestImage *image, char *error, size_t error_size
 bool gi_load_library(const char *path, GuestImage *image, char *error, size_t error_size);
 typedef enum { GI_EXPORT_INVALID = -1, GI_EXPORT_MISSING = 0, GI_EXPORT_FOUND = 1, GI_EXPORT_REEXPORT = 2 } GIExportResult;
 // What an export trie answers: an address, or another library.
-typedef struct { uint64_t address; bool absolute; int ordinal; const char *name; } GIExport;
-// Resolve an ordinary/absolute export at its preferred address. Apply the runtime
-// slide only to non-absolute results. Unsupported export kinds fail explicitly.
+// weak: a weak definition. per_thread: the address is the image's own TLV
+// descriptor (inside its __thread_vars), bound like any other address.
+typedef struct { uint64_t address; bool absolute, weak, per_thread; int ordinal; const char *name; } GIExport;
+// Resolve an ordinary, thread-local or absolute export at its preferred address.
+// Apply the runtime slide only to non-absolute results. Unsupported export kinds
+// fail explicitly.
 GIExportResult gi_export(const GuestImage *image, const char *symbol, GIExport *out,
                          char *error, size_t error_size);
 // Lowest mapped address and the page-aligned reach from it.

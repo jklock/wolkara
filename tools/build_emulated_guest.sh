@@ -9,7 +9,8 @@ OUT=$1; EXES=()
 mkdir -p "$ROOT/build"
 if [ ${#EXES[@]} -eq 0 ]; then
     EXES=("$ROOT/build/TestGuest")
-    # Classic dyld info: the native loader does not apply chained fixups.
+    # Classic dyld info keeps the opcode binds covered on the device; chained
+    # fixups are covered by tools/test_emulation.sh.
     xcrun --sdk macosx clang -fobjc-arc -arch arm64 -O1 -mmacosx-version-min=14.0 -Wl,-no_fixup_chains -o "${EXES[0]}" \
       "$ROOT/testguest/main.m" -framework Cocoa -framework Metal -framework QuartzCore
 fi
@@ -19,6 +20,8 @@ EXE=${EXES[0]}
 mkdir -p "$OUT/Guest"
 # Remove resources left by older builds, including the proprietary executable.
 rm -f "$OUT/Guest/OriginalExecutable.bin" "$OUT/Guest/manifest.json"
+# A library map left by a build for one executable would turn a generic build's stubs off.
+rm -f "$OUT/Guest/libraries.json"
 rm -rf "$OUT/Guest/Nibs"
 MODULE="$ROOT/build/guest-module"
 rm -rf "$MODULE/Nibs"

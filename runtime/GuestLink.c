@@ -1,5 +1,6 @@
 #include "GuestLink.h"
 #include <limits.h>
+#include <mach-o/loader.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
@@ -169,45 +170,109 @@ static const GuestLibrary *carried_as(const GuestLinkSet *set, const GuestImage 
         if (!strcmp(set->libraries[i].path, path)) return &set->libraries[i];
     return NULL;
 }
-// What a library answers, following the re-exports it declares.
+// One image's answer: where the name is, whether it is a weak definition, and
+// who answered (a carried library's install name, or GL_EXECUTABLE).
+typedef struct { uint64_t value; bool weak; const char *name; } Answer;
 _Static_assert(GL_MAX_LIBRARIES <= 64, "the visited set is a 64-bit mask");
-static const GuestLibrary *exported_by(const GuestLinkSet *set, const GuestLibrary *library,
-                                       const char *symbol, uint64_t *value, uint64_t *visited) {
-    uint64_t bit = 1ULL << (size_t)(library - set->libraries);
-    if (*visited & bit) return NULL;
-    *visited |= bit;
+static bool library_export(const GuestLinkSet *set, const GuestLibrary *library, const char *symbol,
+                           bool shallow, Answer *answer, uint64_t *visited);
+// What an image exports, following a trie re-export into the carried library it
+// names. Unless shallow, also the libraries it re-exports whole
+// (LC_REEXPORT_DYLIB); dyld's weak-definition lookup does not follow those.
+static bool image_export(const GuestLinkSet *set, const GuestImage *image, const char *path, uint64_t slide,
+                         const char *name, const char *symbol, bool shallow, Answer *answer, uint64_t *visited) {
     GIExport found;
     char ignored[256];
-    GIExportResult result = gi_export(&library->image, symbol, &found, ignored, sizeof ignored);
+    GIExportResult result = gi_export(image, symbol, &found, ignored, sizeof ignored);
     if (result == GI_EXPORT_FOUND) {
-        *value = found.absolute ? found.address : found.address + library->slide;
-        return library;
+        *answer = (Answer){found.absolute ? found.address : found.address + slide, found.weak, name};
+        return true;
     }
     if (result == GI_EXPORT_REEXPORT) {
-        const GuestLibrary *defines = carried_as(set, &library->image, library->path,
-                                                 library->image.dylibs[found.ordinal - 1]);
-        return defines ? exported_by(set, defines, found.name ? found.name : symbol, value, visited) : NULL;
+        const GuestLibrary *defines = carried_as(set, image, path, image->dylibs[found.ordinal - 1]);
+        return defines && library_export(set, defines, found.name ? found.name : symbol, false, answer, visited);
     }
-    for (size_t i = 0; i < library->image.dylib_count; i++) {
-        if (!library->image.dylib_reexports[i]) continue;
-        const GuestLibrary *through = carried_as(set, &library->image, library->path, library->image.dylibs[i]);
-        const GuestLibrary *answer = through ? exported_by(set, through, symbol, value, visited) : NULL;
-        if (answer) return answer;
+    for (size_t i = 0; !shallow && i < image->dylib_count; i++) {
+        if (!image->dylib_reexports[i]) continue;
+        const GuestLibrary *through = carried_as(set, image, path, image->dylibs[i]);
+        if (through && library_export(set, through, symbol, false, answer, visited)) return true;
     }
-    return NULL;
+    return false;
+}
+static bool library_export(const GuestLinkSet *set, const GuestLibrary *library, const char *symbol,
+                           bool shallow, Answer *answer, uint64_t *visited) {
+    uint64_t bit = 1ULL << (size_t)(library - set->libraries);
+    if (*visited & bit) return false;
+    *visited |= bit;
+    return image_export(set, &library->image, library->path, library->slide, library->install_name,
+                        symbol, shallow, answer, visited);
+}
+static bool executable_export(const GuestLinkSet *set, const char *symbol, bool shallow,
+                              Answer *answer, uint64_t *visited) {
+    return set->executable_image &&
+           image_export(set, set->executable_image, set->executable, set->executable_slide, GL_EXECUTABLE,
+                        symbol, shallow, answer, visited);
+}
+// dyld's weak-definition coalescing: of the images that have weak definitions,
+// in load order (the executable first), the first non-weak definition wins,
+// otherwise the first weak one. Failing both, the binding image's own export.
+static bool coalesce(const GuestLinkSet *set, const GuestImage *from, const char *symbol, Answer *answer) {
+    bool found = false;
+    for (size_t i = 0; i <= set->count; i++) {
+        const GuestImage *image = i ? &set->libraries[i - 1].image : set->executable_image;
+        if (!image || !image->weak_defines) continue;
+        Answer candidate;
+        uint64_t visited = 0;
+        if (!(i ? library_export(set, &set->libraries[i - 1], symbol, true, &candidate, &visited)
+                : executable_export(set, symbol, true, &candidate, &visited))) continue;
+        if (!candidate.weak) { *answer = candidate; return true; }
+        if (!found) { *answer = candidate; found = true; }
+    }
+    if (found) return true;
+    uint64_t visited = 0;
+    if (from == set->executable_image) return executable_export(set, symbol, false, answer, &visited);
+    const GuestLibrary *self = library_of(set, from);
+    return self && library_export(set, self, symbol, false, answer, &visited);
 }
 
-const GuestLibrary *gl_lookup(const GuestLinkSet *set, const GuestImage *from, const char *from_path,
-                              const char *install_name, const char *symbol, uint64_t *value) {
-    if (!set || !symbol || !value) return NULL;
-    // The library the bind was linked against answers first.
+const GuestLibrary *gl_carried(const GuestLinkSet *set, const GuestImage *from, const char *from_path,
+                               const char *install_name) {
+    return set && from ? carried_as(set, from, from_path, install_name) : NULL;
+}
+
+bool gl_lookup(const GuestLinkSet *set, const GuestImage *from, const char *from_path,
+               int ordinal, const char *symbol, uint64_t *value, const char **answered_by) {
+    const char *unused;
+    if (!answered_by) answered_by = &unused;
+    *answered_by = NULL;
+    if (!set || !from || !symbol || !value) return false;
+    Answer answer = {0};
     uint64_t visited = 0;
-    const GuestLibrary *named = carried_as(set, from, from_path, install_name), *answer;
-    if (named && (answer = exported_by(set, named, symbol, value, &visited))) return answer;
-    // One already searched does not have the name either.
-    for (size_t i = 0; i < set->count; i++)
-        if ((answer = exported_by(set, &set->libraries[i], symbol, value, &visited))) return answer;
-    return NULL;
+    bool found = false;
+    // Two-level namespace: the library the bind names answers, or none of ours does.
+    if (ordinal > 0) {
+        if ((size_t)ordinal > from->dylib_count) return false;
+        const GuestLibrary *named = carried_as(set, from, from_path, from->dylibs[ordinal - 1]);
+        found = named && library_export(set, named, symbol, false, &answer, &visited);
+    } else if (ordinal == BIND_SPECIAL_DYLIB_MAIN_EXECUTABLE ||
+               (ordinal == BIND_SPECIAL_DYLIB_SELF && from == set->executable_image)) {
+        found = executable_export(set, symbol, false, &answer, &visited);
+    } else if (ordinal == BIND_SPECIAL_DYLIB_SELF) {
+        // A carried library binding to itself.
+        const GuestLibrary *self = library_of(set, from);
+        found = self && library_export(set, self, symbol, false, &answer, &visited);
+    } else if (ordinal == BIND_SPECIAL_DYLIB_FLAT_LOOKUP) {
+        // dyld's load order: the executable first, then its libraries as loaded.
+        found = executable_export(set, symbol, false, &answer, &visited);
+        for (size_t i = 0; i < set->count && !found; i++)
+            found = library_export(set, &set->libraries[i], symbol, false, &answer, &visited);
+    } else if (ordinal == BIND_SPECIAL_DYLIB_WEAK_LOOKUP) {
+        found = coalesce(set, from, symbol, &answer);
+    }
+    if (!found) return false;
+    *value = answer.value;
+    *answered_by = answer.name;
+    return true;
 }
 
 uint64_t gl_span(const GuestLinkSet *set) {

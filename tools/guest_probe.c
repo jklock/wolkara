@@ -3,16 +3,19 @@
 #include "GuestLink.h"
 #include <stdio.h>
 #include <string.h>
-// Only the application's own libraries answer; the rest is zero.
-static struct { size_t answered, missing; } imports;
+// Only the application itself answers; the rest is zero.
+static struct { size_t answered, executable, missing; } imports;
 // The image whose fixups are walked; ordinals index its list.
 typedef struct { GuestLinkSet *set; const GuestImage *image; const char *path; } Binder;
 static bool inspect_import(const char *s, int o, bool w, bool l, uint64_t *v, void *c) {
     (void)w; (void)l;
     Binder *binder = c;
-    const char *needed = o > 0 && (size_t)o <= binder->image->dylib_count ? binder->image->dylibs[o - 1] : NULL;
-    const GuestLibrary *answer = gl_lookup(binder->set, binder->image, binder->path, needed, s, v);
-    if (answer) { imports.answered++; printf("[import] %s <- %s\n", s, answer->install_name); return true; }
+    const char *answer;
+    if (gl_lookup(binder->set, binder->image, binder->path, o, s, v, &answer)) {
+        if (!strcmp(answer, GL_EXECUTABLE)) imports.executable++; else imports.answered++;
+        printf("[import] %s <- %s\n", s, answer);
+        return true;
+    }
     imports.missing++; *v=0; return true;
 }
 int main(int argc, char **argv) {
@@ -42,7 +45,8 @@ int main(int argc, char **argv) {
             fprintf(stderr, "export %s: %s\n", symbol, result == GI_EXPORT_MISSING ? "not found" : error);
             gi_destroy(&image); return 1;
         }
-        printf("[export] %s=%#llx absolute=%d\n", symbol, (unsigned long long)found.address, found.absolute);
+        printf("[export] %s=%#llx absolute=%d%s%s\n", symbol, (unsigned long long)found.address, found.absolute,
+               found.weak ? " weak" : "", found.per_thread ? " per-thread" : "");
     }
     GuestLinkSet set = {0};
     if (carried) {
@@ -51,6 +55,9 @@ int main(int argc, char **argv) {
         }
         gl_report(&set, stdout);
     }
+    // The executable answers for itself even with no carried libraries read.
+    set.executable_image = &image;
+    set.executable_slide = 0x200000;
     if (fixups) {
         GFStats stats;
         // Carried libraries bind first: a miss here is real.
@@ -67,7 +74,8 @@ int main(int argc, char **argv) {
             fprintf(stderr, "%s\n", error); gl_destroy(&set); gi_destroy(&image); return 1;
         }
         printf("[fixups] validated rebases=%zu binds=%zu (diagnostic addresses only; no execution)\n", stats.rebases, stats.binds);
-        printf("[fixups] imports from carried libraries=%zu elsewhere=%zu\n", imports.answered, imports.missing);
+        printf("[fixups] imports from carried libraries=%zu elsewhere=%zu, from the executable itself=%zu\n",
+               imports.answered, imports.missing, imports.executable);
     }
     gl_destroy(&set);
     gi_destroy(&image);

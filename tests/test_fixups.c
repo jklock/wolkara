@@ -144,11 +144,31 @@ int main(void) {
         chained_setup(&i, DYLD_CHAINED_PTR_64, rebase, (1ULL << 63) | 5);
         assert(!gf_apply(&i, 0, resolve, NULL, &stats, error, sizeof error) && strstr(error, "import 5"));
         gi_destroy(&i);
-        // A chain that walks off the end of the image.
+        // A chain that walks off the end of its page.
         chained_setup(&i, DYLD_CHAINED_PTR_64, 4094ULL << 51, bind);
         uint64_t tail = 1ULL << 51;
         assert(gm_populate(&i.memory, 0x100003FF8, &tail, 8) == GM_OK);
-        assert(!gf_apply(&i, 0, resolve, NULL, &stats, error, sizeof error) && strstr(error, "outside guest memory"));
+        assert(!gf_apply(&i, 0, resolve, NULL, &stats, error, sizeof error) && strstr(error, "leaves its page"));
+        gi_destroy(&i);
+        // Starts for a segment the image does not have: two listed, the second used.
+        chained_setup(&i, DYLD_CHAINED_PTR_64, rebase, bind);
+        uint32_t two_segments[3] = {2, 0, 8};
+        assert(gm_populate(&i.memory, 0x100000420, two_segments, sizeof two_segments) == GM_OK);
+        assert(!gf_apply(&i, 0, resolve, NULL, &stats, error, sizeof error) && strstr(error, "segment 1 of 1"));
+        gi_destroy(&i);
+        // An import naming a library the image does not list, or an unknown special.
+        for (unsigned k = 0; k < 2; k++) {
+            chained_setup(&i, DYLD_CHAINED_PTR_64, rebase, bind);
+            uint32_t import = k ? 0xF1 : 2;
+            assert(gm_populate(&i.memory, 0x100000440, &import, sizeof import) == GM_OK);
+            assert(!gf_apply(&i, 0, resolve, NULL, &stats, error, sizeof error) && strstr(error, "invalid chained import ordinal"));
+            gi_destroy(&i);
+        }
+        // A page past the end of its segment.
+        chained_setup(&i, DYLD_CHAINED_PTR_64, rebase, bind);
+        uint64_t beyond = GM_PAGE_SIZE;
+        assert(gm_populate(&i.memory, 0x100000430, &beyond, sizeof beyond) == GM_OK);
+        assert(!gf_apply(&i, 0, resolve, NULL, &stats, error, sizeof error) && strstr(error, "outside segment"));
         gi_destroy(&i);
     }
     puts("PASS: Mach-O pointer relocation, import binding, signed addends, malformed fixup bounds");

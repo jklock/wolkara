@@ -150,9 +150,10 @@ static const char *blob_string(const Blob *blob, uint64_t offset) {
     const char *text = (const char *)blob->base + offset;
     return memchr(text, 0, blob->size - offset) ? text : NULL;
 }
-// Stored unsigned; the top values mean self, executable, flat.
+// Stored unsigned; as in dyld, the top sixteen values are special and
+// sign-extend (-1 executable, -2 flat, -3 weak; the rest are refused).
 static int chained_ordinal(uint64_t raw, uint64_t limit) {
-    return raw > limit - 3 ? (int)((int64_t)raw - (int64_t)limit - 1) : (int)raw;
+    return raw > limit - 15 ? (int)((int64_t)raw - (int64_t)limit - 1) : (int)raw;
 }
 
 static bool chained(GuestImage *image, uint64_t slide, GFResolve resolve, void *context,
@@ -203,6 +204,9 @@ static bool chained(GuestImage *image, uint64_t slide, GFResolve resolve, void *
         }
         imports[i].name = blob_string(&blob, (uint64_t)symbols_offset + name_offset);
         if (!imports[i].name) FAIL("chained import %u names nothing inside the blob", i);
+        // The same range the opcode binds accept.
+        if (imports[i].ordinal < BIND_SPECIAL_DYLIB_WEAK_LOOKUP || imports[i].ordinal > (int)image->dylib_count)
+            FAIL("invalid chained import ordinal %d", imports[i].ordinal);
     }
 
     uint32_t segment_count = 0;
@@ -213,6 +217,9 @@ static bool chained(GuestImage *image, uint64_t slide, GFResolve resolve, void *
         if (!blob_u32(&blob, (uint64_t)starts_offset + 4 + (uint64_t)i * 4, &info))
             FAIL("chained starts for segment %u outside the blob", i);
         if (!info) continue;
+        // Starts are listed per segment, in load command order.
+        if (i >= image->segment_count) FAIL("chained starts for segment %u of %zu", i, image->segment_count);
+        const GISegment *segment = &image->segments[i];
         uint64_t at = (uint64_t)starts_offset + info;
         uint16_t page_size = 0, format = 0, page_count = 0;
         uint64_t segment_offset = 0;
@@ -238,10 +245,16 @@ static bool chained(GuestImage *image, uint64_t slide, GFResolve resolve, void *
                 }
                 if ((offset & ~DYLD_CHAINED_PTR_START_LAST) >= page_size)
                     FAIL("chained start beyond its own page");
-                uint64_t address = image->header_address + segment_offset +
-                    (uint64_t)page * page_size + (offset & ~DYLD_CHAINED_PTR_START_LAST);
+                // A chain stays on its own page, inside its own segment.
+                uint64_t page_start = image->header_address + segment_offset + (uint64_t)page * page_size;
+                uint64_t page_end = page_start + page_size;
+                if (page_start < segment->address || page_start >= segment->address + segment->size)
+                    FAIL("chained page %u outside segment %s", page, segment->name);
+                if (page_end > segment->address + segment->size) page_end = segment->address + segment->size;
+                uint64_t address = page_start + (offset & ~DYLD_CHAINED_PTR_START_LAST);
                 for (uint64_t step = 0;; step++) {
                     if (step > steps_allowed) FAIL("chained pointers do not end");
+                    if (address > page_end - 8 || address < page_start) FAIL("chained pointer leaves its page");
                     uint64_t raw = 0, value = 0;
                     if (gm_read(&image->memory, address, &raw, 8) != GM_OK)
                         FAIL("chained pointer outside guest memory");

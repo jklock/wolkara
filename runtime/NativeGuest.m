@@ -9,6 +9,7 @@ static NativeCodeMemory local_quarantine;
 #endif
 #include "GuestFixups.h"
 #include "GuestLink.h"
+#include "NativeGuestPolicy.h"
 #include "GuestStubs.h"
 #include "GuestTLS.h"
 #include "GuestWait.h"
@@ -68,10 +69,16 @@ bool ng_use_local_authorization(void) {
     return false;
 #endif
 }
+#if !TOLKARA_INTEGRATED_AUTH
 static atomic_bool use_external_authorization;
+#endif
 bool ng_use_external_authorization(void) {
+#if TOLKARA_INTEGRATED_AUTH
+    return false;
+#else
     if(atomic_load(&initialization_attempted) || atomic_load(&use_signed_image)) return false;
     atomic_store(&use_external_authorization,true);return true;
+#endif
 }
 
 static struct {
@@ -91,9 +98,12 @@ bool ng_arena_reserved(void) { return reserved_arena.published; }
 bool ng_reserve_arena(FILE *log) {
     if (reserved_arena.published) return true;
     if (atomic_load(&initialization_attempted) || !da_debugger_present()) return false;
-    // A script may refuse the largest; take what it gives.
-    for (size_t size=nc_arena_limit(); size>=64u*1024u*1024u; size/=2)
-        if (da_request_arena(&reserved_arena,size,log)) break;
+    // A script may refuse the largest; take what it gives, down to 64 MiB.
+    size_t page=(size_t)getpagesize(), smallest=64u*1024u*1024u;
+    for (size_t size=nc_arena_limit(); size; ) {
+        if (da_request_arena(&reserved_arena,size,log) || size<=smallest) break;
+        size=size/2<smallest?smallest:size/2; size-=size%page;
+    }
     if (!reserved_arena.published) return false;
     (void)da_release_debugger(&reserved_arena,log);
     if (hd_is_executable(reserved_arena.executable)) return true;
@@ -588,24 +598,45 @@ static NSString *library_path(NSString *install_name, const char *frameworks) {
     if ([leaf hasSuffix:@".dylib"]) return [@"/usr/lib" stringByAppendingPathComponent:leaf];
     return [NSString stringWithFormat:@"/System/Library/Frameworks/%@.framework/%@",leaf,leaf];
 }
+// No library map: a generic build, which stubs what nothing provides.
+static bool guest_generic;
+// What each carried library links against outside the application.
+static void *carried_hosts[GL_MAX_LIBRARIES][GI_MAX_DYLIBS];
+static const char *const stub_kinds[]={"function","data","class","metaclass"};
+// Opens what an image links against, except the application's own libraries,
+// which are placed, never opened. handles[i] answers the image's dylib i.
+static void open_dependencies(const GuestImage *image, const char *image_path, NSDictionary *mapping,
+                              const char *frameworks, void **handles) {
+    for(size_t i=0;i<image->dylib_count;i++) {
+        handles[i]=NULL;
+        if (gl_carried(&carried,image,image_path,image->dylibs[i])) continue;
+        NSString *original=@(image->dylibs[i]); NSString *target=mapping[original]?:library_path(original,frameworks);
+        if ([target hasPrefix:@"@rpath/"]) target=[@(frameworks) stringByAppendingPathComponent:target.lastPathComponent];
+        handles[i]=dlopen(target.fileSystemRepresentation,RTLD_NOW|RTLD_GLOBAL);
+        if (!handles[i]) LOG("[native] library %s unavailable: %s\n",target.UTF8String,dlerror());
+    }
+}
 // The image being fixed up. Ordinals index its own list.
 typedef struct { const GuestImage *image; const char *path; void *const *host; } GuestBinder;
 static bool resolve(const char *symbol, int ordinal, bool weak, bool lazy, uint64_t *value, void *context) {
     const GuestBinder *binder = context;
     const char *name = symbol[0]=='_' ? symbol+1 : symbol;
     void *pointer = hook(name);
-    // A positive ordinal names a library; the rest name nothing.
-    const char *needed = binder && ordinal>0 && (size_t)ordinal<=binder->image->dylib_count ?
-        binder->image->dylibs[ordinal-1] : NULL;
-    // The application's own libraries answer before the system does.
-    uint64_t carried_value=0;
-    if (!pointer && gl_lookup(&carried,binder?binder->image:NULL,binder?binder->path:NULL,needed,symbol,&carried_value)) {
-        *value=carried_value; return true;
+    // The application itself (its executable, or the carried library the ordinal
+    // names) answers before the system does.
+    uint64_t own_value=0;
+    if (!pointer && binder && gl_lookup(&carried,binder->image,binder->path,ordinal,symbol,&own_value,NULL)) {
+        *value=own_value; return true;
     }
-    if (!pointer && needed && binder->host && binder->host[ordinal-1]) pointer=dlsym(binder->host[ordinal-1],name);
+    bool named=binder && ordinal>0 && (size_t)ordinal<=binder->image->dylib_count;
+    if (!pointer && named && binder->host && binder->host[ordinal-1]) pointer=dlsym(binder->host[ordinal-1],name);
     if (!pointer) pointer=dlsym(RTLD_DEFAULT,name);
-    // Nothing provides it: a stub, or null when weak.
-    if (!pointer && !weak) pointer=gs_bind(symbol,gs_kind_bound(symbol,binder && binder->image->lazy_bind_size,lazy));
+    // Nothing provides it: a stub where no build-time analysis covered it, or null when weak.
+    if (!pointer && ng_may_stub(guest_generic,binder && binder->image!=&guest.image,weak)) {
+        GSKind kind=gs_kind_bound(symbol,binder && binder->image->lazy_bind_size,lazy);
+        pointer=gs_bind(symbol,kind);
+        if (pointer) LOG("[native] stub %s as %s ordinal=%d\n",symbol,stub_kinds[kind],ordinal);
+    }
     if (!pointer && !weak) LOG("[native] unresolved %s ordinal=%d\n",symbol,ordinal);
     *value=(uintptr_t)pointer; return pointer || weak;
 }
@@ -662,9 +693,11 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
     }
     char error[2048]; bool ok=false; GFStats stats;
     if (!gi_load(path,&guest.image,error,sizeof error)) { LOG("[native] load failed: %s\n",error); goto done; }
-    // Carried libraries load as data too; missing ones become stubs.
+    // Carried libraries load as data too, placed beside the executable.
     if (!gl_load(&carried,&guest.image,path,error,sizeof error))
         LOG("[native] carried libraries unavailable: %s\n",error);
+    // The executable answers for its own exports whatever was carried.
+    carried.executable_image=&guest.image;
     gl_report(&carried,log);
     guest.base=guest.image.header_address;
     uint64_t end=guest.base;
@@ -691,23 +724,39 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
     local=!signed_backend && (atomic_load(&use_local_authorization) ||
         [NSProcessInfo.processInfo.arguments containsObject:@"--local-native-authorization"]);
 #endif
-    bool external=!signed_backend && !local && (atomic_load(&use_external_authorization) ||
+    bool external=false;
+#if !TOLKARA_INTEGRATED_AUTH
+    // External JIT exists only in TolkaraDiagnostics, like its mode.
+    external=!signed_backend && !local && (atomic_load(&use_external_authorization) ||
         [NSProcessInfo.processInfo.arguments containsObject:@"--external-authorization"]);
+#endif
     if (!signed_backend) {
-        // An arena is counted twice while its writable view exists.
-        size_t limit=nc_arena_limit();
-        LOG("[native] this image needs %zu bytes of executable memory; this process may prepare %zu of the %zu it has left\n",
-            total,limit,nc_available_memory());
+        // Only what certainly cannot fit is refused; the rest is the device's answer.
+        size_t limit=nc_launch_limit(), available=nc_available_memory();
+        LOG("[native] this image needs %zu bytes of executable memory; the limit is %zu (%zu bytes left to this process%s)\n",
+            total,limit,available,available?"":", unknown here");
         if (total>limit) { LOG("[native] not enough room for this arena; guest entry blocked\n"); goto done; }
     }
+    // An arena an enabler provided earlier: taken, refused, or given back first.
+    NGReservedChoice reserved=ng_reserved_choice(external,reserved_arena.published,total,reserved_arena.size);
+    if (reserved==NG_RESERVED_REFUSE) {
+        LOG("[native] the enabler provided %zu bytes and this image needs %zu; nothing is attached to ask again; guest entry blocked\n",
+            reserved_arena.size,total);
+        nc_destroy(&reserved_arena); goto done;
+    }
+    if (reserved==NG_RESERVED_GIVE_BACK) {
+        LOG("[native] the arena reserved earlier (%zu bytes) is not used; given back\n",reserved_arena.size);
+        nc_destroy(&reserved_arena);
+    }
+    bool take_reserved=reserved==NG_RESERVED_TAKE;
     if (signed_backend)
         arena_ready=signed_image_prepare(guest.base+total,error,sizeof error);
 #if TOLKARA_INTEGRATED_AUTH
     else if(local)
         arena_ready=nc_create_managed(&guest.arena,total,TKPrepareLocalArena,NULL,&local_quarantine);
 #endif
-    else if(external && reserved_arena.published && total<=reserved_arena.size) {
-        guest.arena=reserved_arena; arena_ready=true;
+    else if(take_reserved) {
+        guest.arena=reserved_arena; reserved_arena=(NativeCodeMemory){0}; arena_ready=true;
         LOG("[native] using the arena reserved earlier: %zu bytes\n",guest.arena.size);
     }
     else if(external) {
@@ -723,6 +772,7 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
     // Whichever route prepared it: nothing attached, really executable.
     if (external && !da_entry_allowed(&guest.arena,guest.log)) { LOG("[native] guest entry blocked\n"); goto done; }
     guest.slide=(uintptr_t)guest.arena.executable-guest.base;
+    carried.executable_slide=guest.slide;
     for (size_t i=0;i<carried.count;i++)
         carried.libraries[i].slide=(uintptr_t)guest.arena.executable+library_offset[i]-library_low[i];
     LOG("[native] arena ready base=%p slide=%#llx\n",guest.arena.executable,(unsigned long long)guest.slide);
@@ -731,16 +781,15 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
         NSDictionary *mapping=data?[NSJSONSerialization JSONObjectWithData:data options:0 error:NULL]:nil;
         // A map comes with a build made for one executable.
         if (![mapping isKindOfClass:NSDictionary.class]) {
-            LOG("[native] no library map; libraries are resolved by name\n"); mapping=nil;
+            LOG("[native] no library map; libraries are resolved by name and missing imports stubbed\n"); mapping=nil;
         }
+        guest_generic=!mapping;
         NSString *support=[@(frameworks) stringByAppendingPathComponent:@"libAKSupport.dylib"];
         if (!dlopen(support.fileSystemRepresentation,RTLD_NOW|RTLD_GLOBAL)) { LOG("[native] support load failed: %s\n",dlerror()); goto done; }
-        for(size_t i=0;i<guest.image.dylib_count;i++) {
-            NSString *original=@(guest.image.dylibs[i]); NSString *target=mapping[original]?:library_path(original,frameworks);
-            if ([target hasPrefix:@"@rpath/"]) target=[@(frameworks) stringByAppendingPathComponent:target.lastPathComponent];
-            guest.libraries[i]=dlopen(target.fileSystemRepresentation,RTLD_NOW|RTLD_GLOBAL);
-            if (!guest.libraries[i]) LOG("[native] library %s unavailable: %s\n",target.UTF8String,dlerror());
-        }
+        open_dependencies(&guest.image,guest.path,mapping,frameworks,guest.libraries);
+        // A carried library's own dependencies, which the executable may not link.
+        for (size_t i=0;i<carried.count;i++)
+            open_dependencies(&carried.libraries[i].image,carried.libraries[i].path,mapping,frameworks,carried_hosts[i]);
     }
     {
         void (*set_nibs)(const char *)=dlsym(RTLD_DEFAULT,"AKSetGuestNibDirectory");
@@ -751,7 +800,7 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
     for (size_t i=0;i<carried.count;i++) {
         GuestLibrary *library=&carried.libraries[i];
         GFStats library_stats;
-        GuestBinder binder={.image=&library->image,.path=library->path};
+        GuestBinder binder={.image=&library->image,.path=library->path,.host=carried_hosts[i]};
         if (!gf_apply(&library->image,library->slide,resolve,&binder,&library_stats,error,sizeof error)) {
             LOG("[native] %s fixups failed: %s\n",library->install_name,error); goto done;
         }
@@ -816,6 +865,9 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
         // initializers, after fixups: a chained record is no address.
         uintptr_t initializer=guest.image.initializer_count?(uintptr_t)gi_placed_initializer(&guest.image,guest.slide,0):0;
         gm_destroy(&guest.image.memory);
+        if (guest.image.initializer_count && (!inside((void *)initializer,4) || (initializer&3))) {
+            LOG("[native] invalid initializer 0=%p\n",(void *)initializer); goto done;
+        }
         if (guest.image.initializer_count)
             LOG("[native] entering original initializer preferred=%#llx native=%p\n",(unsigned long long)(initializer-guest.slide),(void *)initializer);
         else LOG("[native] the application records no initializers\n");
