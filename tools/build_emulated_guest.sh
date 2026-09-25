@@ -21,7 +21,8 @@ mkdir -p "$OUT/Guest"
 # Remove resources left by older builds, including the proprietary executable.
 rm -f "$OUT/Guest/OriginalExecutable.bin" "$OUT/Guest/manifest.json"
 # A library map left by a build for one executable would turn a generic build's stubs off.
-rm -f "$OUT/Guest/libraries.json"
+# absent.json: libraries a generic build presents as unavailable (translation/<Leaf>/absent).
+rm -f "$OUT/Guest/libraries.json" "$OUT/Guest/absent.json"
 rm -rf "$OUT/Guest/Nibs"
 MODULE="$ROOT/build/guest-module"
 rm -rf "$MODULE/Nibs"
@@ -48,11 +49,13 @@ fi
 
 # Build/sign only our compatibility libraries. The original is never patched.
 # GENERIC: one adapter per translation/<Framework>/, no executable classified.
+# TOLKARA_EXPERIMENTAL_ADAPTERS=<Leaf>[:<Leaf>...] adds the adapters marked
+# experimental (translation/<Leaf>/experimental); none take part by default.
 if [ "${NATIVE_GUEST_SHIMS:-NO}" = YES ] || [ "${NATIVE_GUEST_SHIMS:-NO}" = GENERIC ]; then
     if [ "${PLATFORM_NAME:-iphoneos}" = iphonesimulator ]; then P=iossim; else P=ios; fi
     W="$ROOT/build/native-$P"; mkdir -p "$W" "$OUT/Frameworks"
     if [ "$NATIVE_GUEST_SHIMS" = GENERIC ]; then
-        python3 "$ROOT/tools/build_shims.py" "$P" generic "$OUT/Frameworks"
+        python3 "$ROOT/tools/build_shims.py" "$P" generic "$OUT/Frameworks" "$OUT/Guest/absent.json"
     else
         # Libraries an application bundles (Contents/Frameworks) run as original
         # code beside it, so their imports need compatibility libraries too.

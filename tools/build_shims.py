@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """Build one shim dylib per library listed in surface.json (from classify.py).
 
-usage: build_shims.py <ios|iossim> <surface.json|generic> <outdir>
+usage: build_shims.py <ios|iossim> <surface.json|generic> <outdir> [absent.json]
 
 With "generic" there is no surface: one adapter is built per hand-written
 translation/<Framework>/ directory, with no stubs for any one executable. That is
 what a build not made for a particular application ships; the runtime resolves
-libraries by name and synthesises whatever is still missing.
+libraries by name and synthesises whatever is still missing. A standalone adapter
+re-exports nothing, and the leaves marked absent are written to absent.json for
+the runtime, which then opens no library of that name. Directories marked
+experimental take part only when TOLKARA_EXPERIMENTAL_ADAPTERS names them (see
+tools/classify.py).
 
 For library <Leaf>: hand-written sources in translation/<Leaf>/ are compiled first; every
 symbol the guest needs that they do not define gets a generated logging stub
@@ -18,8 +22,12 @@ import glob, hashlib, json, os, re, shutil, subprocess, sys
 from pathlib import Path
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, "tools"))
+from classify import adapter_leaves, translation_leaves
 platform, surface, outdir = sys.argv[1:4]
+absent_list = sys.argv[4] if len(sys.argv) > 4 else None
 generic = surface == "generic"
+ADAPTERS = adapter_leaves()
 plan = {"sdk": "", "translation": {}} if generic else json.load(open(surface))
 SDKNAME = {"ios": "iphoneos", "iossim": "iphonesimulator"}[platform]
 TARGET = {"ios": "arm64-apple-ios17.0", "iossim": "arm64-apple-ios17.0-simulator"}[platform]
@@ -34,7 +42,7 @@ gen = os.path.join(ROOT, "build/gen", platform); os.makedirs(gen, exist_ok=True)
 # Compatibility libraries change less often than the runtime. Cache unsigned
 # link outputs; the packaging step still signs each copied output for the app.
 identity = hashlib.sha256(Path(__file__).read_bytes())
-identity.update(json.dumps([platform, plan, CC], sort_keys=True).encode())
+identity.update(json.dumps([platform, plan, CC, sorted(ADAPTERS)], sort_keys=True).encode())
 identity.update(subprocess.check_output(["xcrun", "--sdk", SDKNAME, "--show-sdk-build-version"]))
 identity.update(subprocess.check_output(["xcrun", "clang", "--version"]))
 for source in sorted((Path(ROOT) / "translation").rglob("*")):
@@ -64,7 +72,8 @@ def build(leaf, install_name, symbols, real_tbd=None, provider_tbds=(), extra=()
         return
     d = re.sub(r"\.dylib$", "", leaf)
     objs, defined = [], set()
-    for src in sorted(glob.glob(os.path.join(ROOT, "translation", d, "*.[cm]"))):
+    # An experimental adapter nobody opted into contributes no sources.
+    for src in sorted(glob.glob(os.path.join(ROOT, "translation", d, "*.[cm]"))) if d in ADAPTERS else []:
         o = os.path.join(gen, d + "_" + os.path.basename(src) + ".o")
         run(CC + ["-c", src, "-o", o]); objs.append(o)
         nm = subprocess.run(["xcrun", "nm", "-gUj", o], capture_output=True, text=True).stdout
@@ -117,10 +126,15 @@ for leaf, p in plan["translation"].items():
 # Generic: every hand-written framework, with no stubs for any executable.
 if generic:
     written = os.path.join(ROOT, "translation")
-    for leaf in sorted(os.listdir(written)):
+    standalone, absent = translation_leaves("standalone"), translation_leaves("absent")
+    for leaf in sorted(ADAPTERS - absent):
         directory = os.path.join(written, leaf)
-        if leaf == "AKSupport" or not os.path.isdir(directory):
+        if leaf == "AKSupport" or not any(f.endswith((".c", ".m")) for f in os.listdir(directory)):
             continue
-        if not any(f.endswith((".c", ".m")) for f in os.listdir(directory)):
-            continue
-        build(leaf, f"@rpath/ak{leaf}.dylib", [], sdk_library(leaf))
+        build(leaf, f"@rpath/ak{leaf}.dylib", [], None if leaf in standalone else sdk_library(leaf))
+    if absent_list:
+        if absent:
+            with open(absent_list, "w") as f:
+                json.dump(sorted(absent), f, indent=1)
+        elif os.path.exists(absent_list):
+            os.remove(absent_list)

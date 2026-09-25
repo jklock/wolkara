@@ -14,7 +14,12 @@ Per library:  system  (all symbols present -> only the path layout is rewritten)
               coalesced (<weak-def-coalesce>: weak definitions the executable does not export itself;
                          the runtime resolves them from the application's images, then the system; no shim)
               reexport-shim (library exists on iOS but lacks some symbols -> shim adds them and re-exports the real one)
-              full-shim (library does not exist on iOS)
+              full-shim (library does not exist on iOS, or a standalone adapter replaces it entirely)
+              absent    (translation/<Leaf>/absent: presented as unavailable; the map target is "", never opened)
+Adapter markers in translation/<Leaf>/ (see adapter_leaves and translation_leaves):
+              standalone   the adapter replaces a library iOS has: no re-export, every import planned
+              absent       the library is presented as unavailable
+              experimental the directory is used only when TOLKARA_EXPERIMENTAL_ADAPTERS names <Leaf>
 SURFACE.md contains symbol *names* of Apple APIs only; nothing from the binary itself.
 """
 import argparse, collections, json, os, re, subprocess, sys
@@ -24,6 +29,7 @@ KEYS = {"symbols": "", "weak-symbols": "", "thread-local-symbols": "",
         "objc-classes": "_OBJC_CLASS_$_", "objc-eh-types": "_OBJC_EHTYPE_$_", "objc-ivars": "_OBJC_IVAR_$_"}
 
 
+TRANSLATION = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "translation")
 REEXPORTS = {}   # install name -> [install names it re-exports]
 TBD_PATH = {}    # install name -> .tbd file
 
@@ -95,6 +101,31 @@ def lib_key(install_name):
 WEAK_COALESCE = "<weak-def-coalesce>"
 
 
+def adapter_dir(leaf):
+    """translation/<Leaf>/ for a library's leaf name; a .dylib's adapter drops the suffix."""
+    return re.sub(r"\.dylib$", "", leaf)
+
+
+def experimental_enabled():
+    """Leaves named in TOLKARA_EXPERIMENTAL_ADAPTERS (separated by ':' or ',')."""
+    return {x for x in re.split(r"[:,\s]+", os.environ.get("TOLKARA_EXPERIMENTAL_ADAPTERS", "")) if x}
+
+
+def adapter_leaves(root=None):
+    """translation/<Leaf>/ directories a build uses. One marked 'experimental' (unfinished, or a
+    workaround for one application) is left out unless TOLKARA_EXPERIMENTAL_ADAPTERS names it."""
+    root = root or TRANSLATION
+    enabled = experimental_enabled()
+    return {d for d in os.listdir(root) if os.path.isdir(os.path.join(root, d))
+            and (d in enabled or not os.path.exists(os.path.join(root, d, "experimental")))}
+
+
+def translation_leaves(marker, root=None):
+    """Adapters in use that carry translation/<Leaf>/<marker> ('standalone', 'absent')."""
+    root = root or TRANSLATION
+    return {d for d in adapter_leaves(root) if os.path.exists(os.path.join(root, d, marker))}
+
+
 def exported(exe):
     """Symbols the executable defines itself; its weak-def-coalesce imports of these bind to it."""
     r = subprocess.run(["dyld_info", "-arch", "arm64", "-exports", exe], capture_output=True, text=True)
@@ -141,6 +172,7 @@ def main():
             if x not in provider or len(name) < len(provider[x]):
                 provider[x] = name
     per_lib, plan_syms, seen = collections.OrderedDict(), {}, set()
+    adapters, standalone, absent = adapter_leaves(), translation_leaves("standalone"), translation_leaves("absent")
     for exe in a.exe:
         lazy = lazy_symbols(exe)
         own = exported(exe)
@@ -171,8 +203,10 @@ def main():
             # Umbrella frameworks on iOS re-export sub-libraries not modelled here; "elsewhere" is the safety net.
             cls = "present" if sym in have else "elsewhere" if sym in everything else "missing"
             per_lib[l][cls].append(sym + (" (weak)" if weak else ""))
-            if cls != "present":
-                plan_syms.setdefault(l, []).append([sym, kind(sym), provider.get(sym)])
+            alone = adapter_dir(lib_key(l)) in standalone
+            if cls != "present" or alone:
+                # A standalone adapter defines even what the real library has, with no provider.
+                plan_syms.setdefault(l, []).append([sym, kind(sym), None if alone else provider.get(sym)])
 
     mapping, rows, tot, plan = {}, [], collections.Counter(), {}
     shim_name = lambda leaf: "@rpath/ak" + re.sub(r"\.dylib$", "", leaf) + ".dylib"
@@ -183,20 +217,25 @@ def main():
         exists = leaf in ios_name
         # Export presence does not guarantee desktop-compatible semantics.
         # Hand-written adapters must also be built for otherwise native APIs.
-        adapter_dir=os.path.join(os.path.dirname(__file__), '..', 'translation', re.sub(r'\.dylib$', '', leaf))
-        has_adapter=os.path.isdir(adapter_dir) and any(name.endswith(('.c','.m')) for name in os.listdir(adapter_dir))
+        d = adapter_dir(leaf)
+        has_adapter = d in adapters and any(name.endswith(('.c','.m')) for name in os.listdir(os.path.join(TRANSLATION, d)))
         if l == WEAK_COALESCE:
             kind = "coalesced"
         elif l.startswith("@"):
             kind = "bundled"
+        elif d in absent:
+            kind = "absent"; mapping[l] = ""   # the runtime does not open it
+            strong = [s for s in c["present"] + c["elsewhere"] + c["missing"] if not s.endswith(" (weak)")]
+            if strong:
+                print(f"warning: {leaf} is presented as absent, but {len(strong)} imports from it are not weak")
         elif exists and not c["missing"] and not c["elsewhere"] and not has_adapter:
             kind = "system"; mapping[l] = ios_name[leaf]
-        elif exists:
+        elif exists and d not in standalone:
             kind = "reexport-shim"; mapping[l] = shim_name(leaf)
         else:
             kind = "full-shim"; mapping[l] = shim_name(leaf)
         if kind.endswith("shim"):
-            real = ios_name.get(leaf)
+            real = ios_name.get(leaf) if kind == "reexport-shim" else None
             plan[leaf] = {"install_name": mapping[l], "real": real, "real_tbd": TBD_PATH.get(real),
                           "symbols": plan_syms.get(l, []),
                           "provider_tbds": sorted({TBD_PATH[p] for _, _, p in plan_syms.get(l, []) if p})}

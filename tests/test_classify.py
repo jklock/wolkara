@@ -1,5 +1,8 @@
 """classify.py: what a build for one application plans, on our own fixtures."""
+import contextlib
+import io
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -21,15 +24,30 @@ def compile_macos(source, output, *flags, cxx=False):
                     str(source), *flags, '-o', str(output)], check=True)
 
 
-def classify_run(directory, *images):
-    out, mp, raw = (pathlib.Path(directory) / n for n in ('SURFACE.md', 'map.json', 'surface.json'))
-    argv = sys.argv
-    sys.argv = ['classify.py', *map(str, images), '--out', str(out), '--map', str(mp), '--raw', str(raw)]
+@contextlib.contextmanager
+def experimental(value):
+    saved = os.environ.pop('TOLKARA_EXPERIMENTAL_ADAPTERS', None)
+    if value is not None:
+        os.environ['TOLKARA_EXPERIMENTAL_ADAPTERS'] = value
     try:
-        classify.main()
+        yield
     finally:
-        sys.argv = argv
-    return json.loads(mp.read_text()), json.loads(raw.read_text()), out.read_text()
+        os.environ.pop('TOLKARA_EXPERIMENTAL_ADAPTERS', None)
+        if saved is not None:
+            os.environ['TOLKARA_EXPERIMENTAL_ADAPTERS'] = saved
+
+
+def classify_run(directory, *images, translation=None, enabled=None):
+    out, mp, raw = (pathlib.Path(directory) / n for n in ('SURFACE.md', 'map.json', 'surface.json'))
+    argv, root, printed = sys.argv, classify.TRANSLATION, io.StringIO()
+    sys.argv = ['classify.py', *map(str, images), '--out', str(out), '--map', str(mp), '--raw', str(raw)]
+    classify.TRANSLATION = str(translation or root)
+    try:
+        with experimental(enabled), contextlib.redirect_stdout(printed):
+            classify.main()
+    finally:
+        sys.argv, classify.TRANSLATION = argv, root
+    return json.loads(mp.read_text()), json.loads(raw.read_text()), out.read_text(), printed.getvalue()
 
 
 class CoalesceTests(unittest.TestCase):
@@ -55,7 +73,7 @@ class CoalesceTests(unittest.TestCase):
         exe = d / 'coalesce'
         compile_macos(source, exe, '-O0', cxx=True)
         cls.imports = classify.imports(str(exe))
-        cls.mapping, cls.raw, cls.surface = classify_run(d, exe)
+        cls.mapping, cls.raw, cls.surface, _ = classify_run(d, exe)
 
     @classmethod
     def tearDownClass(cls):
@@ -101,7 +119,7 @@ class BundledLibraryTests(unittest.TestCase):
         compile_macos(d / 'main.c', exe, '-L', str(cls.library.parent), '-lextra',
                       '-Wl,-rpath,@executable_path/../Frameworks')
         cls.executable_only = classify_run(d, exe)[0]
-        cls.mapping, cls.raw, cls.surface = classify_run(d, exe, cls.library)
+        cls.mapping, cls.raw, cls.surface, _ = classify_run(d, exe, cls.library)
 
     @classmethod
     def tearDownClass(cls):
@@ -122,6 +140,87 @@ class BundledLibraryTests(unittest.TestCase):
         self.assertIn('| `@rpath/libextra.dylib` | bundled |', self.surface)
         self.assertNotIn('@rpath/libextra.dylib', self.mapping)
         self.assertEqual(self.surface.count('`@rpath/libextra.dylib`'), 1)
+
+
+GC = '/System/Library/Frameworks/GameController.framework/Versions/A/GameController'
+CH = '/System/Library/Frameworks/CoreHaptics.framework/Versions/A/CoreHaptics'
+FX = '/System/Library/Frameworks/MetalFX.framework/Versions/A/MetalFX'
+LIBZ = '/usr/lib/libz.1.dylib'
+
+
+class MarkerTests(unittest.TestCase):
+    """translation/<Leaf>/standalone, absent and experimental, in a translation tree of our own."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.directory = tempfile.TemporaryDirectory()
+        d = pathlib.Path(cls.directory.name)
+        tree = d / 'translation'
+        for leaf, files in {'GameController': ('standalone', 'experimental', 'Adapter.m'),
+                            'MetalFX': ('absent', 'experimental'),
+                            'libz.1': ('absent',)}.items():
+            (tree / leaf).mkdir(parents=True)
+            for name in files:
+                (tree / leaf / name).write_text('// fixture\n')
+        cls.tree = tree
+        source = d / 'guest.m'
+        source.write_text(
+            '#import <GameController/GameController.h>\n#import <CoreHaptics/CoreHaptics.h>\n#include <zlib.h>\n'
+            'int main(void) {\n'
+            '    return (int)(long)GCControllerDidConnectNotification + (int)(long)CHHapticEventParameterIDAttackTime\n'
+            '        + (int)(long)zlibVersion();\n'
+            '}\n')
+        exe = d / 'guest'
+        # MetalFX is linked with no imported symbol, as a load command only.
+        compile_macos(source, exe, '-framework', 'GameController', '-framework', 'CoreHaptics',
+                      '-Wl,-needed_framework,MetalFX', '-lz')
+        cls.default = classify_run(d, exe, translation=tree)
+        cls.enabled = classify_run(d, exe, translation=tree, enabled='GameController:MetalFX')
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.directory.cleanup()
+
+    def test_experimental_directories_need_opting_in(self):
+        with experimental(None):
+            self.assertEqual(classify.adapter_leaves(str(self.tree)), {'libz.1'})
+            self.assertEqual(classify.translation_leaves('absent', str(self.tree)), {'libz.1'})
+        with experimental('GameController, MetalFX'):
+            self.assertEqual(classify.adapter_leaves(str(self.tree)), {'libz.1', 'GameController', 'MetalFX'})
+            self.assertEqual(classify.translation_leaves('standalone', str(self.tree)), {'GameController'})
+
+    def test_default_build_ignores_experimental_adapters(self):
+        mapping, raw, _, _ = self.default
+        self.assertTrue(mapping[GC].startswith('/System/Library/Frameworks/GameController.framework/'))
+        self.assertTrue(mapping[FX].startswith('/System/Library/Frameworks/MetalFX.framework/'))
+        self.assertNotIn('GameController', raw['translation'])
+
+    def test_absent_library_is_an_empty_target(self):
+        for mapping, raw, surface, printed in (self.default, self.enabled):
+            # A .dylib's marker directory drops the suffix, like its adapter.
+            self.assertEqual(mapping[LIBZ], '')
+            self.assertIn('| `/usr/lib/libz.1.dylib` | absent |', surface)
+            self.assertNotIn('libz.1.dylib', raw['translation'])
+            self.assertIn('libz.1.dylib is presented as absent, but 1 imports from it are not weak', printed)
+        mapping, raw, _, printed = self.enabled
+        self.assertEqual(mapping[FX], '')
+        self.assertNotIn('MetalFX', raw['translation'])
+        self.assertNotIn('MetalFX', printed)   # linked, nothing imported
+
+    def test_standalone_adapter_replaces_the_real_library(self):
+        mapping, raw, _, _ = self.enabled
+        plan = raw['translation']
+        # No real library to re-export, and every import planned without a
+        # provider, so the adapter or a generated stub defines each one.
+        self.assertEqual(mapping[GC], '@rpath/akGameController.dylib')
+        self.assertIsNone(plan['GameController']['real'])
+        self.assertIsNone(plan['GameController']['real_tbd'])
+        planned = {symbol: provider for symbol, _, provider in plan['GameController']['symbols']}
+        self.assertIn('_GCControllerDidConnectNotification', planned)
+        self.assertIsNone(planned['_GCControllerDidConnectNotification'])
+        # A library with no marker still resolves to the real one.
+        self.assertNotIn('CoreHaptics', plan)
+        self.assertTrue(mapping[CH].startswith('/System/Library/Frameworks/CoreHaptics.framework/'))
 
 
 if __name__ == '__main__':
