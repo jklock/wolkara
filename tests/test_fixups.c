@@ -2,6 +2,7 @@
 #include <mach-o/fixup-chains.h>
 #include <stdint.h>
 #include <assert.h>
+#include <stdio.h>
 #include <string.h>
 static bool resolve(const char *name, int ordinal, bool weak, bool lazy, uint64_t *value, void *context) {
     (void)context; (void)weak; (void)lazy;
@@ -14,6 +15,17 @@ static bool record(const char *name, int ordinal, bool weak, bool lazy, uint64_t
     (void)name; (void)ordinal; (void)weak; (void)context;
     if (recorded < 4) recorded_lazy[recorded] = lazy;
     recorded++; *value = 0x12340000; return true;
+}
+// What the observer saw, in order: "" for a rebase, else the import name,
+// which lives only during the call.
+static unsigned observed; static uint64_t observed_at[4], observed_value[4]; static char observed_name[4][16];
+static void observe(uint64_t address, uint64_t value, const char *symbol, void *context) {
+    (void)context;
+    if (observed < 4) {
+        observed_at[observed] = address; observed_value[observed] = value;
+        snprintf(observed_name[observed], sizeof observed_name[observed], "%s", symbol ? symbol : "");
+    }
+    observed++;
 }
 static void setup(GuestImage *i, const uint8_t *r, size_t rn, const uint8_t *b, size_t bn) {
     *i = (GuestImage){0}; i->segment_count = 1; i->dylib_count = 1;
@@ -70,6 +82,12 @@ int main(void) {
     assert(gm_read(&i.memory,0x100000000,&value,8)==GM_OK && value==0x100200800);
     assert(gm_read(&i.memory,0x100000008,&value,8)==GM_OK && value==0x1233fffc);
     gi_destroy(&i);
+    // The same fixups observed: every written pointer, rebases unnamed.
+    setup(&i,r,sizeof r,b,sizeof b); observed=0;
+    assert(gf_apply_observed(&i,0x200000,resolve,NULL,observe,NULL,&stats,error,sizeof error) && observed==2);
+    assert(observed_at[0]==0x100000000 && observed_value[0]==0x100200800 && !observed_name[0][0]);
+    assert(observed_at[1]==0x100000008 && observed_value[1]==0x1233fffc && !strcmp(observed_name[1],"_sample"));
+    gi_destroy(&i);
     // A lazy and a plain bind: lazy is bound first.
     const uint8_t lazy_stream[]={0x70,16,0x11,0x40,'_','s','a','m','p','l','e',0,0x90,0};
     setup(&i,r,sizeof r,b,sizeof b);
@@ -116,6 +134,12 @@ int main(void) {
         assert(stats.rebases == 1 && stats.binds == 1);
         assert(gm_read(&i.memory, 0x100000000, &value, 8) == GM_OK && value == 0x100200800);
         assert(gm_read(&i.memory, 0x100000008, &value, 8) == GM_OK && value == 0x12340008);
+        gi_destroy(&i);
+        // Observed, a chain reports each pointer as it is written.
+        chained_setup(&i, DYLD_CHAINED_PTR_64, rebase, bind); observed = 0;
+        assert(gf_apply_observed(&i, 0x200000, resolve, NULL, observe, NULL, &stats, error, sizeof error) && observed == 2);
+        assert(observed_at[0] == 0x100000000 && observed_value[0] == 0x100200800 && !observed_name[0][0]);
+        assert(observed_at[1] == 0x100000008 && observed_value[1] == 0x12340008 && !strcmp(observed_name[1], "_sample"));
         gi_destroy(&i);
 
         // The same chain written as offsets from the image base.
@@ -171,6 +195,6 @@ int main(void) {
         assert(!gf_apply(&i, 0, resolve, NULL, &stats, error, sizeof error) && strstr(error, "outside segment"));
         gi_destroy(&i);
     }
-    puts("PASS: Mach-O pointer relocation, import binding, signed addends, malformed fixup bounds");
+    puts("PASS: Mach-O pointer relocation, import binding, signed addends, observed fixups, malformed fixup bounds");
     puts("PASS: lazy binds first, chained fixups, chained initializers read after fixups");
 }

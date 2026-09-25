@@ -18,12 +18,18 @@ static bool inspect_import(const char *s, int o, bool w, bool l, uint64_t *v, vo
     }
     imports.missing++; *v=0; return true;
 }
+static void dump_fixup(uint64_t address, uint64_t value, const char *symbol, void *c) {
+    (void)c;
+    if (symbol) printf("[fixup] %#llx bind %s %#llx\n", (unsigned long long)address, symbol, (unsigned long long)value);
+    else printf("[fixup] %#llx rebase %#llx\n", (unsigned long long)address, (unsigned long long)value);
+}
 int main(int argc, char **argv) {
-    if (argc < 2) { fprintf(stderr, "usage: guest_probe <original Mach-O> [--library] [--carried-libraries] [--validate-fixups] [--export symbol ...]\n"); return 2; }
-    bool library = false, fixups = false, carried = false;
+    if (argc < 2) { fprintf(stderr, "usage: guest_probe <original Mach-O> [--library] [--carried-libraries] [--validate-fixups] [--dump-fixups] [--export symbol ...]\n"); return 2; }
+    bool library = false, fixups = false, carried = false, dump = false;
     for (int i = 2; i < argc; i++) {
         if (!strcmp(argv[i], "--library")) library = true;
         else if (!strcmp(argv[i], "--validate-fixups")) fixups = true;
+        else if (!strcmp(argv[i], "--dump-fixups")) fixups = dump = true;
         else if (!strcmp(argv[i], "--carried-libraries")) carried = true;
         else if (!strcmp(argv[i], "--export") && i + 1 < argc) i++;
         else { fprintf(stderr, "invalid probe option\n"); return 2; }
@@ -57,7 +63,10 @@ int main(int argc, char **argv) {
     }
     // The executable answers for itself even with no carried libraries read.
     set.executable_image = &image;
-    set.executable_slide = 0x200000;
+    // A dump lists the executable's fixups at its preferred addresses, as
+    // dyld_info prints them.
+    uint64_t slide = dump ? 0 : 0x200000;
+    set.executable_slide = slide;
     if (fixups) {
         GFStats stats;
         // Carried libraries bind first: a miss here is real.
@@ -70,7 +79,8 @@ int main(int argc, char **argv) {
             printf("[fixups] %s rebases=%zu binds=%zu\n", set.libraries[i].install_name, stats.rebases, stats.binds);
         }
         Binder binder = {&set, &image, argv[1]};
-        if (!gf_apply(&image, 0x200000, inspect_import, &binder, &stats, error, sizeof error)) {
+        if (!gf_apply_observed(&image, slide, inspect_import, &binder, dump ? dump_fixup : NULL, NULL,
+                               &stats, error, sizeof error)) {
             fprintf(stderr, "%s\n", error); gl_destroy(&set); gi_destroy(&image); return 1;
         }
         printf("[fixups] validated rebases=%zu binds=%zu (diagnostic addresses only; no execution)\n", stats.rebases, stats.binds);
