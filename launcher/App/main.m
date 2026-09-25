@@ -73,6 +73,8 @@ static void PrepareLocalSigningFolder(void) {
     [NSFileManager.defaultManager createDirectoryAtPath:TKLocalSigningContainerPath(NSHomeDirectory()).stringByDeletingLastPathComponent
         withIntermediateDirectories:YES attributes:nil error:NULL];
 }
+// JIT enabled from outside, or an arena its enabler left.
+static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_arena_reserved(); }
 // Whether an outside enabler (SideStore, StikDebug and similar) has prepared
 // this process already, with or without the bundled Developer-service tunnel.
 static NSString *ExecutableMemoryState(void) {
@@ -265,9 +267,12 @@ static NSString *ExecutableMemoryState(void) {
 #pragma mark Execution mode
 
 // First launch with no chosen, saved or preselected mode: ask before any app
-// starts; the choice cannot be skipped.
+// starts; the choice cannot be skipped. TolkaraDiagnostics does not ask: JIT
+// from outside starts its apps.
 - (void)askExecutionModeIfNeeded {
+#if TOLKARA_INTEGRATED_AUTH
     if (!self.executionMode) [self chooseExecutionMode:NO forApp:nil];
+#endif
 }
 // The mode chooser over whatever is showing. When app is given, its start
 // continues once the mode is chosen.
@@ -313,6 +318,10 @@ static NSString *ExecutableMemoryState(void) {
         [self libraryViewController:controller checkApp:app];
         return;
     }
+#if !TOLKARA_INTEGRATED_AUTH
+    // No tunnel: JIT from outside, else Local signing where chosen.
+    if (PreparedFromOutside() || self.executionMode!=TKExecutionModeLocalSigning) { [self launchLocalApp:app]; return; }
+#endif
     // Starting an app uses the chosen execution mode. Without one the user
     // must choose first (not skippable), then the start continues.
     if (!self.executionMode) { [self chooseExecutionMode:NO forApp:app]; return; }
@@ -456,6 +465,14 @@ static NSString *ExecutableMemoryState(void) {
         else self.status.text=message;
         return;
     }
+#if !TOLKARA_INTEGRATED_AUTH
+    // No tunnel to fall back on: say so, session unused.
+    if(!PreparedFromOutside()) {
+        if(self.navigation) [self alert:@"JIT Not Enabled" message:ExecutableMemoryState()];
+        else self.status.text=ExecutableMemoryState();
+        return;
+    }
+#endif
     [self endSession:[NSString stringWithFormat:@"%@ was started in this session. Close Tolkara in the app switcher and open it again to start an app.",app.name]];
     self.launchingApp=app;
     [self.library recordLaunchOfApp:app error:NULL];
@@ -467,7 +484,7 @@ static NSString *ExecutableMemoryState(void) {
         setenv("TOLKARA_LOCAL_SHADERS_ONLY","1",1);
     UIApplication.sharedApplication.idleTimerDisabled=YES;
     // Already granted from outside: nothing left to prepare.
-    if(hd_may_run_unsigned_code() || ng_arena_reserved()) {
+    if(PreparedFromOutside()) {
         self.status.text=[NSString stringWithFormat:@"Starting %@…\nKeep the app open. Startup currently takes a few minutes.",app.name];
         [self performSelector:@selector(startLocalGame) withObject:nil afterDelay:0];
         return;
@@ -485,10 +502,6 @@ static NSString *ExecutableMemoryState(void) {
         // Guest main must enter from a timer callout, never a dispatch block.
         [self performSelector:@selector(startLocalGame) withObject:nil afterDelay:0];
     }];
-#else
-    // No bundled tunnel in this build: only an outside enabler can prepare memory.
-    self.status.text=[NSString stringWithFormat:@"%@\nClose Tolkara, enable JIT for it in the tool you sideloaded it with, and reopen it.",ExecutableMemoryState()];
-    [self showStartStopped];
 #endif
 }
 - (void)startLocalGame { [self runNativeGame:YES app:self.launchingApp container:nil]; }
