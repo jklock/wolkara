@@ -131,7 +131,8 @@ class BuilderTests(unittest.TestCase):
         out, text = self.build(exe, '--capture', str(self.write('capture-ok', bytes(image))), '--sign', 'none',
                                '--platform', 'ios')
         self.assertEqual(out.read_bytes()[PAGE:3 * PAGE], bytes(image))
-        self.assertIn('1 rewritten at launch (from capture capture-ok)', text)
+        # By name, or by path where TMPDIR lies inside the repository.
+        self.assertRegex(text, r'1 rewritten at launch \(from capture (\S+/)?capture-ok\)')
         _, text = self.build(exe, '--capture', str(self.write('capture-short', bytes(image[:-1]))), '--sign', 'none', expect=1)
         self.assertIn('capture is', text)
         _, text = self.build(exe, '--capture', str(self.write('capture-long', bytes(image) + b'\0')), '--sign', 'none', expect=1)
