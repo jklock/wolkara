@@ -285,8 +285,9 @@ for apps started from the library:
   reserve pools for far more (Cyberpunk 2077: about 118 GB). Anonymous
   reservations of 64 MB and more then count against this budget; past it they
   are mapped smaller than asked and end in a guard page. The application still
-  believes it got everything, so a pool that fills up faults instead of
-  failing cleanly. Each downsizing is logged once.
+  believes it got everything: making the missing part usable with `mprotect`
+  fails with `ENOMEM`, but a pool that writes past what it got faults instead
+  of failing cleanly. Each downsizing is logged once.
 - `--vm-probe` (experimental): instead of starting an app, measures how much
   virtual memory iPadOS lets Tolkara reserve (single, cumulative, `PROT_NONE`,
   at fixed addresses, file-backed) and writes `Documents/vm-probe.txt`. It only
