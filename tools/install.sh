@@ -5,7 +5,6 @@
 # TOLKARA_MODE=local-signing also builds a Local signing page container for
 # each executable in GUEST_EXE, signed with your developer identity, and copies
 # it into the app's Documents/LocalSigning as <SHA-256 of the executable>.dylib.
-# For an unsigned .ipa to sideload instead: tools/package_ipa.sh.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export DEVELOPER_DIR=${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}
@@ -76,13 +75,7 @@ local-signing)
 developer-service)
     echo "Installed with Developer service. Next: tools/enroll.sh (once), then copy your apps' files (see profiles/).";;
 *)
-    if [ "$SHIMS" = GENERIC ]; then
-        echo "Installed. The app asks for its execution mode on first launch: Developer service needs tools/enroll.sh (once);"
-        echo "Local signing needs page containers (TOLKARA_MODE=local-signing builds and copies them)."
-        echo "Next: copy the application's folder into the app's Documents and choose it in the app."
-    else
-        echo "Installed. The app asks for its execution mode on first launch: Developer service needs tools/enroll.sh (once);"
-        echo "Local signing needs page containers (TOLKARA_MODE=local-signing builds and copies them). Then copy your apps' files (see profiles/)."
-    fi;;
+    echo "Installed. The app asks for its execution mode on first launch: Developer service needs tools/enroll.sh (once);"
+    echo "Local signing needs page containers (TOLKARA_MODE=local-signing builds and copies them). Then copy your apps' files (see profiles/).";;
 esac
 [ -z "${TOLKARA_MODE:-}" ] || echo "A mode already chosen in the app is kept; change it there with Execution mode…"

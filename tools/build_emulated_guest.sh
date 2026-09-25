@@ -45,11 +45,10 @@ fi
 
 # Build/sign only our compatibility libraries. The original is never patched.
 # GENERIC: one adapter per translation/<Framework>/, no executable classified.
-case "${NATIVE_GUEST_SHIMS:-NO}" in
-YES|GENERIC)
+if [ "${NATIVE_GUEST_SHIMS:-NO}" = YES ] || [ "${NATIVE_GUEST_SHIMS:-NO}" = GENERIC ]; then
     if [ "${PLATFORM_NAME:-iphoneos}" = iphonesimulator ]; then P=iossim; else P=ios; fi
     W="$ROOT/build/native-$P"; mkdir -p "$W" "$OUT/Frameworks"
-    if [ "${NATIVE_GUEST_SHIMS}" = GENERIC ]; then
+    if [ "$NATIVE_GUEST_SHIMS" = GENERIC ]; then
         python3 "$ROOT/tools/build_shims.py" "$P" generic "$OUT/Frameworks"
     else
         python3 "$ROOT/tools/classify.py" "${EXES[@]}" --out "$W/SURFACE.md" --map "$W/map.json" --raw "$W/surface.json"
@@ -61,19 +60,15 @@ YES|GENERIC)
       -fobjc-arc -Wno-deprecated-declarations -framework Foundation -framework Security \
       "$ROOT/tools/export_system_anchors.m" -o "$ROOT/build/export_system_anchors"
     "$ROOT/build/export_system_anchors" "$OUT/CompatibilityRootCertificates.plist"
-    # Nibs belong to a classified application's own resources.
-    if [ "${NATIVE_GUEST_SHIMS}" = YES ]; then
-        for exe in "${EXES[@]}"; do
-            RESOURCES="$(dirname "$(dirname "$exe")")/Resources"
-            [ -d "$RESOURCES" ] || continue
-            mkdir -p "$MODULE/Nibs"
-            for nib in "$RESOURCES"/*.nib; do
-                # Shared nib directory: the first executable's version of a name wins.
-                [ -f "$nib" ] && [ ! -e "$MODULE/Nibs/$(basename "$nib").json" ] || continue
-                python3 "$ROOT/tools/inspect_nib.py" "$nib" --out "$MODULE/Nibs/$(basename "$nib").json"
-            done
+    for exe in "${EXES[@]}"; do
+        RESOURCES="$(dirname "$(dirname "$exe")")/Resources"
+        [ -d "$RESOURCES" ] || continue
+        mkdir -p "$MODULE/Nibs"
+        for nib in "$RESOURCES"/*.nib; do
+            # Shared nib directory: the first executable's version of a name wins.
+            [ -f "$nib" ] && [ ! -e "$MODULE/Nibs/$(basename "$nib").json" ] || continue
+            python3 "$ROOT/tools/inspect_nib.py" "$nib" --out "$MODULE/Nibs/$(basename "$nib").json"
         done
-    fi
+    done
     for f in "$OUT/Frameworks"/*.dylib; do codesign -f -s "${EXPANDED_CODE_SIGN_IDENTITY:--}" "$f" 2>/dev/null; done
-    ;;
-esac
+fi

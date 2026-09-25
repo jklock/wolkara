@@ -112,6 +112,9 @@ def sdk_library(leaf):
 
 
 build("AKSupport", "@rpath/libAKSupport.dylib", [])
+for leaf, p in plan["translation"].items():
+    build(leaf, p["install_name"], p["symbols"], p["real_tbd"], p["provider_tbds"])
+# Generic: every hand-written framework, with no stubs for any executable.
 if generic:
     written = os.path.join(ROOT, "translation")
     for leaf in sorted(os.listdir(written)):
@@ -121,6 +124,3 @@ if generic:
         if not any(f.endswith((".c", ".m")) for f in os.listdir(directory)):
             continue
         build(leaf, f"@rpath/ak{leaf}.dylib", [], sdk_library(leaf))
-else:
-    for leaf, p in plan["translation"].items():
-        build(leaf, p["install_name"], p["symbols"], p["real_tbd"], p["provider_tbds"])

@@ -2,7 +2,8 @@
 #include "GuestMemory.h"
 #include <stdio.h>
 
-enum { GI_MAX_SEGMENTS = 64, GI_MAX_DYLIBS = 128, GI_MAX_RPATHS = 32 };
+enum { GI_MAX_SEGMENTS = 64, GI_MAX_DYLIBS = 128 };
+enum { GI_MAX_RPATHS = 32 };
 typedef struct {
     char name[17];
     uint64_t address, size, file_offset, file_size;
@@ -39,8 +40,7 @@ bool gi_load(const char *path, GuestImage *image, char *error, size_t error_size
 // Explicit library entry point: accepts MH_DYLIB only, including a zero preferred
 // base and no LC_MAIN. This is a data-only load, not native dlopen/execution.
 bool gi_load_library(const char *path, GuestImage *image, char *error, size_t error_size);
-typedef enum { GI_EXPORT_INVALID = -1, GI_EXPORT_MISSING = 0, GI_EXPORT_FOUND = 1,
-               GI_EXPORT_REEXPORT = 2 } GIExportResult;
+typedef enum { GI_EXPORT_INVALID = -1, GI_EXPORT_MISSING = 0, GI_EXPORT_FOUND = 1, GI_EXPORT_REEXPORT = 2 } GIExportResult;
 // What an export trie answers: an address, or another library.
 typedef struct { uint64_t address; bool absolute; int ordinal; const char *name; } GIExport;
 // Resolve an ordinary/absolute export at its preferred address. Apply the runtime

@@ -642,7 +642,8 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
     if (atomic_exchange(&initialization_attempted,true)) {
         fprintf(log,"[native] startup was already attempted; restart the app\n"); return false;
     }
-    guest.log=log; guest.path=strdup(path); gs_log(log);
+    guest.log=log; guest.path=strdup(path);
+    gs_log(log);
     guest_arguments=@[@(path)];
     Method arguments_method=class_getInstanceMethod(NSProcessInfo.class,@selector(arguments));
     original_arguments=(void *)method_setImplementation(arguments_method,(IMP)guest_process_arguments);
@@ -671,11 +672,11 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
         GISegment *s=&guest.image.segments[i]; if(s->prot && s->address+s->size>end) end=s->address+s->size;
     }
     // One region for everything: a debugger prepares it once.
-    uint64_t offset[GL_MAX_LIBRARIES], low[GL_MAX_LIBRARIES];
+    uint64_t library_offset[GL_MAX_LIBRARIES], library_low[GL_MAX_LIBRARIES];
     size_t total=(size_t)(end-guest.base);
     for (size_t i=0;i<carried.count;i++) {
-        offset[i]=total;
-        total+=(size_t)gi_extent(&carried.libraries[i].image,&low[i]);
+        library_offset[i]=total;
+        total+=(size_t)gi_extent(&carried.libraries[i].image,&library_low[i]);
     }
     bool arena_ready;
     bool signed_backend=atomic_load(&use_signed_image);
@@ -723,7 +724,7 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
     if (external && !da_entry_allowed(&guest.arena,guest.log)) { LOG("[native] guest entry blocked\n"); goto done; }
     guest.slide=(uintptr_t)guest.arena.executable-guest.base;
     for (size_t i=0;i<carried.count;i++)
-        carried.libraries[i].slide=(uintptr_t)guest.arena.executable+offset[i]-low[i];
+        carried.libraries[i].slide=(uintptr_t)guest.arena.executable+library_offset[i]-library_low[i];
     LOG("[native] arena ready base=%p slide=%#llx\n",guest.arena.executable,(unsigned long long)guest.slide);
     {
         NSData *data=[NSData dataWithContentsOfFile:@(library_map)];
@@ -733,11 +734,9 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
             LOG("[native] no library map; libraries are resolved by name\n"); mapping=nil;
         }
         NSString *support=[@(frameworks) stringByAppendingPathComponent:@"libAKSupport.dylib"];
-        if ([NSFileManager.defaultManager fileExistsAtPath:support] &&
-            !dlopen(support.fileSystemRepresentation,RTLD_NOW|RTLD_GLOBAL)) { LOG("[native] support load failed: %s\n",dlerror()); goto done; }
+        if (!dlopen(support.fileSystemRepresentation,RTLD_NOW|RTLD_GLOBAL)) { LOG("[native] support load failed: %s\n",dlerror()); goto done; }
         for(size_t i=0;i<guest.image.dylib_count;i++) {
-            NSString *original=@(guest.image.dylibs[i]);
-            NSString *target=mapping[original]?:library_path(original,frameworks);
+            NSString *original=@(guest.image.dylibs[i]); NSString *target=mapping[original]?:library_path(original,frameworks);
             if ([target hasPrefix:@"@rpath/"]) target=[@(frameworks) stringByAppendingPathComponent:target.lastPathComponent];
             guest.libraries[i]=dlopen(target.fileSystemRepresentation,RTLD_NOW|RTLD_GLOBAL);
             if (!guest.libraries[i]) LOG("[native] library %s unavailable: %s\n",target.UTF8String,dlerror());
@@ -760,7 +759,8 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
     }
     GuestBinder binder={.image=&guest.image,.path=guest.path,.host=guest.libraries};
     if (!gf_apply(&guest.image,guest.slide,resolve,&binder,&stats,error,sizeof error)) { LOG("[native] fixups failed: %s\n",error); goto done; }
-    LOG("[native] resolved rebases=%zu binds=%zu stubs=%u of %u\n",stats.rebases,stats.binds,gs_used(),gs_capacity());
+    LOG("[native] resolved rebases=%zu binds=%zu\n",stats.rebases,stats.binds);
+    LOG("[native] stubs=%u of %u\n",gs_used(),gs_capacity());
     if (!setup_tls(&guest.image,guest.slide,"the application")) goto done;
     // Carried libraries get the treatment dyld gives them.
     for (size_t i=0;i<carried.count;i++)
@@ -769,19 +769,19 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
     for(size_t i=0;i<guest.image.memory.count;i++) {
         GMPage *page=&guest.image.memory.pages[i];
         if(!page->bytes) continue;
-        size_t page_offset=(size_t)(page->address-guest.base);
+        size_t offset=(size_t)(page->address-guest.base);
         if (signed_image.active) {
             // __TEXT pages after the rewritten range are already backed by the
             // signed container: never overwrite validated pages. Only the
             // rewritten range (original packed bytes) is staged onto anonymous
             // pages, with the bounds check nc_write applies in the other backend.
-            if (page_offset>=signed_image.shadow_size && page_offset<signed_image.image.size) { signed_pages_skipped++; continue; }
-            if (page_offset>guest.arena.size || GM_PAGE_SIZE>guest.arena.size-page_offset) {
+            if (offset>=signed_image.shadow_size && offset<signed_image.image.size) { signed_pages_skipped++; continue; }
+            if (offset>guest.arena.size || GM_PAGE_SIZE>guest.arena.size-offset) {
                 LOG("[signed-image] staged page %#llx lies outside the arena\n",(unsigned long long)page->address); goto done;
             }
-            memcpy((char *)guest.arena.executable+page_offset,page->bytes,GM_PAGE_SIZE);
+            memcpy((char *)guest.arena.executable+offset,page->bytes,GM_PAGE_SIZE);
         }
-        else if(!nc_write(&guest.arena,page_offset,page->bytes,GM_PAGE_SIZE)) goto done;
+        else if(!nc_write(&guest.arena,offset,page->bytes,GM_PAGE_SIZE)) goto done;
     }
     if (signed_image.active) LOG("[signed-image] %zu staged executable pages left to the signed container\n",signed_pages_skipped);
     for(size_t i=0;i<guest.image.segment_count;i++) {
@@ -794,10 +794,10 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
     // Carried libraries are never part of a signed container: plain pages.
     for (size_t i=0;i<carried.count;i++) {
         GuestLibrary *library=&carried.libraries[i];
-        uint64_t base=low[i];
+        uint64_t base=library_low[i];
         for (size_t j=0;j<library->image.memory.count;j++) {
             GMPage *page=&library->image.memory.pages[j];
-            if (page->bytes && !nc_write(&guest.arena,(size_t)(page->address-base+offset[i]),page->bytes,GM_PAGE_SIZE)) {
+            if (page->bytes && !nc_write(&guest.arena,(size_t)(page->address-base+library_offset[i]),page->bytes,GM_PAGE_SIZE)) {
                 LOG("[native] %s: cannot place page %#llx\n",library->install_name,(unsigned long long)page->address); goto done;
             }
         }
