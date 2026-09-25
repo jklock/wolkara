@@ -72,7 +72,9 @@ static void TKWaitForStoppedRoute(NETunnelProviderManager *manager,CFTimeInterva
                     @"operation":mode==3?@"prepareAuthorization":mode==2?@"verifyTunnel":mode==1?@"verifyPairing":@"probeService",@"deviceIdentifier":device} options:0 error:NULL];
                 NSError *error=nil;
                 BOOL sent=[(NETunnelProviderSession *)self.manager.connection sendProviderMessage:request returnError:&error responseHandler:^(NSData *data) {
-                    id state=data.length<=4096?[NSJSONSerialization JSONObjectWithData:data options:0 error:NULL]:nil;
+                    // The provider replies nil when it declines or fails; nil.length is 0,
+                    // and JSON parsing of nil data raises inside this handler.
+                    id state=data && data.length<=4096?[NSJSONSerialization JSONObjectWithData:data options:0 error:NULL]:nil;
                     NSString *report=result;
                     NSString *helper=[state isKindOfClass:NSDictionary.class]?state[@"helperProbe"]:nil;
                     if([helper isKindOfClass:NSString.class] && helper.length<=1024)report=[report stringByAppendingFormat:@" Helper: %@",helper];
