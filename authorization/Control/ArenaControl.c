@@ -10,10 +10,13 @@ static void write_number(uint8_t *p, unsigned n, uint64_t value) {
 static bool nonzero(const uint8_t *bytes,size_t count) {
     uint8_t any=0; for(size_t i=0;i<count;i++)any|=bytes[i]; return any!=0;
 }
+// 512 MiB, as DebugArenaRequest: preparation reads, zeroes and re-reads every byte
+// over RSP at about 1.1 MB/s, so this fits the helper's 900 s session deadline
+// (1 GiB would not).
 static bool valid(const TKACRequest *r) {
     const uint64_t maximum=UINT64_C(0x0000ffffffffffff);
     return r && r->pid>1 && r->pid<=INT_MAX && r->size &&
-        r->size<=128*1024*1024 && r->size%16384==0 && r->address>=16384 &&
+        r->size<=512*1024*1024 && r->size%16384==0 && r->address>=16384 &&
         r->address%16384==0 && r->address<=maximum-r->size &&
         r->challenge_address>=4096 && r->challenge_address<=maximum-32 &&
         (r->challenge_address+32<=r->address || r->address+r->size<=r->challenge_address) &&

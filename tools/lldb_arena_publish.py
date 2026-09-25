@@ -10,7 +10,7 @@ def publish(debugger):
     address = frame.FindRegister('x0').GetValueAsUnsigned()
     size = frame.FindRegister('x1').GetValueAsUnsigned()
     completion = frame.FindRegister('x2').GetValueAsUnsigned()
-    if not size or size > 128 * 1024 * 1024 or size % 16384 or address % 16384:
+    if not size or size > 512 * 1024 * 1024 or size % 16384 or address % 16384:
         raise RuntimeError('invalid arena range')
     error = lldb.SBError()
     token = process.ReadMemory(completion, 8, error)
