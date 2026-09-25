@@ -287,6 +287,10 @@ for apps started from the library:
   are mapped smaller than asked and end in a guard page. The application still
   believes it got everything, so a pool that fills up faults instead of
   failing cleanly. Each downsizing is logged once.
+- `--vm-probe` (experimental): instead of starting an app, measures how much
+  virtual memory iPadOS lets Tolkara reserve (single, cumulative, `PROT_NONE`,
+  at fixed addresses, file-backed) and writes `Documents/vm-probe.txt`. It only
+  reserves and releases free address space of its own.
 
 ## Things that will bite you
 

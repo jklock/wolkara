@@ -26,6 +26,12 @@ NSString *TKSignedCacheProbeReport(void);
 // Main thread, from a run-loop timer callout: pumps the run loop while waiting.
 // Loads the Metal compatibility library, so restart before starting an app.
 NSString *TKShaderPauseProbeReport(void);
+// Background queue. Experimental development probe (--vm-probe): how much
+// virtual memory iPadOS lets this app reserve, singly and in total, anonymous,
+// PROT_NONE, at fixed addresses and file-backed. Reserves and releases only
+// its own address space; a fixed address already in use is reported, never
+// replaced. Writes Documents/vm-probe.txt.
+NSString *TKVMProbeReport(void);
 // Main thread. Executes our own two-instruction sample; a code-signing
 // rejection can terminate the process. Launch arguments tag the report.
 NSString *TKExecutionProbeReport(HPMode mode, NSArray<NSString *> *arguments);

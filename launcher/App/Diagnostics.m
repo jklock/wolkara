@@ -7,6 +7,12 @@
 #import "ShaderPauseProbe.h"
 #import "SignedCodeProbe.h"
 #import <UIKit/UIKit.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <mach/mach.h>
+#include <string.h>
+#include <sys/mman.h>
+#include <unistd.h>
 
 NSString *TKDocumentsPath(NSString *name) {
     return [[NSHomeDirectory() stringByAppendingPathComponent:@"Documents"] stringByAppendingPathComponent:name];
@@ -84,6 +90,80 @@ NSString *TKShaderPauseProbeReport(void) {
     }
     UIApplication.sharedApplication.idleTimerDisabled=previousIdleSetting;
     return result;
+}
+
+// Reservations of `size` until one fails (at most `limit`), then released: the total.
+static uint64_t TKReserveUntilRefused(uint64_t size, int prot, unsigned limit) {
+    void *held[64]; unsigned count=0;
+    while (count<limit && count<64) {
+        void *p=mmap(NULL,size,prot,MAP_PRIVATE|MAP_ANON,-1,0);
+        if (p==MAP_FAILED) break;
+        held[count++]=p;
+    }
+    uint64_t total=count*size;
+    while (count) munmap(held[--count],size);
+    return total;
+}
+// At fixed addresses without replacing anything: vm_allocate without
+// VM_FLAGS_OVERWRITE fails where something is already mapped.
+static void TKReserveFixed(NSMutableString *report, NSString *label, const uint64_t *bases, unsigned count, uint64_t size) {
+    const uint64_t GB=1024ULL*1024*1024;
+    vm_address_t held[8]={0}; uint64_t total=0;
+    for (unsigned i=0;i<count && i<8;i++) {
+        vm_address_t address=(vm_address_t)bases[i];
+        kern_return_t kr=vm_allocate(mach_task_self(),&address,(vm_size_t)size,VM_FLAGS_FIXED);
+        [report appendFormat:@"fixed %#llx %llu GB: %@\n",(unsigned long long)bases[i],size/GB,
+            kr==KERN_SUCCESS?@"ok":kr==KERN_NO_SPACE?@"in use or out of range":[NSString stringWithFormat:@"fails kr=%d",kr]];
+        if (kr==KERN_SUCCESS) { held[i]=address; total+=size; }
+    }
+    [report appendFormat:@"%@ held together: %llu GB\n",label,total/GB];
+    for (unsigned i=0;i<count && i<8;i++) if (held[i]) vm_deallocate(mach_task_self(),held[i],(vm_size_t)size);
+}
+NSString *TKVMProbeReport(void) {
+    const uint64_t GB=1024ULL*1024*1024;
+    NSMutableString *report=[NSMutableString stringWithString:@"Virtual-memory reservations (experimental probe; no app code)\n"];
+    const uint64_t singles[]={112,64,48,32,16,8};
+    for (unsigned i=0;i<sizeof singles/sizeof *singles;i++) {
+        void *p=mmap(NULL,singles[i]*GB,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANON,-1,0);
+        [report appendFormat:@"single %llu GB: %@\n",singles[i],p==MAP_FAILED?@"fails":@"ok"];
+        if (p!=MAP_FAILED) munmap(p,singles[i]*GB);
+    }
+    [report appendFormat:@"cumulative 4 GB reservations: %llu GB\n",TKReserveUntilRefused(4*GB,PROT_READ|PROT_WRITE,40)/GB];
+    [report appendFormat:@"cumulative 4 GB PROT_NONE reservations: %llu GB\n",TKReserveUntilRefused(4*GB,PROT_NONE,40)/GB];
+    void *p=mmap(NULL,112*GB,PROT_NONE,MAP_PRIVATE|MAP_ANON,-1,0);
+    [report appendFormat:@"single 112 GB PROT_NONE: %@\n",p==MAP_FAILED?@"fails":@"ok"];
+    if (p!=MAP_FAILED) munmap(p,112*GB);
+    // Commit on demand: reserve PROT_NONE, then make one page usable.
+    p=mmap(NULL,4*GB,PROT_NONE,MAP_PRIVATE|MAP_ANON,-1,0);
+    if (p==MAP_FAILED) [report appendString:@"reserve 4 GB PROT_NONE: fails\n"];
+    else {
+        size_t page=(size_t)getpagesize();
+        if (mprotect(p,page,PROT_READ|PROT_WRITE)) [report appendFormat:@"PROT_NONE then read-write page: errno=%d\n",errno];
+        else { memset(p,0x5a,page); [report appendString:@"PROT_NONE then read-write page and write: ok\n"]; }
+        munmap(p,4*GB);
+    }
+    const uint64_t high[]={0x8000000000ULL,0x10000000000ULL,0x20000000000ULL,0x40000000000ULL};
+    TKReserveFixed(report,@"fixed high reservations",high,4,16*GB);
+    const uint64_t middle[]={0x1000000000ULL,0x2000000000ULL,0x4000000000ULL,0x6000000000ULL};
+    TKReserveFixed(report,@"fixed middle reservations",middle,4,16*GB);
+    // File-backed private mappings of a sparse file, in the temporary folder.
+    NSString *sparse=[NSTemporaryDirectory() stringByAppendingPathComponent:@"vm-probe-sparse.bin"];
+    int fd=open(sparse.fileSystemRepresentation,O_RDWR|O_CREAT|O_TRUNC,0600);
+    if (fd<0) [report appendFormat:@"sparse file: errno=%d\n",errno];
+    else {
+        void *held[40]; unsigned count=0;
+        if (!ftruncate(fd,(off_t)(8*GB)))
+            while (count<40) {
+                void *q=mmap(NULL,4*GB,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_FILE,fd,(off_t)((count%2)*4*GB));
+                if (q==MAP_FAILED) break;
+                held[count++]=q;
+            }
+        [report appendFormat:@"cumulative 4 GB file-backed private: %llu GB\n",(unsigned long long)count*4];
+        while (count) munmap(held[--count],4*GB);
+        close(fd); unlink(sparse.fileSystemRepresentation);
+    }
+    [report writeToFile:TKDocumentsPath(@"vm-probe.txt") atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+    return report;
 }
 
 NSString *TKExecutionProbeReport(HPMode mode, NSArray<NSString *> *arguments) {
