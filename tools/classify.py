@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
 """Classify a macOS binary's import surface against the iPhoneOS SDK.
 
-usage: classify.py <macOS executable>... [--sdk PATH] [--out SURFACE.md] [--map build/guest-map.json]
-                   [--raw build/surface.json]
+usage: classify.py <macOS executable>... [--bundled] [--sdk PATH] [--out SURFACE.md]
+                   [--map build/guest-map.json] [--raw build/surface.json]
 
 With several executables the surface is their union, so one set of
 compatibility libraries serves every application in the launcher's library.
-Libraries an application bundles (Contents/Frameworks) may be listed like
-executables: they run as original code beside it, so their imports count too.
+Libraries an application bundles (Contents/Frameworks) run as original code
+beside it, so their imports count too: --bundled adds each executable's
+top-level Contents/Frameworks/*.dylib and *.framework binaries (they may also
+be listed like executables).
 
 Per symbol:   present | elsewhere (exported on iOS, but by a different library) | missing
 Per library:  system  (all symbols present -> only the path layout is rewritten)
-              coalesced (<weak-def-coalesce>: weak definitions the executable does not export itself;
+              coalesced (<weak-def-coalesce>: weak definitions no classified image exports;
                          the runtime resolves them from the application's images, then the system; no shim)
+              flat    (<flat-namespace>, <main-executable>: binds by name rather than to one library, from
+                       -undefined dynamic_lookup or a plugin's host; resolved like coalesced, no shim)
               reexport-shim (library exists on iOS but lacks some symbols -> shim adds them and re-exports the real one)
               full-shim (library does not exist on iOS, or a standalone adapter replaces it entirely)
               absent    (translation/<Leaf>/absent: presented as unavailable; the map target is "", never opened)
@@ -99,6 +103,8 @@ def lib_key(install_name):
 
 
 WEAK_COALESCE = "<weak-def-coalesce>"
+# dyld_info's names for binds that look a symbol up by name instead of naming one library.
+PSEUDO_LIBRARIES = {WEAK_COALESCE: "coalesced", "<flat-namespace>": "flat", "<main-executable>": "flat"}
 
 
 def adapter_dir(leaf):
@@ -126,8 +132,24 @@ def translation_leaves(marker, root=None):
     return {d for d in adapter_leaves(root) if os.path.exists(os.path.join(root, d, marker))}
 
 
+def bundled_libraries(exe):
+    """What the executable's application carries at the top of Contents/Frameworks:
+    each *.dylib and each *.framework's binary."""
+    frameworks = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(exe))), "Frameworks")
+    found = []
+    for name in sorted(os.listdir(frameworks)) if os.path.isdir(frameworks) else []:
+        path = os.path.join(frameworks, name)
+        if name.endswith(".framework"):
+            path = os.path.join(path, name[:-len(".framework")])
+        elif not name.endswith(".dylib"):
+            continue
+        if os.path.isfile(path):
+            found.append(path)
+    return found
+
+
 def exported(exe):
-    """Symbols the executable defines itself; its weak-def-coalesce imports of these bind to it."""
+    """Symbols an image defines itself; weak-def-coalesce and flat imports of these bind to it."""
     r = subprocess.run(["dyld_info", "-arch", "arm64", "-exports", exe], capture_output=True, text=True)
     return {f[1] for f in map(str.split, r.stdout.splitlines()) if len(f) >= 2 and f[0].startswith("0x")}
 
@@ -155,7 +177,11 @@ def main():
     ap.add_argument("exe", nargs="+"); ap.add_argument("--sdk", default=DEFAULT_SDK)
     ap.add_argument("--out", default="SURFACE.md"); ap.add_argument("--map", default="build/guest-map.json")
     ap.add_argument("--raw", default="build/surface.json")
+    ap.add_argument("--bundled", action="store_true", help="also classify each executable's Contents/Frameworks libraries")
     a = ap.parse_args()
+    images = list(a.exe)
+    for exe in a.exe if a.bundled else ():
+        images += [l for l in bundled_libraries(exe) if l not in images]
 
     sdk = load_sdk(a.sdk)
     by_leaf = collections.defaultdict(set)
@@ -173,9 +199,11 @@ def main():
                 provider[x] = name
     per_lib, plan_syms, seen = collections.OrderedDict(), {}, set()
     adapters, standalone, absent = adapter_leaves(), translation_leaves("standalone"), translation_leaves("absent")
-    for exe in a.exe:
+    # The application's images (with several executables, all of theirs) answer weak-definition
+    # and flat binds before the system, as with dyld.
+    own = set().union(*map(exported, images))
+    for exe in images:
         lazy = lazy_symbols(exe)
-        own = exported(exe)
 
         def kind(sym):
             if sym.startswith("_OBJC_CLASS_$_"): return "class"
@@ -191,15 +219,15 @@ def main():
         for l in exe_libs:
             leaf_of[re.sub(r"\.(\w+\.)?dylib$", "", lib_key(l))] = l   # dyld_info prints 'libSystem', 'AppKit'
         for sym, frm, weak in imports(exe):
-            if frm == WEAK_COALESCE and sym in own:
-                continue   # the executable's own weak definition wins, as with dyld
+            if frm in PSEUDO_LIBRARIES and sym in own:
+                continue   # the application defines it itself
             l = leaf_of.get(frm) or next((x for x in exe_libs if lib_key(x).startswith(frm)), None)
             if l is None:
                 per_lib.setdefault(frm, {"present": [], "elsewhere": [], "missing": []}); l = frm
             if (l, sym) in seen:
                 continue   # the first executable importing a symbol decides its kind
             seen.add((l, sym))
-            have = everything if l == WEAK_COALESCE else by_leaf.get(lib_key(l), set())
+            have = everything if l in PSEUDO_LIBRARIES else by_leaf.get(lib_key(l), set())
             # Umbrella frameworks on iOS re-export sub-libraries not modelled here; "elsewhere" is the safety net.
             cls = "present" if sym in have else "elsewhere" if sym in everything else "missing"
             per_lib[l][cls].append(sym + (" (weak)" if weak else ""))
@@ -219,8 +247,8 @@ def main():
         # Hand-written adapters must also be built for otherwise native APIs.
         d = adapter_dir(leaf)
         has_adapter = d in adapters and any(name.endswith(('.c','.m')) for name in os.listdir(os.path.join(TRANSLATION, d)))
-        if l == WEAK_COALESCE:
-            kind = "coalesced"
+        if l in PSEUDO_LIBRARIES:
+            kind = PSEUDO_LIBRARIES[l]
         elif l.startswith("@"):
             kind = "bundled"
         elif d in absent:

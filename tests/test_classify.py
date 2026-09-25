@@ -37,10 +37,11 @@ def experimental(value):
             os.environ['TOLKARA_EXPERIMENTAL_ADAPTERS'] = saved
 
 
-def classify_run(directory, *images, translation=None, enabled=None):
+def classify_run(directory, *images, translation=None, enabled=None, bundled=False):
     out, mp, raw = (pathlib.Path(directory) / n for n in ('SURFACE.md', 'map.json', 'surface.json'))
     argv, root, printed = sys.argv, classify.TRANSLATION, io.StringIO()
-    sys.argv = ['classify.py', *map(str, images), '--out', str(out), '--map', str(mp), '--raw', str(raw)]
+    sys.argv = ['classify.py', *(['--bundled'] if bundled else []), *map(str, images),
+                '--out', str(out), '--map', str(mp), '--raw', str(raw)]
     classify.TRANSLATION = str(translation or root)
     try:
         with experimental(enabled), contextlib.redirect_stdout(printed):
@@ -106,20 +107,37 @@ class BundledLibraryTests(unittest.TestCase):
         cls.directory = tempfile.TemporaryDirectory()
         d = pathlib.Path(cls.directory.name)
         contents = d / 'Fixture.app/Contents'
+        frameworks = contents / 'Frameworks'
         (contents / 'MacOS').mkdir(parents=True)
-        (contents / 'Frameworks').mkdir()
-        cls.library = contents / 'Frameworks/libextra.dylib'
+        (frameworks / 'Reach.framework').mkdir(parents=True)
+        cls.library = frameworks / 'libextra.dylib'
         (d / 'extra.c').write_text(
             '#include <Carbon/Carbon.h>\n'
             'const void *extra(void) { return TISCopyCurrentKeyboardInputSource(); }\n')
         compile_macos(d / 'extra.c', cls.library, '-dynamiclib', '-install_name', '@rpath/libextra.dylib',
                       '-framework', 'Carbon')
-        (d / 'main.c').write_text('const void *extra(void);\nint main(void) { return extra() != 0; }\n')
-        exe = contents / 'MacOS/Fixture'
+        # A bundled framework, linking a framework iOS has.
+        cls.framework = frameworks / 'Reach.framework/Reach'
+        (d / 'reach.c').write_text(
+            '#include <SystemConfiguration/SystemConfiguration.h>\n'
+            'const void *reach(void) { return SCNetworkReachabilityCreateWithName(0, "localhost"); }\n')
+        compile_macos(d / 'reach.c', cls.framework, '-dynamiclib', '-install_name',
+                      '@rpath/Reach.framework/Reach', '-framework', 'SystemConfiguration')
+        # A plugin-style library linked with -undefined dynamic_lookup: flat-namespace binds,
+        # one to the executable, one to the system.
+        (d / 'plugin.c').write_text(
+            'int host_value(void);\nconst char *zlibVersion(void);\n'
+            'int plugin(void) { return host_value() + (zlibVersion() != 0); }\n')
+        compile_macos(d / 'plugin.c', frameworks / 'libplugin.dylib', '-dynamiclib', '-install_name',
+                      '@rpath/libplugin.dylib', '-undefined', 'dynamic_lookup')
+        (frameworks / 'notes.txt').write_text('not a library\n')
+        (d / 'main.c').write_text('const void *extra(void);\nint host_value(void) { return 1; }\n'
+                                  'int main(void) { return extra() != 0; }\n')
+        cls.exe = exe = contents / 'MacOS/Fixture'
         compile_macos(d / 'main.c', exe, '-L', str(cls.library.parent), '-lextra',
                       '-Wl,-rpath,@executable_path/../Frameworks')
         cls.executable_only = classify_run(d, exe)[0]
-        cls.mapping, cls.raw, cls.surface, _ = classify_run(d, exe, cls.library)
+        cls.mapping, cls.raw, cls.surface, _ = classify_run(d, exe, bundled=True)
 
     @classmethod
     def tearDownClass(cls):
@@ -129,6 +147,10 @@ class BundledLibraryTests(unittest.TestCase):
         libs = classify.linked(str(self.library))
         self.assertNotIn('@rpath/libextra.dylib', libs)
         self.assertIn('/System/Library/Frameworks/Carbon.framework/Versions/A/Carbon', libs)
+
+    def test_bundled_libraries_are_the_top_level_binaries(self):
+        found = [pathlib.Path(p) for p in classify.bundled_libraries(str(self.exe))]
+        self.assertEqual(found, [self.framework, self.library, self.library.parent / 'libplugin.dylib'])
 
     def test_frameworks_only_the_library_links_are_mapped(self):
         carbon = '/System/Library/Frameworks/Carbon.framework/Versions/A/Carbon'
@@ -140,6 +162,18 @@ class BundledLibraryTests(unittest.TestCase):
         self.assertIn('| `@rpath/libextra.dylib` | bundled |', self.surface)
         self.assertNotIn('@rpath/libextra.dylib', self.mapping)
         self.assertEqual(self.surface.count('`@rpath/libextra.dylib`'), 1)
+        # The bundled framework's own dependency: on iOS, so the system library.
+        configuration = '/System/Library/Frameworks/SystemConfiguration.framework/Versions/A/SystemConfiguration'
+        self.assertEqual(self.mapping[configuration], '/System/Library/Frameworks/SystemConfiguration.framework/SystemConfiguration')
+
+    def test_flat_namespace_is_not_a_library(self):
+        self.assertNotIn('<flat-namespace>', self.mapping)
+        self.assertNotIn('<flat-namespace>', self.raw['translation'])
+        self.assertIn('| `<flat-namespace>` | flat |', self.surface)
+        seen = self.raw['per_lib']['<flat-namespace>']
+        self.assertIn('_zlibVersion', seen['present'])
+        # The executable defines host_value: the application's own, never listed.
+        self.assertNotIn('_host_value', {s for kind in seen.values() for s in kind})
 
 
 GC = '/System/Library/Frameworks/GameController.framework/Versions/A/GameController'
