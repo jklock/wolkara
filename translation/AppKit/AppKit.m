@@ -351,6 +351,34 @@ static BOOL AKIsRight(UIEvent *ev) { return (ev.buttonMask & UIEventButtonMaskSe
 
 #pragma mark - NSWindow
 
+// Experimental and opt-in (launch argument --guest-window-covers-launcher): while
+// a guest window is up, the launcher's other normal-level windows are hidden
+// (the shader-pause overlay, at alert level, stays above). Only the windows
+// hidden here are shown again, once no guest window is visible. Not yet
+// validated on a device.
+static NSHashTable<UIWindow *> *guestUIWindows, *coveredWindows;
+static BOOL coversLauncher(void) {
+    static BOOL enabled; static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        enabled=[NSProcessInfo.processInfo.arguments containsObject:@"--guest-window-covers-launcher"];
+        guestUIWindows=[NSHashTable weakObjectsHashTable]; coveredWindows=[NSHashTable weakObjectsHashTable];
+    });
+    return enabled;
+}
+static void coverLauncher(UIWindow *guest) {
+    if (!coversLauncher()) return;
+    [guestUIWindows addObject:guest];
+    for (UIWindow *window in guest.windowScene.windows)
+        if (![guestUIWindows containsObject:window] && window.windowLevel==UIWindowLevelNormal && !window.hidden) {
+            window.hidden=YES; [coveredWindows addObject:window];
+        }
+}
+static void uncoverLauncher(void) {
+    if (!coversLauncher() || !coveredWindows.count) return;
+    for (UIWindow *window in guestUIWindows) if (!window.hidden) return;
+    for (UIWindow *window in coveredWindows.allObjects) window.hidden=NO;
+    [coveredWindows removeAllObjects];
+}
 static void logLayer(CALayer *layer,unsigned depth) {
     if(depth>5) return;
     AKLog(@"layer depth=%u ptr=%p class=%@ frame=%@ bounds=%@ hidden=%d opacity=%g super=%p",depth,layer,NSStringFromClass(layer.class),NSStringFromCGRect(layer.frame),NSStringFromCGRect(layer.bounds),layer.hidden,layer.opacity,layer.superlayer);
@@ -436,6 +464,7 @@ static void logLayer(CALayer *layer,unsigned depth) {
         if (_contentView) [self ak_attach];
     }
     [_uiWindow makeKeyAndVisible];
+    coverLauncher(_uiWindow);
     [_host cursorChanged:nil];
     if (![NSApp.windows containsObject:self]) [(NSMutableArray *)NSApp.windows addObject:self];
     if(!wasKey && self.keyWindow) {
@@ -456,7 +485,7 @@ static void logLayer(CALayer *layer,unsigned depth) {
     logLayer(_uiWindow.layer,0);
 }
 - (void)orderFront:(id)s { [self makeKeyAndOrderFront:s]; }
-- (void)orderOut:(id)sender { _uiWindow.hidden = YES; }
+- (void)orderOut:(id)sender { _uiWindow.hidden = YES; uncoverLauncher(); }
 - (void)setIsVisible:(BOOL)visible { visible ? [self makeKeyAndOrderFront:nil] : [self orderOut:nil]; }
 - (void)makeMainWindow { }   // single game surface; already key
 - (void)close { [self orderOut:nil]; [(NSMutableArray *)NSApp.windows removeObject:self]; }
