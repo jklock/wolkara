@@ -532,6 +532,7 @@ static int guest_stat(const char *, struct stat *);
 static int guest_lstat(const char *, struct stat *);
 static int guest_access(const char *, int);
 static FILE *guest_fopen(const char *, const char *);
+static FILE *guest_fopen_extsn(const char *, const char *);
 static int guest_mkdir(const char *, mode_t);
 static char *guest_getenv(const char *);
 // Experimental, opt-in (--case-insensitive-files): a file lookup that fails
@@ -541,6 +542,7 @@ static char *guest_getenv(const char *);
 static bool case_insensitive_files;
 static DIR *guest_opendir(const char *);
 static char *guest_realpath(const char *, char *);
+static char *guest_realpath_extsn(const char *, char *);
 // Handles to the placed images a guest dlopen yields: the tag, RTLD_FIRST, and
 // the image in the low byte (0 the executable, n carried library n-1).
 #define GUEST_HANDLE_TAG 0x7400000000000000ULL
@@ -577,8 +579,9 @@ static void *hook(const char *name) {
     HOOK("exit",guest_exit); HOOK("abort",guest_abort);
     if (trace_guest || case_insensitive_files) {
         HOOK("open",guest_open); HOOK("openat",guest_openat); HOOK("stat",guest_stat); HOOK("lstat",guest_lstat);
-        HOOK("access",guest_access); HOOK("fopen",guest_fopen); HOOK("opendir",guest_opendir);
-        HOOK("realpath$DARWIN_EXTSN",guest_realpath); HOOK("realpath",guest_realpath);
+        HOOK("access",guest_access); HOOK("opendir",guest_opendir);
+        HOOK("fopen",guest_fopen); HOOK("fopen$DARWIN_EXTSN",guest_fopen_extsn);
+        HOOK("realpath",guest_realpath); HOOK("realpath$DARWIN_EXTSN",guest_realpath_extsn);
     }
     if (trace_guest) { HOOK("mkdir",guest_mkdir); HOOK("getenv",guest_getenv); }
     HOOK("mmap",guest_mmap); HOOK("mprotect",guest_mprotect); HOOK("munmap",guest_munmap);
@@ -760,14 +763,20 @@ static int guest_access(const char *path, int mode) {
     if (result) trace_failure("access",path);
     return result;
 }
-static FILE *guest_fopen(const char *path, const char *mode) {
-    FILE *file=fopen(path,mode);
+// A guest imports fopen and realpath plainly or as $DARWIN_EXTSN (the name
+// iOS's headers give the plain call); each hook calls the variant imported.
+extern FILE *plain_fopen(const char *, const char *) __asm("_fopen");
+extern char *plain_realpath(const char *, char *) __asm("_realpath");
+static FILE *traced_fopen(FILE *(*real)(const char *, const char *), const char *path, const char *mode) {
+    FILE *file=real(path,mode);
     char found[PATH_MAX];
     bool creates=mode && (strchr(mode,'w') || strchr(mode,'a'));
-    if (!file && !creates && case_variant(path,found,sizeof found) && (file=fopen(found,mode))) case_found(path,found);
+    if (!file && !creates && case_variant(path,found,sizeof found) && (file=real(found,mode))) case_found(path,found);
     if (!file) trace_failure("fopen",path);
     return file;
 }
+static FILE *guest_fopen(const char *path, const char *mode) { return traced_fopen(plain_fopen,path,mode); }
+static FILE *guest_fopen_extsn(const char *path, const char *mode) { return traced_fopen(fopen,path,mode); }
 static DIR *guest_opendir(const char *path) {
     DIR *directory=opendir(path);
     char found[PATH_MAX];
@@ -775,13 +784,15 @@ static DIR *guest_opendir(const char *path) {
     if (!directory) trace_failure("opendir",path);
     return directory;
 }
-static char *guest_realpath(const char *path, char *resolved) {
-    char *result=realpath(path,resolved);
+static char *traced_realpath(char *(*real)(const char *, char *), const char *path, char *resolved) {
+    char *result=real(path,resolved);
     char found[PATH_MAX];
-    if (!result && case_variant(path,found,sizeof found) && (result=realpath(found,resolved))) case_found(path,found);
+    if (!result && case_variant(path,found,sizeof found) && (result=real(found,resolved))) case_found(path,found);
     if (!result) trace_failure("realpath",path);
     return result;
 }
+static char *guest_realpath(const char *path, char *resolved) { return traced_realpath(plain_realpath,path,resolved); }
+static char *guest_realpath_extsn(const char *path, char *resolved) { return traced_realpath(realpath,path,resolved); }
 static int guest_mkdir(const char *path, mode_t mode) {
     int result=mkdir(path,mode);
     if (result) { trace_failure("mkdir",path); return result; }
