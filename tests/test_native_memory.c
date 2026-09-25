@@ -117,5 +117,6 @@ int main(void) {
     }
     assert(!nc_create_managed(&large,(size_t)NC_MAX_ARENA+page,accept_without_reading,NULL,&spare) && errno==EINVAL);
     assert(!large.executable && !large.writable);
-    puts("PASS: native alias coherence, bounds, device-sized limit, rejection cleanup, uncertain quarantine, write/retry denial (no generated code executed)");
+    puts("PASS: native alias coherence, bounds, rejection cleanup, uncertain quarantine, write/retry denial (no generated code executed)");
+    puts("PASS: device-sized arena limit, adopted regions (no generated code executed)");
 }

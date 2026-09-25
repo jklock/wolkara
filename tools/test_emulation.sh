@@ -2,9 +2,6 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p build/emulation
-# What the tests write stays in the tree too.
-rm -rf build/tmp && mkdir -p build/tmp
-export TMPDIR="$PWD/build/tmp"
 CC=(xcrun clang -std=c11 -D_DARWIN_C_SOURCE -Wall -Wextra -Werror -O1 -g
     -fsanitize=address,undefined -fno-omit-frame-pointer -Iruntime)
 "${CC[@]}" runtime/GuestMemory.c runtime/DarwinMemory.c runtime/MemoryProbe.c tests/test_memory.c -o build/emulation/test_memory
@@ -165,7 +162,8 @@ xcrun --sdk macosx clang -arch arm64 -mmacosx-version-min=12.0 build/emulation/c
     build/emulation/Fixture.app/Contents/Frameworks/libcarried.dylib -Wl,-rpath,@executable_path/../Frameworks \
     -o build/emulation/Fixture.app/Contents/MacOS/Fixture
 build/emulation/guest_probe_sanitized build/emulation/Fixture.app/Contents/MacOS/Fixture \
-    --carried-libraries --validate-fixups | grep -q "imports from carried libraries=1 elsewhere=0"
+    --carried-libraries --validate-fixups > build/emulation/fixture.txt
+grep -q "imports from carried libraries=1 elsewhere=0" build/emulation/fixture.txt
 # Two carried libraries exporting one name; the ordinal decides.
 rm -rf build/emulation/Ambiguous.app
 mkdir -p build/emulation/Ambiguous.app/Contents/MacOS build/emulation/Ambiguous.app/Contents/Frameworks
@@ -348,10 +346,11 @@ xcrun clang -fobjc-arc -Wall -Wextra -Werror \
 build/emulation/test_guest_stubs
 python3 tests/test_publish.py
 python3 tests/test_arena_publish.py
+python3 tests/test_nib.py
 xcrun clang -fobjc-arc -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined \
     -Itranslation/AppKit -framework Foundation translation/AppKit/NibArchive.m tests/test_nib_archive.m \
     -o build/emulation/test_nib_archive
-python3 tests/test_nib.py build/emulation/test_nib_archive
+python3 tests/test_nib_archive.py build/emulation/test_nib_archive
 python3 tests/test_metallib.py
 python3 - <<'PYFIXTURE'
 import sys

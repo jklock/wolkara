@@ -19,8 +19,7 @@ def probe_path():
     path.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(['xcrun', 'clang', '-std=c11', '-D_DARWIN_C_SOURCE', '-Wall', '-Wextra', '-Werror', '-O1', '-g',
                     '-fsanitize=address,undefined', '-fno-omit-frame-pointer', '-Iruntime',
-                    'runtime/GuestMemory.c', 'runtime/GuestImage.c', 'runtime/GuestFixups.c', 'runtime/GuestLink.c',
-                    'tools/guest_probe.c',
+                    'runtime/GuestMemory.c', 'runtime/GuestImage.c', 'runtime/GuestFixups.c', 'runtime/GuestLink.c', 'tools/guest_probe.c',
                     '-o', str(path)], cwd=ROOT, check=True)
     return path
 

@@ -237,10 +237,7 @@ static void expect(const char *name, const char *mode, const unsigned char *raw,
 }
 
 int main(void) {
-    // Temporary space from TMPDIR, as the suite sets it.
-    const char *temporary = getenv("TMPDIR");
-    char template[1024];
-    snprintf(template, sizeof template, "%s/signedfileprobeXXXXXX", temporary && *temporary ? temporary : "/tmp");
+    char template[] = "/tmp/signedfileprobeXXXXXX";
     char *made = mkdtemp(template);
     assert(made);
     snprintf(dir, sizeof dir, "%s", made);

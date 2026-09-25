@@ -173,9 +173,7 @@ int main(void) {
         assert([TKHomeDisplayPath(@"/usr/lib/libobjc.dylib",home) isEqualToString:@"libobjc.dylib"]);
         assert([TKHomeDisplayPath([home stringByAppendingString:@"-OTHER/x.dylib"],home) isEqualToString:@"x.dylib"]);
         // Container lookup: the app's own, else the single-application one, else none.
-        // NSTemporaryDirectory ignores TMPDIR, which the suite sets.
-        NSString *base=NSProcessInfo.processInfo.environment[@"TMPDIR"]?:NSTemporaryDirectory();
-        NSString *root=[base stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
+        NSString *root=[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
         NSString *folder=[root stringByAppendingPathComponent:@"Documents/LocalSigning"];
         assert([NSFileManager.defaultManager createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:NULL]);
         assert(!TKLocalSigningFindContainer(root,sha) && !TKLocalSigningFindContainer(root,nil));

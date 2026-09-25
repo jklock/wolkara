@@ -151,6 +151,6 @@ int main(void) {
         assert(!gf_apply(&i, 0, resolve, NULL, &stats, error, sizeof error) && strstr(error, "outside guest memory"));
         gi_destroy(&i);
     }
-    puts("PASS: Mach-O pointer relocation, import binding, lazy binds first, chained initializers read after fixups,"
-         " signed addends, malformed fixup bounds");
+    puts("PASS: Mach-O pointer relocation, import binding, signed addends, malformed fixup bounds");
+    puts("PASS: lazy binds first, chained fixups, chained initializers read after fixups");
 }

@@ -3,7 +3,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-static GuestTLS tls, library;
+static GuestTLS tls;
+static GuestTLS library;
 static uint64_t descriptors[2][3]={{0,0,0},{0,0,64}};
 static uint64_t library_descriptors[1][3]={{0,0,16}};
 static void *worker(void *arg) {
@@ -54,6 +55,6 @@ int main(void) {
     // No descriptors: nothing to register.
     assert(!gt_register(&none,"none",NULL,0,0,(uintptr_t)bare_descriptors,0));
     gt_destroy(&images[0].tls);
-    puts("PASS: native TLS template per image, alignment, thread isolation, bounds and arm64 register preservation,"
-         " descriptors without a template refused by name");
+    puts("PASS: native TLS template, alignment, thread isolation, bounds and arm64 register preservation");
+    puts("PASS: TLS per image, descriptors without a template refused by name");
 }

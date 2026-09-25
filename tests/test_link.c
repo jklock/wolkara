@@ -11,7 +11,7 @@ static void make(const char *path) { assert(!mkdir(path, 0700) || errno == EEXIS
 static void touch(const char *path) { FILE *file = fopen(path, "w"); assert(file); fputc('x', file); fclose(file); }
 
 int main(void) {
-    // Temporary space from TMPDIR, as the suite sets it.
+    // Temporary space from TMPDIR, else /tmp.
     const char *temporary = getenv("TMPDIR");
     char root[512];
     snprintf(root, sizeof root, "%s/tolkara-link-XXXXXX", temporary && *temporary ? temporary : "/tmp");

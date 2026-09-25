@@ -21,9 +21,7 @@ int main(int argc, const char **argv) {
         NSFileManager *fm=NSFileManager.defaultManager;
         NSString *fixture=@(argv[1]);
         NSData *original=[NSData dataWithContentsOfFile:fixture]; assert(original.length);
-        // NSTemporaryDirectory ignores TMPDIR, which the suite sets.
-        NSString *base=NSProcessInfo.processInfo.environment[@"TMPDIR"]?:NSTemporaryDirectory();
-        NSString *tmp=[base stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
+        NSString *tmp=[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
         NSString *documents=[tmp stringByAppendingPathComponent:@"Documents"], *storage=[tmp stringByAppendingPathComponent:@"Support"];
         NSString *profiles=[tmp stringByAppendingPathComponent:@"Profiles"];
         assert([fm createDirectoryAtPath:documents withIntermediateDirectories:YES attributes:nil error:NULL]);
