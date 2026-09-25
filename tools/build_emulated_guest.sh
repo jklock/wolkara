@@ -54,7 +54,18 @@ if [ "${NATIVE_GUEST_SHIMS:-NO}" = YES ] || [ "${NATIVE_GUEST_SHIMS:-NO}" = GENE
     if [ "$NATIVE_GUEST_SHIMS" = GENERIC ]; then
         python3 "$ROOT/tools/build_shims.py" "$P" generic "$OUT/Frameworks"
     else
-        python3 "$ROOT/tools/classify.py" "${EXES[@]}" --out "$W/SURFACE.md" --map "$W/map.json" --raw "$W/surface.json"
+        # Libraries an application bundles (Contents/Frameworks) run as original
+        # code beside it, so their imports need compatibility libraries too.
+        SURFACE=("${EXES[@]}")
+        for exe in "${EXES[@]}"; do
+            FRAMEWORKS="$(dirname "$(dirname "$exe")")/Frameworks"
+            for lib in "$FRAMEWORKS"/*.dylib "$FRAMEWORKS"/*.framework; do
+                case "$lib" in *.framework) lib="$lib/$(basename "$lib" .framework)";; esac
+                [ -f "$lib" ] || continue
+                SURFACE+=("$lib")
+            done
+        done
+        python3 "$ROOT/tools/classify.py" "${SURFACE[@]}" --out "$W/SURFACE.md" --map "$W/map.json" --raw "$W/surface.json"
         python3 "$ROOT/tools/build_shims.py" "$P" "$W/surface.json" "$OUT/Frameworks"
         cp "$W/map.json" "$OUT/Guest/libraries.json"
     fi

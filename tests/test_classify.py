@@ -80,5 +80,49 @@ class CoalesceTests(unittest.TestCase):
         self.assertNotIn('__ZZ12shared_valuevE5value', listed)
 
 
+class BundledLibraryTests(unittest.TestCase):
+    """A library in Contents/Frameworks brings the frameworks it alone links."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.directory = tempfile.TemporaryDirectory()
+        d = pathlib.Path(cls.directory.name)
+        contents = d / 'Fixture.app/Contents'
+        (contents / 'MacOS').mkdir(parents=True)
+        (contents / 'Frameworks').mkdir()
+        cls.library = contents / 'Frameworks/libextra.dylib'
+        (d / 'extra.c').write_text(
+            '#include <Carbon/Carbon.h>\n'
+            'const void *extra(void) { return TISCopyCurrentKeyboardInputSource(); }\n')
+        compile_macos(d / 'extra.c', cls.library, '-dynamiclib', '-install_name', '@rpath/libextra.dylib',
+                      '-framework', 'Carbon')
+        (d / 'main.c').write_text('const void *extra(void);\nint main(void) { return extra() != 0; }\n')
+        exe = contents / 'MacOS/Fixture'
+        compile_macos(d / 'main.c', exe, '-L', str(cls.library.parent), '-lextra',
+                      '-Wl,-rpath,@executable_path/../Frameworks')
+        cls.executable_only = classify_run(d, exe)[0]
+        cls.mapping, cls.raw, cls.surface = classify_run(d, exe, cls.library)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.directory.cleanup()
+
+    def test_own_install_name_is_not_a_dependency(self):
+        libs = classify.linked(str(self.library))
+        self.assertNotIn('@rpath/libextra.dylib', libs)
+        self.assertIn('/System/Library/Frameworks/Carbon.framework/Versions/A/Carbon', libs)
+
+    def test_frameworks_only_the_library_links_are_mapped(self):
+        carbon = '/System/Library/Frameworks/Carbon.framework/Versions/A/Carbon'
+        self.assertNotIn(carbon, self.executable_only)
+        # Carbon does not exist on iOS: the hand-written adapter serves the library.
+        self.assertEqual(self.mapping[carbon], '@rpath/akCarbon.dylib')
+        self.assertIn('Carbon', self.raw['translation'])
+        # The executable's view of the library is unchanged: bundled, never mapped.
+        self.assertIn('| `@rpath/libextra.dylib` | bundled |', self.surface)
+        self.assertNotIn('@rpath/libextra.dylib', self.mapping)
+        self.assertEqual(self.surface.count('`@rpath/libextra.dylib`'), 1)
+
+
 if __name__ == '__main__':
     unittest.main()

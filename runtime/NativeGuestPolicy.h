@@ -6,7 +6,8 @@
 
 // An import nothing provides becomes a logged stub only where no build-time
 // analysis covered it: in a generic build (no library map), or for a carried
-// library's imports, which classify.py never reads. A build made for one
+// library's imports, which a build covers only for the libraries classify.py
+// read from the application's Contents/Frameworks. A build made for one
 // executable already stubs that executable's gaps; anything else fails.
 static inline bool ng_may_stub(bool generic_build, bool carried_image, bool weak) {
     return !weak && (generic_build || carried_image);

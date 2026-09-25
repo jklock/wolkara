@@ -41,9 +41,10 @@ loading, executable memory, the desktop UI frameworks and the shader format.
   flat and main-executable binds, before any carried library), then the
   translation library mapped for that import, then the process's own symbols.
   Where no build-time analysis covered an import (a generic build, or a carried
-  library's imports, which `classify.py` does not read), one that nothing
-  provides becomes a runtime stub (`GuestStubs`) that logs and returns zero;
-  in a build for one application, its executable's unresolved imports fail.
+  library's imports, which `classify.py` reads only for the libraries in the
+  application's `Contents/Frameworks`), one that nothing provides becomes a
+  runtime stub (`GuestStubs`) that logs and returns zero; in a build for one
+  application, its executable's unresolved imports fail.
 - `NativeCodeMemory` (Developer service, External JIT) holds the image in memory with two
   views: a read-write view used for loading and for the program's own later
   code writes, and a read-execute view the CPU runs from. The executable view is
@@ -74,7 +75,8 @@ page container derived from it.
 
 ## translation/: the macOS API layer
 
-`tools/classify.py` reads an executable's import table and sorts every symbol:
+`tools/classify.py` reads an executable's import table, and those of the
+libraries its bundle carries in `Contents/Frameworks`, and sorts every symbol:
 present on iPadOS (re-exported from the real framework), hand-written in
 `translation/<Framework>/`, or missing. `tools/build_shims.py` then builds one
 library per macOS framework. Missing functions become stubs that log their first
