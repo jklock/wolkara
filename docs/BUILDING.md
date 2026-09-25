@@ -275,6 +275,14 @@ for apps started from the library:
   own file APIs are not covered, and each miss costs a directory listing. For
   a known case, prefer a profile's `caseAliases` (see
   [profiles/README.md](../profiles/README.md)).
+- `TOLKARA_VM_BUDGET_MB=<megabytes>` in the launch environment (experimental,
+  not yet validated on a device): iPadOS grants an app about 64 GB of virtual
+  reservations, charged when they are made, while some macOS applications
+  reserve pools for far more (Cyberpunk 2077: about 118 GB). Anonymous
+  reservations of 64 MB and more then count against this budget; past it they
+  are mapped smaller than asked and end in a guard page. The application still
+  believes it got everything, so a pool that fills up faults instead of
+  failing cleanly. Each downsizing is logged once.
 
 ## Things that will bite you
 

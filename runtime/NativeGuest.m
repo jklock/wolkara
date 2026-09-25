@@ -10,6 +10,7 @@ static NativeCodeMemory local_quarantine;
 #include "GuestFixups.h"
 #include "GuestLink.h"
 #include "GuestPaths.h"
+#include "GuestVMBudget.h"
 #include "NativeGuestPolicy.h"
 #include "GuestStubs.h"
 #include "GuestTLS.h"
@@ -119,6 +120,7 @@ bool ng_reserve_arena(FILE *log) {
     return false;
 }
 #define LOG(...) do { fprintf(guest.log, __VA_ARGS__); fflush(guest.log); } while (0)
+static void log_once(const char *format, ...) __attribute__((format(printf,1,2)));
 __attribute__((noinline,used,visibility("default")))
 void host_debugger_publish_arena(void *address, size_t size, volatile uint64_t *completion) {
     __asm__ volatile("" : : "r"(address), "r"(size), "r"(completion) : "memory");
@@ -412,6 +414,10 @@ static int guest_dladdr(const void *address, Dl_info *info) {
     }
     return dladdr(address,info);
 }
+// Experimental, opt-in (TOLKARA_VM_BUDGET_MB, off by default): the guest's
+// large anonymous reservations fit a virtual-memory budget; see GuestVMBudget.h.
+static GVBudget vm_budget;
+static int guest_madvise(void *address, size_t size, int advice) { return gv_advise(&vm_budget,address,size,advice); }
 static int guest_mprotect(void *address, size_t size, int prot) {
     LOG("[native] mprotect(%p,%#zx,%d)\n",address,size,prot);
     // Local signing: shadow pages are plain writable anonymous memory; signed
@@ -422,7 +428,7 @@ static int guest_mprotect(void *address, size_t size, int prot) {
     }
     // Keep executable backing RX; imported stores/copies use its shared RW view.
     if (inside(address,size) && (prot & PROT_EXEC)) prot &= ~PROT_WRITE;
-    int result = mprotect(address,size,prot);
+    int result = gv_protect(&vm_budget,address,size,prot);
     if (result) LOG("[native] mprotect failed errno=%d\n",errno);
     return result;
 }
@@ -436,7 +442,7 @@ static int guest_munmap(void *address, size_t size) {
     // Reserve the runtime arena so a later fixed/hinted remap preserves the RX
     // backing established before guest execution. Inaccessible until remapped.
     if (inside(address,size)) return mprotect(address,size,PROT_NONE);
-    return munmap(address,size);
+    return gv_unmap(&vm_budget,address,size);
 }
 static void *guest_mmap(void *address, size_t size, int prot, int flags, int fd, off_t offset) {
     LOG("[native] mmap(%p,%#zx,%d,%#x,%d,%lld)\n",address,size,prot,flags,fd,(long long)offset);
@@ -459,7 +465,15 @@ static void *guest_mmap(void *address, size_t size, int prot, int flags, int fd,
         sys_dcache_flush(alias,size); sys_icache_invalidate(address,size);
         return address;
     }
-    void *result = mmap(address,size,prot,flags,fd,offset);
+    void *result;
+    if (gv_counts(&vm_budget,address,size,flags)) {
+        size_t granted;
+        result=gv_reserve(&vm_budget,size,prot,flags,fd,&granted);
+        int code=errno;
+        if (result!=MAP_FAILED && granted<size)
+            log_once("[native] reservation of %zu MB downsized to %zu MB (TOLKARA_VM_BUDGET_MB)\n",size>>20,granted>>20);
+        errno=code;
+    } else result=gv_map(&vm_budget,address,size,prot,flags,fd,offset);
     LOG("[native] mmap -> %p errno=%d\n",result,result==MAP_FAILED?errno:0); return result;
 }
 static void guest_jit_protect(int enabled) { LOG("[native] jit write protection=%d (separate RW/RX views)\n",enabled); }
@@ -578,6 +592,7 @@ static void *hook(const char *name) {
     }
     if (trace_guest) { HOOK("mkdir",guest_mkdir); HOOK("getenv",guest_getenv); }
     HOOK("mmap",guest_mmap); HOOK("mprotect",guest_mprotect); HOOK("munmap",guest_munmap);
+    if (gv_enabled(&vm_budget)) HOOK("madvise",guest_madvise);
     HOOK("memcpy",guest_memcpy); HOOK("memmove",guest_memmove); HOOK("memset",guest_memset);
     HOOK("pthread_jit_write_protect_np",guest_jit_protect);
 #undef HOOK
@@ -647,7 +662,6 @@ static void guest_exit(int code) { LOG("[native] exit(%d)\n",code); exit(code); 
 static void guest_abort(void) { LOG("[native] abort()\n"); abort(); }
 // Each distinct line once: games probe the same missing files in loops. A
 // full table stops the logging, never the guest.
-static void log_once(const char *format, ...) __attribute__((format(printf,1,2)));
 static void log_once(const char *format, ...) {
     char line[1536]; va_list arguments;
     va_start(arguments,format); vsnprintf(line,sizeof line,format,arguments); va_end(arguments);
@@ -1179,6 +1193,16 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
     if (trace_guest) LOG("[native] tracing failed file access, created directories and getenv (--trace-guest)\n");
     case_insensitive_files=[NSProcessInfo.processInfo.arguments containsObject:@"--case-insensitive-files"];
     if (case_insensitive_files) LOG("[native] file lookups retried ignoring case (--case-insensitive-files; experimental)\n");
+    const char *budget_mb=getenv("TOLKARA_VM_BUDGET_MB");
+    if (budget_mb && *budget_mb) {
+        char *rest=NULL; unsigned long long megabytes=strtoull(budget_mb,&rest,10);
+        if (*rest || !megabytes || megabytes>(1ULL<<24)) LOG("[native] TOLKARA_VM_BUDGET_MB ignored: whole megabytes, 1 to 16777216\n");
+        else {
+            // Reservations of 64 MB and more count; a downsized one is asked for 256 MB first.
+            gv_init(&vm_budget,megabytes<<20,64u<<20,256u<<20);
+            LOG("[native] virtual-memory budget of %llu MB for large reservations (TOLKARA_VM_BUDGET_MB; experimental)\n",megabytes);
+        }
+    }
     if([NSProcessInfo.processInfo.arguments containsObject:@"--sample-native"]) signal_log_fd=open([[NSHomeDirectory() stringByAppendingPathComponent:@"Documents/native-signal.log"] fileSystemRepresentation],O_WRONLY|O_CREAT|O_TRUNC,0600);
     shader_wait_pending=dlsym(RTLD_DEFAULT,"AKShaderWaitPending");
     for (size_t i=0;i<carried.count;i++) {
