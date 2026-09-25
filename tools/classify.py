@@ -6,6 +6,8 @@ usage: classify.py <macOS executable>... [--sdk PATH] [--out SURFACE.md] [--map 
 
 With several executables the surface is their union, so one set of
 compatibility libraries serves every application in the launcher's library.
+Libraries an application bundles (Contents/Frameworks) may be listed like
+executables: they run as original code beside it, so their imports count too.
 
 Per symbol:   present | elsewhere (exported on iOS, but by a different library) | missing
 Per library:  system  (all symbols present -> only the path layout is rewritten)
@@ -110,8 +112,11 @@ def imports(exe):
 
 
 def linked(exe):
+    """What an image links; a dylib's own install name, which otool -L lists first, is left out."""
     r = subprocess.run(["otool", "-arch", "arm64", "-L", exe], capture_output=True, text=True)
-    return [l.split(" (compat")[0].strip() for l in r.stdout.splitlines()[1:]]
+    libs = [l.split(" (compat")[0].strip() for l in r.stdout.splitlines()[1:]]
+    own = subprocess.run(["otool", "-arch", "arm64", "-D", exe], capture_output=True, text=True).stdout.splitlines()[1:]
+    return libs[1:] if own and libs and libs[0] == own[0].strip() else libs
 
 
 def main():
