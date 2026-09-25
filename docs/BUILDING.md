@@ -255,6 +255,21 @@ To build the full app for the simulator by hand:
 tools/generate.sh && xcodebuild -project Tolkara.xcodeproj -scheme Tolkara -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath build/integrated-sim ARCHS=arm64 build
 ```
 
+## Development runs on the iPad
+
+Tools under `tools/` start the app with launch arguments instead of the
+library, for example `xcrun devicectl device process launch --device <iPad>
+<bundle id> --native-startup --app=<profile id>`; such runs keep a plain status
+screen. Diagnostics that change what the runtime does are opt-in and never on
+for apps started from the library:
+
+- `--sample-native`: samples the guest's threads every 10 seconds and keeps
+  crash evidence in `Documents/native-signal.log`.
+- `--trace-guest`: logs the guest's failed file access (with errno), the
+  directories it creates and the environment variables it reads, each distinct
+  line once, with paths shortened as elsewhere in the log. Meant for bringing
+  up a new application; it slows file access.
+
 ## Things that will bite you
 
 - Never attach a debugger (Xcode, lldb) to the app once application code is
