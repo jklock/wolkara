@@ -513,6 +513,13 @@ build/emulation/test_library_container build/emulation/container-fixture.metalli
 xcrun clang -fobjc-arc -Wall -Wextra -Werror -Wno-deprecated-declarations -O1 -g -fsanitize=address,undefined \
     -Itranslation/Metal tests/test_storage_modes.m -o build/emulation/test_storage_modes
 build/emulation/test_storage_modes
+# --metal-managed-storage on the Mac's own device, where Managed is valid: on, then off.
+xcrun clang -fobjc-arc -Wall -Wextra -Werror -Wno-deprecated-declarations -O1 -g -fsanitize=address,undefined \
+    -Itranslation/AKSupport -Itranslation/Metal -framework Foundation -framework Metal \
+    translation/AKSupport/AKSupport.m translation/Metal/ManagedStorage.m tests/test_managed_storage.m \
+    -o build/emulation/test_managed_storage
+build/emulation/test_managed_storage --metal-managed-storage
+build/emulation/test_managed_storage
 # The Metal adapter's device-function wrappers: the fixture re-exports Metal as akMetal does.
 xcrun clang -fobjc-arc -Wall -Wextra -Werror -O1 -g -dynamiclib -DAK_FIXTURE_LIBRARY -Itranslation/Metal \
     -framework Foundation -Wl,-reexport_framework,Metal tests/test_real_function.m -o build/emulation/libakMetalFixture.dylib
