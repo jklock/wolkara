@@ -1,4 +1,5 @@
 #import "AppKit.h"
+#import "EventMonitors.h"
 #import "Images.h"
 #import "TextInput.h"
 #import <GameController/GameController.h>
@@ -25,8 +26,26 @@ PASS(keyDown:) PASS(keyUp:) PASS(flagsChanged:) PASS(mouseDown:) PASS(mouseUp:) 
 PASS(mouseDragged:) PASS(rightMouseDown:) PASS(rightMouseUp:) PASS(rightMouseDragged:) PASS(scrollWheel:)
 @end
 
+// Local monitors are experimental and opt-in (launch argument
+// --appkit-event-monitors): handlers see events before window dispatch, and
+// one returning nil consumes the event. Off by default, adding a monitor does
+// nothing, as before: World of Warcraft installs one and was validated so.
+static BOOL eventMonitorsEnabled(void) {
+    static BOOL enabled; static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        enabled=[NSProcessInfo.processInfo.arguments containsObject:@"--appkit-event-monitors"];
+        AKLog(@"local event monitors %s", enabled ? "enabled (--appkit-event-monitors)" : "ignored; launch with --appkit-event-monitors to run them");
+    });
+    return enabled;
+}
 @implementation NSEvent
 - (NSString *)description { return [NSString stringWithFormat:@"<NSEvent type=%lu loc=%@ key=%d>", (unsigned long)_type, NSStringFromCGPoint(_locationInWindow), _keyCode]; }
++ (id)addLocalMonitorForEventsMatchingMask:(NSUInteger)mask handler:(id)handler {
+    return eventMonitorsEnabled() ? AKEventMonitorAdd(mask, handler) : nil;
+}
+// Events of other applications never reach this one.
++ (id)addGlobalMonitorForEventsMatchingMask:(NSUInteger)mask handler:(id)handler { (void)mask; (void)handler; return nil; }
++ (void)removeMonitor:(id)monitor { AKEventMonitorRemove(monitor); }
 @end
 
 #pragma mark - NSView
@@ -562,7 +581,12 @@ static void logLayer(CALayer *layer,unsigned depth) {
     if (atStart) [_queue insertObject:e atIndex:0]; else [_queue addObject:e];
     if (_inRun) [self ak_drain];   // guest left the loop to us; deliver right away
 }
-- (void)sendEvent:(NSEvent *)e { _currentEvent=e; [(e.window ?: self.keyWindow) sendEvent:e]; }
+- (void)sendEvent:(NSEvent *)e {
+    _currentEvent=e;
+    e=AKEventMonitorRun(e,e.type);
+    if (!e) return;   // a local monitor consumed it
+    [(e.window ?: self.keyWindow) sendEvent:e];
+}
 - (NSEvent *)nextEventMatchingMask:(NSUInteger)mask untilDate:(NSDate *)date inMode:(NSString *)mode dequeue:(BOOL)dq {
     static NSTimeInterval nextDiagnostic; static unsigned diagnostics;
     NSTimeInterval now=NSProcessInfo.processInfo.systemUptime;

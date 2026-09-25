@@ -534,6 +534,11 @@ xcrun clang -fobjc-arc -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined
     -o build/emulation/test_text_input
 build/emulation/test_text_input
 
+xcrun clang -fobjc-arc -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined \
+    -Itranslation/AppKit -framework Foundation translation/AppKit/EventMonitors.m tests/test_event_monitors.m \
+    -o build/emulation/test_event_monitors
+build/emulation/test_event_monitors
+
 bash tools/test_legacy_crypto.sh
 
 xcrun clang -fobjc-arc -Wno-deprecated-declarations -framework Foundation -framework Security \
