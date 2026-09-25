@@ -1,8 +1,11 @@
 #import "AppLibrary.h"
 #import "GuestImage.h"
 #import "GuestModule.h"
+#include <errno.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 static NSString *const TKModulesDirectory=@"GuestModules";
 
@@ -29,6 +32,22 @@ static BOOL valid_hash(id hash) {
 }
 static NSString *join(NSString *directory, NSString *relative) {
     return relative.length ? [directory stringByAppendingPathComponent:relative] : directory;
+}
+// caseAliases, as tools/check_profile.py checks them: each alias a relative
+// path, each target a name that differs from the alias's last component only in case.
+static BOOL valid_case_aliases(id aliases) {
+    if (!aliases) return YES;
+    if (![aliases isKindOfClass:NSDictionary.class]) return NO;
+    for (id alias in aliases) {
+        id target=aliases[alias];
+        if (!valid_relative(alias,NO) || !valid_relative(target,NO) || [target containsString:@"/"]) return NO;
+        NSString *leaf=[alias lastPathComponent];
+        if ([target isEqualToString:leaf] || [target caseInsensitiveCompare:leaf]!=NSOrderedSame) return NO;
+    }
+    return YES;
+}
+static BOOL inside_folder(NSString *path, NSString *root) {
+    return path && ([path isEqualToString:root] || [path hasPrefix:[root stringByAppendingString:@"/"]]);
 }
 static NSString *clean_name(id name) {
     if (![name isKindOfClass:NSString.class]) return nil;
@@ -86,7 +105,8 @@ static NSString *clean_name(id name) {
         // Same rules as tools/check_profile.py: data only, paths inside Documents.
         if (![profile isKindOfClass:NSDictionary.class] || !clean_name(profile[@"name"]) ||
             ![profile[@"id"] isKindOfClass:NSString.class] || ![profile[@"id"] length] || [seen containsObject:profile[@"id"]] ||
-            !valid_relative(profile[@"workingDirectory"],NO) || !valid_relative(profile[@"executable"],NO)) continue;
+            !valid_relative(profile[@"workingDirectory"],NO) || !valid_relative(profile[@"executable"],NO) ||
+            !valid_case_aliases(profile[@"caseAliases"])) continue;
         [seen addObject:profile[@"id"]];
         [profiles addObject:profile];
     }
@@ -377,6 +397,33 @@ static NSString *bundle_executable(NSString *path, NSError **error) {
     if (hash && ![hash isEqual:app.sha256] && app.source==TKAppSourceDocuments)
         [self updateApp:app error:NULL change:^(NSMutableDictionary *record) { record[@"sha256"]=hash; }];
     return hash;
+}
+- (NSDictionary<NSString *,NSString *> *)caseAliasesForApp:(TKApp *)app {
+    if (app.profile) for (NSDictionary *profile in _profiles)
+        if ([profile[@"id"] isEqual:app.profile]) return profile[@"caseAliases"]?:@{};
+    return @{};
+}
+- (NSArray<NSString *> *)linkCaseAliasesForApp:(TKApp *)app {
+    NSDictionary<NSString *,NSString *> *aliases=[self caseAliasesForApp:app];
+    NSMutableArray<NSString *> *report=[NSMutableArray new];
+    if (!aliases.count) return report;
+    NSString *directory=[self workingDirectoryForApp:app error:NULL], *root=directory ? real_path(directory) : nil;
+    if (!root) { [report addObject:@"case aliases skipped: the working directory is missing"]; return report; }
+    for (NSString *alias in [aliases.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
+        NSString *target=aliases[alias], *shown=[NSString stringWithFormat:@"case alias %@ -> %@: ",alias,target];
+        // Checked where it resolves, then created there: a link in the path cannot lead outside.
+        NSString *folder=real_path([root stringByAppendingPathComponent:alias].stringByDeletingLastPathComponent);
+        NSString *link=[folder stringByAppendingPathComponent:alias.lastPathComponent];
+        struct stat st;
+        if (!inside_folder(folder,root)) [report addObject:[shown stringByAppendingString:@"its folder is missing or outside the working directory"]];
+        else if (!lstat(link.fileSystemRepresentation,&st)) [report addObject:[shown stringByAppendingString:@"present"]];
+        else if (!inside_folder(real_path([folder stringByAppendingPathComponent:target]),root))
+            [report addObject:[shown stringByAppendingString:@"the target is missing"]];
+        else if (symlink(target.fileSystemRepresentation,link.fileSystemRepresentation))
+            [report addObject:[shown stringByAppendingFormat:@"failed: %s",strerror(errno)]];
+        else [report addObject:[shown stringByAppendingString:@"linked"]];
+    }
+    return report;
 }
 - (NSString *)workingDirectoryForApp:(TKApp *)app error:(NSError **)error {
     NSString *path=join(_documents,app.workingDirectory);

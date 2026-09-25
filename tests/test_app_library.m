@@ -1,6 +1,8 @@
 #import "AppLibrary.h"
 #import "GuestModule.h"
 #include <assert.h>
+#include <stdlib.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 static void write_text(NSString *text, NSString *path) {
@@ -21,7 +23,9 @@ int main(int argc, const char **argv) {
         NSFileManager *fm=NSFileManager.defaultManager;
         NSString *fixture=@(argv[1]);
         NSData *original=[NSData dataWithContentsOfFile:fixture]; assert(original.length);
-        NSString *tmp=[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
+        // TMPDIR when set, so the suite can also run on a case-sensitive volume.
+        const char *temporary=getenv("TMPDIR");
+        NSString *tmp=[(temporary && *temporary ? @(temporary) : NSTemporaryDirectory()) stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
         NSString *documents=[tmp stringByAppendingPathComponent:@"Documents"], *storage=[tmp stringByAppendingPathComponent:@"Support"];
         NSString *profiles=[tmp stringByAppendingPathComponent:@"Profiles"];
         assert([fm createDirectoryAtPath:documents withIntermediateDirectories:YES attributes:nil error:NULL]);
@@ -167,8 +171,53 @@ int main(int argc, const char **argv) {
         library=open_library(documents,storage,known);
         assert(!library.apps.count && library.loadWarning && ![fm fileExistsAtPath:libraryFile]);
 
+        // caseAliases, checked as tools/check_profile.py does: a missing alias
+        // links to its target, a name in another case, inside the working
+        // directory only.
+        NSString *aliasProfiles=[tmp stringByAppendingPathComponent:@"AliasProfiles"];
+        write_text(@"{\"id\":\"c\",\"name\":\"Cased\",\"workingDirectory\":\"C\",\"executable\":\"C.app/Contents/MacOS/C\","
+            "\"caseAliases\":{\"archive/mac\":\"Mac\",\"Data\":\"data\",\"gone/x\":\"X\",\"escape/mac\":\"Mac\",\"absent\":\"ABSENT\"}}",
+            [aliasProfiles stringByAppendingPathComponent:@"a.json"]);
+        NSArray *hostile=@[@"{\"/abs\":\"ABS\"}",@"{\"../up\":\"UP\"}",@"{\"a/mac\":\"../Mac\"}",@"{\"a/mac\":\"x/Mac\"}",
+            @"{\"a/mac\":\"Other\"}",@"{\"a/mac\":\"mac\"}",@"{\"a/mac\":1}",@"{\"a/mac\":null}",@"[]",@"{\"a//mac\":\"Mac\"}",@"{\"\":\"x\"}"];
+        for (NSUInteger i=0;i<hostile.count;i++)
+            write_text([NSString stringWithFormat:@"{\"id\":\"h%lu\",\"name\":\"H\",\"workingDirectory\":\"H\",\"executable\":\"H\",\"caseAliases\":%@}",
+                (unsigned long)i,hostile[i]],[aliasProfiles stringByAppendingPathComponent:[NSString stringWithFormat:@"h%lu.json",(unsigned long)i]]);
+        NSArray *aliased=[TKAppLibrary profilesInDirectory:aliasProfiles];
+        assert(aliased.count==1 && [aliased[0][@"id"] isEqual:@"c"]);
+        NSString *cased=[documents stringByAppendingPathComponent:@"C"], *beyond=[tmp stringByAppendingPathComponent:@"Outside"];
+        copy_file(fixture,[cased stringByAppendingPathComponent:@"C.app/Contents/MacOS/C"]);
+        for (NSString *folder in @[[cased stringByAppendingPathComponent:@"archive/Mac"],[cased stringByAppendingPathComponent:@"data"],
+                                   [beyond stringByAppendingPathComponent:@"Mac"]])
+            assert([fm createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:NULL]);
+        assert(!symlink(beyond.fileSystemRepresentation,[cased stringByAppendingPathComponent:@"escape"].fileSystemRepresentation));
+        TKAppLibrary *aliasLibrary=open_library(documents,[tmp stringByAppendingPathComponent:@"AliasSupport"],aliased);
+        NSArray<TKApp *> *casedApps=[aliasLibrary discover];
+        assert(casedApps.count==1 && [casedApps[0].profile isEqual:@"c"]);
+        NSDictionary *aliases=[aliasLibrary caseAliasesForApp:casedApps[0]];
+        assert(aliases.count==5 && [aliases[@"archive/mac"] isEqual:@"Mac"]);
+        // A case-insensitive volume (the Mac's default) already answers both spellings.
+        BOOL sensitive=pathconf(cased.fileSystemRepresentation,_PC_CASE_SENSITIVE)==1;
+        NSString *made=sensitive?@"linked":@"present";
+        NSArray *expected=@[[@"case alias Data -> data: " stringByAppendingString:made],
+            @"case alias absent -> ABSENT: the target is missing",
+            [@"case alias archive/mac -> Mac: " stringByAppendingString:made],
+            @"case alias escape/mac -> Mac: its folder is missing or outside the working directory",
+            @"case alias gone/x -> X: its folder is missing or outside the working directory"];
+        assert([[aliasLibrary linkCaseAliasesForApp:casedApps[0]] isEqual:expected]);
+        struct stat link_info;
+        if (sensitive) {
+            NSString *link=[cased stringByAppendingPathComponent:@"archive/mac"];
+            assert(!lstat(link.fileSystemRepresentation,&link_info) && S_ISLNK(link_info.st_mode));
+            assert([[fm destinationOfSymbolicLinkAtPath:link error:NULL] isEqual:@"Mac"]);
+            assert([[aliasLibrary linkCaseAliasesForApp:casedApps[0]][2] hasSuffix:@": present"]);
+        }
+        assert(lstat([beyond stringByAppendingPathComponent:@"mac"].fileSystemRepresentation,&link_info) || !S_ISLNK(link_info.st_mode));
+        assert(![fm fileExistsAtPath:[cased stringByAppendingPathComponent:@"gone"]]);
+        assert(![aliasLibrary caseAliasesForApp:inPlace].count && ![aliasLibrary linkCaseAliasesForApp:inPlace].count);
+
         assert([[NSData dataWithContentsOfFile:fixture] isEqual:original]);
         assert([fm removeItemAtPath:tmp error:&error]);
-        puts("PASS: app library import in place and by copy, profiles, legacy module, order, persistence, integrity and hostile entries");
+        puts("PASS: app library import in place and by copy, profiles, legacy module, order, persistence, integrity, hostile entries and case aliases");
     }
 }

@@ -5,7 +5,25 @@ import sys
 from pathlib import Path, PurePosixPath
 
 REQUIRED = ('id', 'name', 'workingDirectory', 'executable')
-OPTIONAL = ('notes', 'tested')
+OPTIONAL = ('notes', 'tested', 'caseAliases')
+
+
+def relative(value):
+    """A non-empty relative path without empty, '.' or '..' components, as the launcher requires."""
+    return (isinstance(value, str) and value and not value.startswith('/') and
+            all(part not in ('', '.', '..') for part in value.split('/')))
+
+
+def check_case_aliases(aliases):
+    """caseAliases: {alias: target}. The launcher links each alias, a path inside the working
+    directory, to target, a name in the same folder that differs from the alias's last component
+    only in case: iPadOS's file system is case-sensitive, macOS's default is not."""
+    if not isinstance(aliases, dict): raise ValueError('caseAliases must be an object mapping alias to target')
+    for alias, target in aliases.items():
+        if not relative(alias): raise ValueError(f'caseAliases: {alias!r} must stay inside the working directory')
+        leaf = alias.rsplit('/', 1)[-1]
+        if not relative(target) or '/' in target or target == leaf or target.lower() != leaf.lower():
+            raise ValueError(f'caseAliases: {alias!r} -> {target!r} must name {leaf!r} in another case')
 
 
 def check(path):
@@ -18,6 +36,7 @@ def check(path):
     for key in ('workingDirectory', 'executable'):
         parts = PurePosixPath(profile[key]).parts
         if profile[key].startswith('/') or '..' in parts: raise ValueError(f'{key} must stay inside Documents')
+    if 'caseAliases' in profile: check_case_aliases(profile['caseAliases'])
     return profile
 
 

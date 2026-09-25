@@ -69,6 +69,16 @@ typedef NS_ENUM(NSInteger, TKAppSource) {
 // SHA-256 of the executable as it is now (it may have been updated in place);
 // the recorded hash follows it. Slow: hashes the file. Call off the main thread.
 - (nullable NSString *)currentSHA256OfApp:(TKApp *)app error:(NSError **)error;
+
+// The caseAliases of the app's profile, {alias: target}; empty without one.
+// An alias is a path inside the working directory; its target, a name in the
+// same folder differing from the alias's last component only in case.
+- (NSDictionary<NSString *, NSString *> *)caseAliasesForApp:(TKApp *)app;
+// iPadOS's file system is case-sensitive and macOS's default is not: links
+// each missing alias to its existing target (a relative symbolic link in the
+// user's copy of the app's files). Nothing outside the working directory is
+// created or followed. One line per alias, for the log.
+- (NSArray<NSString *> *)linkCaseAliasesForApp:(TKApp *)app;
 @end
 
 NS_ASSUME_NONNULL_END
