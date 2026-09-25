@@ -85,6 +85,9 @@ CGPathRef AKCreateCursorPath(CGImageRef image, CGSize size, CGPoint hotSpot) {
     return NULL;
 }
 - (BOOL)isValid { return _reps.count>0; }
+// No offscreen drawing in this translation; focus calls are inert.
+- (void)lockFocus { }
+- (void)unlockFocus { }
 @end
 static NSCursor *currentCursor;
 static void cursorChanged(void) { [NSNotificationCenter.defaultCenter postNotificationName:@"AKCursorDidChange" object:nil]; }
