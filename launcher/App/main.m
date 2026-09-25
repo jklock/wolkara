@@ -50,9 +50,9 @@ static TKAppLibrary *OpenLibrary(void) {
     NSString *storage=[NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory,NSUserDomainMask,YES).firstObject stringByAppendingPathComponent:@"Tolkara"];
     return [[TKAppLibrary alloc] initWithDocuments:TKDocumentsPath(@"") storage:storage profiles:[TKAppLibrary profilesInDirectory:profiles]];
 }
-// Starting apps needs the integrated local launch path and compatibility
-// libraries: classified for one or more imported executables, or generic
-// (tools/install.sh); either ships libAKSupport.dylib, a build with none does not.
+// Starting apps needs compatibility
+// libraries built for the imported executables (tools/install.sh).
+// Generic ones count too: both ship libAKSupport.dylib.
 static BOOL CanStartApps(void) {
     NSString *support=[NSBundle.mainBundle.privateFrameworksPath stringByAppendingPathComponent:@"libAKSupport.dylib"];
     return [NSFileManager.defaultManager fileExistsAtPath:support];

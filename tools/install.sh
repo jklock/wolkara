@@ -31,7 +31,9 @@ fi
 BUNDLE=${TOLKARA_BUNDLE_ID:-local.tolkara.app}
 mkdir -p logs; LOG=logs/install-$(date +%Y%m%d-%H%M%S).log
 tools/generate.sh
-# Our translation libraries only, classified or generic; the executables stay outside the app.
+# NATIVE_GUEST_SHIMS=YES builds and signs only Tolkara's translation libraries
+# for the API surface those executables import. They stay outside the app.
+# GENERIC builds one adapter per framework instead, for no executable.
 xcodebuild -project Tolkara.xcodeproj -scheme Tolkara -destination "platform=iOS,id=$DEVICE" \
     -derivedDataPath build/device -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
     GUEST_EXE="$GUEST_EXE" NATIVE_GUEST_SHIMS="$SHIMS" TOLKARA_PROFILE="${TOLKARA_PROFILE:-}" TOLKARA_MODE="${TOLKARA_MODE:-}" \

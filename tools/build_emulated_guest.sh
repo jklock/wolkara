@@ -43,8 +43,8 @@ if [ -n "${TOLKARA_PROFILE:-}" ]; then
     cp "$PROFILE" "$OUT/Guest/Profiles/0-local.json"
 fi
 
-# Our libraries only: YES classifies GUEST_EXE, GENERIC ships one adapter per
-# hand-written translation/<Framework>/, made for no particular application.
+# Build/sign only our compatibility libraries. The original is never patched.
+# GENERIC: one adapter per translation/<Framework>/, no executable classified.
 case "${NATIVE_GUEST_SHIMS:-NO}" in
 YES|GENERIC)
     if [ "${PLATFORM_NAME:-iphoneos}" = iphonesimulator ]; then P=iossim; else P=ios; fi
