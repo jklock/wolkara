@@ -705,6 +705,18 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     const char *argv[64]; size_t argc=0;
     for (NSString *argument in launchArguments) if (argc<64) { argv[argc++]=argument.UTF8String; fprintf(log,"[host] argument %s\n",argument.UTF8String); }
     ng_set_arguments(argv,argc);
+    // A profile's runtime libraries (opened by path, not linked) are placed with it.
+    if (app.runtime) {
+        NSString *runtime=TKDocumentsPath(app.runtime);
+        NSMutableArray<NSString *> *paths=[NSMutableArray new];
+        const char *libraries[64]; size_t count=0;
+        for (NSString *library in app.libraries) if (count<64) {
+            [paths addObject:[runtime stringByAppendingPathComponent:library]];
+            libraries[count++]=paths.lastObject.fileSystemRepresentation;
+            fprintf(log,"[host] library %s\n",library.UTF8String);
+        }
+        ng_set_libraries(runtime.fileSystemRepresentation,libraries,count);
+    }
     // Local signing: the runtime validates the container against this
     // executable and refuses it after Developer service was selected.
     if (container) {

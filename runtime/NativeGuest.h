@@ -9,6 +9,11 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
 // compatibility runtime started from a profile. Copied; at most 64 of 4096
 // bytes. Call before ng_initialize; default: none.
 void ng_set_arguments(const char *const *arguments, size_t count);
+// Libraries a compatibility runtime opens by path instead of linking, placed
+// with the executable as if it carried them (gl_carry): absolute paths inside
+// root, the runtime folder, which then counts as the application's folder.
+// Copied; at most 64. Call before ng_initialize; default: none.
+void ng_set_libraries(const char *root, const char *const *paths, size_t count);
 // Developer service: select our integrated helper before the process's one
 // permitted startup. Fails if Local signing was already selected.
 bool ng_use_local_authorization(void);

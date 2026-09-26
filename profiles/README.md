@@ -38,8 +38,9 @@ program under Wine, say) names that runtime instead of a macOS `.app`:
   "name": "Example (Windows)",
   "workingDirectory": "Example/prefix/drive_c/Example",
   "runtime": "Example/Wine",
-  "executable": "bin/wine",
+  "executable": "lib/wine/aarch64-unix/wine",
   "arguments": ["Example.exe"],
+  "libraries": ["lib/wine/aarch64-unix/ntdll.so"],
   "environment": { "WINEPREFIX": "${Documents}/Example/prefix" }
 }
 ```
@@ -50,6 +51,11 @@ program under Wine, say) names that runtime instead of a macOS `.app`:
   strings. `environment`: variables set before it starts, at most 64;
   `${Documents}` in a value stands for the absolute Documents folder.
   Both are plain strings: no code, and nothing that changes the application.
+- `libraries`: the runtime's own libraries that it opens by path at run time
+  instead of linking them (Wine's Unix side), relative to `runtime`, at most
+  64. They are loaded with the executable as if it carried them, with what
+  they link, and the runtime's `dlopen` of one gets that copy; the whole
+  runtime folder then counts as the application's folder. Only with `runtime`.
 
 Every profile in `profiles/` is built into the app. When the files a profile
 describes are present in Documents, the launcher adds that app to its library

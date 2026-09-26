@@ -285,6 +285,19 @@ void ng_set_arguments(const char *const *arguments, size_t count) {
         launch_arguments[launch_argument_count++]=strdup(arguments[i]);
     }
 }
+// Libraries a profile names beside the executable's own list; see ng_set_libraries.
+static char *launch_root, *launch_libraries[GL_MAX_LIBRARIES];
+static size_t launch_library_count;
+void ng_set_libraries(const char *root, const char *const *paths, size_t count) {
+    free(launch_root); launch_root=NULL;
+    for (size_t i=0;i<launch_library_count;i++) { free(launch_libraries[i]); launch_libraries[i]=NULL; }
+    launch_library_count=0;
+    if (root && strlen(root)<PATH_MAX) launch_root=strdup(root);
+    for (size_t i=0;i<count && i<GL_MAX_LIBRARIES;i++) {
+        if (!paths[i] || strlen(paths[i])>=PATH_MAX) break;
+        launch_libraries[launch_library_count++]=strdup(paths[i]);
+    }
+}
 static NSArray<NSString *> *(*original_arguments)(id,SEL);
 static NSArray<NSString *> *guest_process_arguments(id receiver,SEL selector) {
     if(guest_arguments && inside(__builtin_return_address(0),1)) {
@@ -1087,6 +1100,11 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
     // Carried libraries load as data too, placed beside the executable.
     if (!gl_load(&carried,&guest.image,path,error,sizeof error))
         LOG("[native] carried libraries unavailable: %s\n",error);
+    // A runtime's libraries, opened by path later, are placed now as well.
+    else if ((launch_root || launch_library_count) &&
+             !gl_carry(&carried,launch_root,(const char *const *)launch_libraries,launch_library_count,error,sizeof error)) {
+        LOG("[native] the profile's libraries cannot be placed: %s\n",error); goto done;
+    }
     // The executable answers for its own exports whatever was carried.
     carried.executable_image=&guest.image;
     gl_report(&carried,log);

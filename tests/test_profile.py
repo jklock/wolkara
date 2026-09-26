@@ -40,13 +40,19 @@ class ProfileTests(unittest.TestCase):
     def test_runtime_command_line(self):
         # A compatibility runtime elsewhere in Documents, with its command line: data only.
         good = {'id': 'w', 'name': 'W', 'workingDirectory': 'W/game', 'runtime': 'W/Runtime', 'executable': 'bin/run',
-                'arguments': ['game.exe', '--windowed'], 'environment': {'PREFIX': '${Documents}/W/prefix', '_X1': ''}}
+                'arguments': ['game.exe', '--windowed'], 'environment': {'PREFIX': '${Documents}/W/prefix', '_X1': ''},
+                'libraries': ['lib/core.so']}
         check(self.write(good))
         for change in ({'runtime': '../R'}, {'runtime': '/R'}, {'runtime': 'R/'}, {'runtime': ''}, {'runtime': 'R/./bin'},
                        {'arguments': 'game.exe'}, {'arguments': [1]}, {'arguments': ['x'] * 65}, {'arguments': ['y' * 4097]},
                        {'environment': ['A=1']}, {'environment': {'1X': 'a'}}, {'environment': {'A B': 'a'}},
-                       {'environment': {'A': 1}}, {'environment': {'A': 'y' * 4097}}, {'environment': {f'V{i}': '' for i in range(65)}}):
+                       {'environment': {'A': 1}}, {'environment': {'A': 'y' * 4097}}, {'environment': {f'V{i}': '' for i in range(65)}},
+                       {'libraries': 'lib/core.so'}, {'libraries': ['../core.so']}, {'libraries': ['/lib/core.so']},
+                       {'libraries': ['lib/./core.so']}, {'libraries': [1]}, {'libraries': [f'l{i}.so' for i in range(65)]}):
             with self.assertRaises(ValueError): check(self.write({**good, **change}))
+        # A runtime's libraries only come with a runtime.
+        without = {k: v for k, v in good.items() if k != 'runtime'}
+        with self.assertRaises(ValueError): check(self.write(without))
 
     def test_heroes3_hd_settings(self):
         # The staged copy's HD mod settings: pinned keys replaced in place, CRLF kept, defaults used on a fresh copy.
