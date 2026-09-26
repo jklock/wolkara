@@ -12,6 +12,7 @@ static NativeCodeMemory local_quarantine;
 #include "GuestPaths.h"
 #include "GuestVMBudget.h"
 #include "NativeGuestPolicy.h"
+#include <TargetConditionals.h>
 #include "GuestStubs.h"
 #include "GuestTLS.h"
 #include "HostExecutionProbe.h"
@@ -194,6 +195,11 @@ static NCPreparation prepare_externally(void *address, size_t size, void *contex
 }
 static bool publish(void *address, size_t size, void *context) {
     (void)context;
+#if TARGET_OS_SIMULATOR
+    // The simulator is a Mac process: memory it maps executes without a helper.
+    LOG("[native] simulator: arena address=%p size=%zu needs no preparation\n", address, size);
+    return true;
+#endif
     volatile uint64_t completion = 0;
     LOG("[native] publish fresh zeroed arena address=%p size=%zu\n", address, size);
     host_debugger_publish_arena(address, size, &completion);
