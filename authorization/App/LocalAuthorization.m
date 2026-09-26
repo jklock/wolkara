@@ -13,6 +13,18 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+NSNotificationName const TKLocalArenaWillPrepare = @"TKLocalArenaWillPrepare";
+NSNotificationName const TKLocalArenaDidPrepare = @"TKLocalArenaDidPrepare";
+
+static void announceArena(NSNotificationName name, NSDictionary *info) {
+    void (^announce)(void) = ^{
+        [NSNotificationCenter.defaultCenter postNotificationName:name object:nil userInfo:info];
+        [CATransaction flush];
+    };
+    if (NSThread.isMainThread) announce();
+    else dispatch_sync(dispatch_get_main_queue(), announce);
+}
+
 @interface TKLocalAuthorization ()
 @property(nonatomic,strong) NETunnelProviderManager *manager;
 @property(nonatomic,readwrite) BOOL localSessionReady;
@@ -190,7 +202,9 @@ NCPreparation TKPrepareLocalArena(void *address,size_t size,void *context) {
         }];
     });
     CFTimeInterval began=CACurrentMediaTime();
+    announceArena(TKLocalArenaWillPrepare, @{@"bytes":@(size)});
     NCPreparation result=[publisher prepare:address size:size timeout:930];
+    announceArena(TKLocalArenaDidPrepare, @{@"prepared":@(result == NC_PREPARED)});
     fprintf(stderr,"[local-launch] arena result=%u bytes=%zu elapsed=%.3fs\n",(unsigned)result,size,CACurrentMediaTime()-began);
     return result;
 }

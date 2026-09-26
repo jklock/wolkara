@@ -2,6 +2,11 @@
 #import <Foundation/Foundation.h>
 #include "NativeCodeMemory.h"
 
+// Main-thread notifications before attachment and after confirmed preparation.
+// The former carries only the requested byte count, never addresses or keys.
+FOUNDATION_EXPORT NSNotificationName const TKLocalArenaWillPrepare;
+FOUNDATION_EXPORT NSNotificationName const TKLocalArenaDidPrepare;
+
 @interface TKLocalAuthorization : NSObject
 @property(nonatomic,readonly) BOOL localSessionReady;
 // Direct reachability only, no pairing/credentials/debugging. A TCP connection

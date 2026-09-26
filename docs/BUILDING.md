@@ -307,3 +307,19 @@ for apps started from the library:
   enrolment and the page container. Installing over it keeps them.
 - Do not commit `local.env`, provisioning profiles, pairing records, page
   containers, captures or anything from `build/` or `logs/`.
+
+
+### Preparation status
+
+Developer-service launches show connection, memory preparation, and app-loading
+messages with an elapsed clock. The clock and activity indicator use Core
+Animation so they keep moving while the service pauses the host process. There
+is no measured completion percentage during that pause. Preparation failures
+stop the indicator and expose the existing diagnostics action.
+
+To check the display without loading application code, boot an iPad simulator
+and run `tools/test_launch_progress.sh` (or pass a simulator ID and `--dark`).
+This installs only our standalone UIKit fixture, pauses it for three seconds,
+resumes it, and saves before/during screenshots in `build/launch-progress/`.
+Verify that the clock advances during suspension. The fixture uses a separate
+bundle ID and does not start authorization or run a guest.
