@@ -107,7 +107,14 @@ WINE_BUILD="$OUT/wine-build"; mkdir -p "$WINE_BUILD"
 # winebuild and the PE link steps find lld-link, llvm-ar and friends by name:
 # llvm-mingw's bin goes at the END of PATH so the host toolchain stays first.
 export PATH="$PATH:$MINGW/bin"
-if [ ! -f "$WINE_BUILD/.configured" ]; then
+# Libraries the Unix side opens by name at run time rather than linking:
+# FreeType (fonts) and GnuTLS (TLS, schannel, crypt32). Configure records the
+# name it dlopens; an @rpath name makes that the copy bundled beside the
+# runtime (below) instead of whatever the host's search path holds.
+DLOPENED="gnutls freetype"
+soname() { basename "$(otool -D "$(brew --prefix "$1")/lib/lib$1.dylib" | tail -1)"; }
+SONAMES=(); for lib in $DLOPENED; do SONAMES+=("ac_cv_lib_soname_$lib=@rpath/$(soname "$lib")"); done
+if [ ! -f "$WINE_BUILD/.configured" ] || ! grep -q '@rpath/libgnutls' "$WINE_BUILD/include/config.h" 2>/dev/null; then
     MACSDK="$(xcrun --sdk macosx --show-sdk-path)"
     # Wine's configure builds the Unix side with the host clang and every PE
     # side with the mingw clang it is pointed at. No X11, ALSA or PulseAudio on
@@ -117,8 +124,9 @@ if [ ! -f "$WINE_BUILD/.configured" ]; then
         CFLAGS="-isysroot $MACSDK -mmacosx-version-min=14.0" LDFLAGS="-isysroot $MACSDK" \
         "$SRC/wine/configure" --prefix="$RUNTIME" --enable-archs=arm64ec,aarch64,i386 \
         --with-mingw="$MINGW/bin/clang" --disable-tests --without-x --without-alsa --without-pulse --without-oss \
-        enable_amd_ags_x64=no enable_winegstreamer=no \
+        enable_amd_ags_x64=no enable_winegstreamer=no "${SONAMES[@]}" \
         2>&1 | tee "$OUT/wine-configure.log")
+    rm -f "$WINE_BUILD/.built"
     touch "$WINE_BUILD/.configured"
 fi
 if [ ! -f "$WINE_BUILD/.built" ]; then
@@ -141,11 +149,18 @@ bundle() {  # binary
         install_name_tool -change "$lib" "@rpath/$name" "$1" 2>/dev/null || true
     done
 }
+for lib in $DLOPENED; do
+    name="$(soname "$lib")"
+    cp "$(brew --prefix "$lib")/lib/$name" "$RUNTIME/lib/$name"; chmod u+w "$RUNTIME/lib/$name"
+    install_name_tool -id "@rpath/$name" "$RUNTIME/lib/$name" 2>/dev/null || true
+done
 for binary in "$RUNTIME"/bin/* "$RUNTIME"/lib/wine/aarch64-unix/*.so "$RUNTIME"/lib/*.dylib; do
     [ -f "$binary" ] && file "$binary" | grep -q Mach-O || continue
     bundle "$binary"
-    install_name_tool -add_rpath @loader_path/../lib "$binary" 2>/dev/null || true
-    install_name_tool -add_rpath @loader_path/../.. "$binary" 2>/dev/null || true
+    # One run path to the bundled libraries, relative to this binary: the
+    # Unix-side libraries have header room for only one more.
+    rel="$(python3 -c 'import os, sys; print(os.path.relpath(sys.argv[1], sys.argv[2]))' "$RUNTIME/lib" "$(dirname "$binary")")"
+    install_name_tool -add_rpath "@loader_path/$rel" "$binary"
 done
 # make install strips the Unix-side binaries, which invalidates their ad-hoc
 # signatures on arm64: sign every Mach-O in the runtime again.
