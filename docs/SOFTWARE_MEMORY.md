@@ -23,7 +23,7 @@ software path. Prepare only the fresh zeroed executable arena and detach before
 guest entry, as with other simulator native-startup runs.
 
 The integration bridges bulk copies/fills, file read/write and stdio buffers,
-paths and file-status output. Its handler fetches instructions only to execute
+paths, file-status output, and bounded string/comparison scans. Its handler fetches instructions only to execute
 memory operations and bounded exclusive-access sequences; it does not dump instruction bytes. Failure
 reports include an address, a memory error and aggregate counts. Signal actions
 requested by the application are chained, with a bounded history of 127 changes
@@ -46,7 +46,7 @@ return to the previously installed handler.
 
 Supported fixture instructions include scalar and SIMD immediate/register
 loads and stores, pairs, LDAR/STLR, LDAPR, single-register CAS, CASP, and the nine
-scalar LSE read-modify-write operations. Unsupported instructions are rejected.
+scalar LSE read-modify-write operations. SIMD LD/ST1–4 multiple-structure, single-lane and load-replicate forms support 64/128-bit vectors and post-index addressing. Unsupported instructions are rejected.
 Exclusive accesses execute as a bounded sequence: at most 32 instructions in
 a 128-byte window, including supported register arithmetic, branches and scalar
 reads from software memory. A store-exclusive, other supported write or CLREX
@@ -120,6 +120,23 @@ sets `[Engine/Watchdog] TimeoutSeconds = 600` to distinguish slow startup from
 its next functional failure. No binary patch or third-party mod is installed.
 The INI experiment follows the setting described by the
 [watchdog configuration mod's author](https://www.nexusmods.com/cyberpunk2077/mods/16297).
-The simulator remains active beyond the previous two-minute timeout with this
-setting. The matching iPad run is in progress. Remove that separate file to
-restore the default timeout.
+With this setting, both simulator and iPad finish scripts and load shader caches.
+The simulator then reaches its known private-heap assertion. The iPad passes
+that heap operation and reached an unsupported SIMD structure instruction;
+implementing those forms clears that fault. The latest iPad process remains
+alive at display setup, with a worker querying memory capacity. Rendering is
+not validated. Remove the separate INI to restore the default timeout.
+
+The SIMD structure decoder is compared against 164 original native assembly
+fixtures, with three input patterns and aligned/unaligned page-crossing cases.
+Tests cover register wrap, post-index updates, permissions and rejected
+encodings. A signal/resume fixture also matches native output. String bridges
+cover page edges, unsigned comparisons, native/software combinations and
+zero-length operations. The full sanitizer suite passes with these additions.
+
+Current experiments build the runtime with `GCC_OPTIMIZATION_LEVEL=2`.
+Simulator launch-to-heap-assertion time improved only from about 6m20s to 6m10s
+(including arena preparation), so this has not solved the fault overhead.
+A false-returning `CGDisplayModeIsUsableForDesktopGUI` stub was replaced with
+an implementation for the UIKit screen mode; its physical-device test is in
+progress.

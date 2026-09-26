@@ -292,6 +292,97 @@ const char *gsv_string(const char *source, char *buffer, size_t capacity) {
     }
     errno = ENAMETOOLONG; return NULL;
 }
+static size_t scan_chunk(const void *pointer, size_t remaining) {
+    size_t n=remaining<256?remaining:256;
+    if(gsv_address(pointer)) {
+        size_t page_left=GM_PAGE_SIZE-(uintptr_t)pointer%GM_PAGE_SIZE;
+        if(n>page_left)n=page_left;
+    }
+    return n;
+}
+static void scan_read(const void *source, void *out, size_t size) {
+    if(!gsv_address(source)) { memcpy(out,source,size);return; }
+    if(gm_sparse_read(&memory,(uintptr_t)source,out,size)!=GM_OK) {
+        report("[software-vm] invalid string/buffer access at ",(uintptr_t)source);
+        abort();
+    }
+}
+size_t gsv_strnlen(const char *string, size_t limit) {
+    if(!limit)return 0;
+    if(!gsv_address(string))return strnlen(string,limit);
+    size_t done=0;
+    while(done<limit) {
+        const char *at=string+done;size_t n=scan_chunk(at,limit-done);
+        unsigned char bytes[256];scan_read(at,bytes,n);
+        unsigned char *end=memchr(bytes,0,n);
+        if(end)return done+(size_t)(end-bytes);
+        done+=n;
+    }
+    return done;
+}
+size_t gsv_strlen(const char *string) {
+    return gsv_address(string)?gsv_strnlen(string,SIZE_MAX):strlen(string);
+}
+int gsv_memcmp(const void *left, const void *right, size_t size) {
+    if(!size)return 0;
+    if(!gsv_address(left) && !gsv_address(right))return memcmp(left,right,size);
+    const unsigned char *a=left,*b=right;
+    for(size_t done=0;done<size;) {
+        size_t n=scan_chunk(a+done,size-done),other=scan_chunk(b+done,size-done);
+        if(n>other)n=other;
+        unsigned char aa[256],bb[256];scan_read(a+done,aa,n);scan_read(b+done,bb,n);
+        int result=memcmp(aa,bb,n);if(result)return result;
+        done+=n;
+    }
+    return 0;
+}
+void *gsv_memchr(const void *source, int value, size_t size) {
+    if(!size)return NULL;
+    if(!gsv_address(source))return memchr(source,value,size);
+    const unsigned char *bytes=source;
+    for(size_t done=0;done<size;) {
+        size_t n=scan_chunk(bytes+done,size-done);
+        unsigned char chunk[256];scan_read(bytes+done,chunk,n);
+        unsigned char *found=memchr(chunk,value,n);
+        if(found)return (void *)(bytes+done+(size_t)(found-chunk));
+        done+=n;
+    }
+    return NULL;
+}
+int gsv_strncmp(const char *left, const char *right, size_t limit) {
+    if(!limit)return 0;
+    if(!gsv_address(left) && !gsv_address(right))return strncmp(left,right,limit);
+    for(size_t done=0;done<limit;) {
+        const char *a=left+done,*b=right+done;
+        size_t n=scan_chunk(a,limit-done),other=scan_chunk(b,limit-done);
+        if(n>other)n=other;
+        // Native strings may be tiny objects: do not memcpy beyond their NUL.
+        if(!gsv_address(a)) { size_t length=strnlen(a,n);if(length<n)n=length+1; }
+        if(!gsv_address(b)) { size_t length=strnlen(b,n);if(length<n)n=length+1; }
+        unsigned char aa[256],bb[256];scan_read(a,aa,n);scan_read(b,bb,n);
+        for(size_t i=0;i<n;i++) {
+            if(aa[i]!=bb[i])return (int)aa[i]-(int)bb[i];
+            if(!aa[i])return 0;
+        }
+        done+=n;
+    }
+    return 0;
+}
+int gsv_strcmp(const char *left, const char *right) {
+    return gsv_strncmp(left,right,SIZE_MAX);
+}
+char *gsv_strchr(const char *string, int value) {
+    if(!gsv_address(string))return strchr(string,value);
+    for(size_t done=0;;) {
+        const char *at=string+done;size_t n=scan_chunk(at,SIZE_MAX);
+        unsigned char bytes[256];scan_read(at,bytes,n);
+        for(size_t i=0;i<n;i++) {
+            if(bytes[i]==(unsigned char)value)return (char *)(at+i);
+            if(!bytes[i])return NULL;
+        }
+        done+=n;
+    }
+}
 GMResult gsv_copy(void *destination, const void *source, size_t size) {
     bool to = gsv_address(destination), from = gsv_address(source);
     if (!to && !from) { memmove(destination, source, size); return GM_OK; }

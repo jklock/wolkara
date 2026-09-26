@@ -11,6 +11,7 @@
 .globl _gm_sparse_exclusive_probe
 .globl _gm_sparse_exclusive_increment
 .globl _gm_sparse_exclusive_ordered
+.globl _gm_sparse_structure_probe
 _gm_sparse_probe_program:
     str x1, [x0]
     ldrb w3, [x0]
@@ -192,5 +193,14 @@ _gm_sparse_exclusive_ordered:
     add x2, x2, x3
     stlxr w4, x2, [x0]
     cbnz w4, _gm_sparse_exclusive_ordered
+    ret
+_gm_sparse_structure_probe:
+    ld4 {v0.16b, v1.16b, v2.16b, v3.16b}, [x0]
+    st1 {v0.16b, v1.16b, v2.16b, v3.16b}, [x1], #64
+    ld1 {v0.h}[7], [x0]
+    str q0, [x1], #16
+    ld3r {v0.4s, v1.4s, v2.4s}, [x0]
+    st1 {v0.16b, v1.16b, v2.16b}, [x1]
+    st3 {v0.4s, v1.4s, v2.4s}, [x0]
     ret
 _gm_sparse_probe_program_end:

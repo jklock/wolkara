@@ -524,6 +524,10 @@ build/emulation/test_library_container build/emulation/container-fixture.metalli
 xcrun clang -fobjc-arc -Wall -Wextra -Werror -Wno-deprecated-declarations -O1 -g -fsanitize=address,undefined \
     -Itranslation/Metal tests/test_storage_modes.m -o build/emulation/test_storage_modes
 build/emulation/test_storage_modes
+xcrun clang -fobjc-arc -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined \
+    -framework Foundation translation/CoreGraphics/DisplayModes.m tests/test_display_modes.m \
+    -o build/emulation/test_display_modes
+build/emulation/test_display_modes
 # --metal-managed-storage on the Mac's own device, where Managed is valid: on, then off.
 xcrun clang -fobjc-arc -Wall -Wextra -Werror -Wno-deprecated-declarations -O1 -g -fsanitize=address,undefined \
     -Itranslation/AKSupport -Itranslation/Metal -framework Foundation -framework Metal \
