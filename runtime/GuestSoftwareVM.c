@@ -12,7 +12,9 @@
 #include <sys/ucontext.h>
 #include <unistd.h>
 
-enum { ACTION_LIMIT = 128, BOUNCE_SIZE = 65536 };
+// Guest workers may have only a 64 KiB stack. Keep transfer scratch small
+// enough to leave room for the caller, libc and signal delivery.
+enum { ACTION_LIMIT = 128, BOUNCE_SIZE = 4096 };
 static GMSparseMemory memory;
 static uint64_t base, span;
 static void *guard;

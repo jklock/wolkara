@@ -34,6 +34,62 @@ static void *exclusive_worker(void *pointer) {
     for(unsigned i=0;i<1000;i++)gm_sparse_exclusive_increment(pointer);
     return NULL;
 }
+typedef struct { void *software; unsigned char *source, *output; FILE *file; } SmallStackCopy;
+static void *small_stack_copy(void *raw) {
+    SmallStackCopy *copy=raw;
+    const size_t size=200000;
+    // ASan increases pthread stacks; the suite also runs this fixture without
+    // sanitizers to verify the actual 64 KiB worker limit.
+#if __has_feature(address_sanitizer)
+    assert(pthread_get_stacksize_np(pthread_self())>=64*1024);
+#else
+    assert(pthread_get_stacksize_np(pthread_self())==64*1024);
+#endif
+    assert(gsv_copy(copy->software,copy->source,size)==GM_OK);
+    assert(gsv_copy(copy->output,copy->software,size)==GM_OK);
+    assert(!memcmp(copy->source,copy->output,size));
+    // Both overlap directions must cross many scratch-buffer boundaries.
+    assert(gsv_copy((char *)copy->software+23,copy->software,size-23)==GM_OK);
+    memmove(copy->source+23,copy->source,size-23);
+    assert(gsv_copy(copy->software,(char *)copy->software+17,size-17)==GM_OK);
+    memmove(copy->source,copy->source+17,size-17);
+    assert(gsv_copy(copy->output,copy->software,size)==GM_OK);
+    assert(!memcmp(copy->source,copy->output,size));
+    assert(gsv_fill(copy->software,0x6a,size)==GM_OK);
+    assert(gsv_copy(copy->output,copy->software,size)==GM_OK);
+    for(size_t i=0;i<size;i++)assert(copy->output[i]==0x6a);
+    rewind(copy->file);
+    assert(gsv_fwrite(copy->software,1,size,copy->file)==size);
+    assert(!fflush(copy->file));
+    assert(gsv_pwrite(fileno(copy->file),copy->software,size,0)==(ssize_t)size);
+    assert(gsv_pread(fileno(copy->file),copy->software,size,0)==(ssize_t)size);
+    rewind(copy->file);
+    assert(gsv_fread(copy->software,1,size,copy->file)==size);
+    assert(!lseek(fileno(copy->file),0,SEEK_SET));
+    assert(gsv_read(fileno(copy->file),copy->software,size)==(ssize_t)size);
+    assert(!lseek(fileno(copy->file),0,SEEK_SET));
+    assert(gsv_write(fileno(copy->file),copy->software,size)==(ssize_t)size);
+    return NULL;
+}
+static void check_small_stack(void *software,unsigned char *source,unsigned char *output,FILE *file) {
+    SmallStackCopy copy={software,source,output,file};
+    pthread_attr_t attr;pthread_t thread;
+    assert(!pthread_attr_init(&attr));
+#if __has_feature(address_sanitizer)
+    assert(!pthread_attr_setstacksize(&attr,256*1024));
+#else
+    size_t page=(size_t)getpagesize(),stack_size=64*1024;
+    unsigned char *mapping=mmap(NULL,stack_size+2*page,PROT_NONE,MAP_PRIVATE|MAP_ANON,-1,0);
+    assert(mapping!=MAP_FAILED);
+    assert(!mprotect(mapping+page,stack_size,PROT_READ|PROT_WRITE));
+    assert(!pthread_attr_setstack(&attr,mapping+page,stack_size));
+#endif
+    assert(!pthread_create(&thread,&attr,small_stack_copy,&copy));
+    assert(!pthread_attr_destroy(&attr));assert(!pthread_join(thread,NULL));
+#if !__has_feature(address_sanitizer)
+    assert(!munmap(mapping,stack_size+2*page));
+#endif
+}
 typedef struct { const uint32_t *words; size_t count; } Sequence;
 static bool fetch_fixture(uint64_t pc,uint32_t *word,void *raw) {
     Sequence *sequence=raw;
@@ -254,6 +310,7 @@ int main(void) {
     assert(lseek(fileno(file), 0, SEEK_CUR) == 0);
     assert(gsv_copy(ranges[0], source, 16) == GM_PROTECTION);
     assert(gsv_protect(ranges[0], GM_PAGE_SIZE, 3) == 0);
+    check_small_stack(ranges[0],source,out,file);
     for (unsigned i = 0; i < 3; ++i) assert(!gsv_unmap(ranges[i], lengths[i]));
     assert(gsv_stats().resident_pages == 0);
     fclose(file); free(source); free(out);
