@@ -235,13 +235,17 @@ code, and
 [`testguest/windows/shared_data_probe.c`](../testguest/windows/shared_data_probe.c)
 reads the relocated `KUSER_SHARED_DATA` correctly through the API
 (`GetTickCount64`, `QueryPerformanceCounter` at 10 MHz,
-`GetSystemTimeAsFileTime`, a `Sleep(15)` measured as 25 ms). Its last step,
-a direct read of `0x7ffe0320` inside `__try`, is not caught: Wine delivers
-the access violation to the x86-64 program (`dispatch_exception` in the
-ARM64EC `ntdll` shows the x64 registers), the program's handler returns
-`ExceptionContinueSearch`, and the unhandled-exception path starts
-`winedbg`. Whether that is the mingw SEH runtime, Wine's x64 unwinder in
-the ARM64EC `ntdll`, or FEX's context is the next thing to find out.
+`GetSystemTimeAsFileTime`, a `Sleep(15)` measured as 17–25 ms), and its
+direct read of `0x7ffe0320` inside `__try` is caught as
+`EXCEPTION_ACCESS_VIOLATION` by the program's own handler, delivered
+through Wine's ARM64EC `ntdll` and FEX's context reconstruction (a
+`RaiseException` inside `__try` unwinds correctly too). One false alarm on
+the way: clang's `__try` covers calls, not a plain load that faults (the
+`-fasync-exceptions` flag is a no-op for the mingw target), so the probe
+reads through a non-inlined function. Two conclusions for the game: a
+program that hardcodes `0x7ffe0000` faults here, so FEX or Wine would have
+to catch and emulate such reads if HotA or the HD mod do that; and x86
+structured exception handling works under this stack.
 Remaining noise: FreeType, GnuTLS and SDL2 are `dlopen`ed by bare soname and
 not found in the bundled runtime (configure should record `@rpath` sonames
 and the build script bundle them); no Vulkan (MoltenVK) yet.
