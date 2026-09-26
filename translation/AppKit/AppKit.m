@@ -450,6 +450,16 @@ static void logLayer(CALayer *layer,unsigned depth) {
         [NSNotificationCenter.defaultCenter postNotificationName:@"NSWindowDidResizeNotification" object:self];
     }
 }
+- (void)toggleFullScreen:(id)sender {
+    (void)sender;
+    AKLog(@"fullscreen transition requested entering=%d", !(self.styleMask&(1UL<<14)));
+    AKToggleFullscreenWindow(self);
+}
+- (void)ak_layoutFullscreenWindow {
+    [_host setNeedsLayout];
+    [_host layoutIfNeeded];
+    if(_host) [self ak_hostBoundsChanged:_host.bounds];
+}
 - (void)makeKeyAndOrderFront:(id)sender {
     BOOL wasKey=self.keyWindow;
     if (!_uiWindow) {
