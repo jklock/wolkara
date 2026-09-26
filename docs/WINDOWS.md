@@ -3,10 +3,12 @@
 > Design and status for running a Windows x86 program on the iPad through
 > Tolkara. First target: *Heroes of Might and Magic III: Horn of the Abyss*
 > (GOG build, HotA 1.8.1 with the HD mod 5.8, a 32-bit x86 program),
-> profile [`heroes3-hota`](../profiles/heroes3-hota). Nothing below is
-> validated on a device yet; each section says what is proven and what is not.
+> profile [`heroes3-hota`](../profiles/heroes3-hota). Each section says
+> what is proven, where (Mac, simulator or iPad), and what is not.
 >
-> **Status, 2026-09-26: M0 reached on the Mac, not yet on the iPad.** A
+> **Status, 2026-09-27: the HotA main menu shows on the iPad (M4 below,
+> "On the iPad").** Sound and input on the device are still to be checked.
+> M0 was reached on the Mac the day before. A
 > native arm64 Darwin process has no address space below 4 GB, and Wine's
 > 32-bit side needs it ("The 4 GB floor" below). Tolkara's own branches of
 > Wine and FEX work around it ("The downstream forks"): 64-bit programs run
@@ -446,6 +448,57 @@ is clicked; performance is unmeasured. In the FEX branch, libc++abi's exception
 globals still read `x18`; a fourth FEX commit translates emulated vector
 gathers through the window (the game does not use them).
 
+## On the iPad (2026-09-27)
+
+The same runtime, prefix and game run on an iPad Pro 11-inch (M5), iPadOS
+27, Developer service: `h3hota HD.exe` reaches the HotA main menu, drawn
+through the HD mod's GDI renderer into a full-screen window of 1210x834
+points, the lightning over the menu animating. What it took, beyond M0:
+
+- *One process* (W4, `WINESINGLEPROCESS=1`): `wineserver` is built a second
+  time as `bin/wineserver.so` and runs as a thread of the game's process
+  (per-thread working directories, its socket under the prefix's
+  `.wineserver`, the registry flushed at exit, volatile keys such as the
+  CPU description kept in `volatile.reg` because `wineboot` never runs
+  there); `win32u` loads the display driver itself instead of asking
+  `explorer`; `CreateProcess` is refused.
+- *A code pool* (W2, profile key `codePool`): the prepared arena gets 96 MB
+  after the images; the launcher hands it to Wine as
+  `WINEJITPOOL=start-end@alias`. Its executable view never changes
+  protection: Wine and FEX write code through the writable alias, native
+  ARM64 PE modules are placed and relocated there, and memory outside the
+  pool is never made executable on the host (a page that was executable
+  cannot become writable again on iOS; the emulator only reads 32-bit
+  code). `WINEJITPOOL=dual:<MB>` makes such a pool on the Mac, where the
+  menu shows the same way.
+- *Wine's Unix libraries placed at startup* (W3, profile key `libraries`):
+  `ntdll.so`, the server, `win32u.so`, `winemac.so` and the rest are placed
+  by the loader like an application's own libraries, and `dlopen` by path
+  finds them.
+- *AppKit on UIKit for `winemac.drv`* (W5): panels, tracking areas,
+  frame/content rectangles, `updateLayer` drawing, layers anchored and
+  scaled as AppKit's, window ordering that does not re-enter Wine's
+  overrides, colours and bitmap graphics contexts, display gamma and
+  capture calls, `SessionGetInfo`, input-source types.
+- *The simulator first*: the whole stack runs in the iOS Simulator
+  (`--case-insensitive-files` covers `fstatat`; the simulator needs no
+  helper to prepare memory), which is where the AppKit gaps were found. The
+  simulator is portrait-only from the command line; the HD mod's scaler
+  draws a portrait desktop with stale patches, which the landscape iPad
+  does not show.
+
+Two failures were the device's own: the in-process server looked for its
+NLS files next to the host executable (the simulator could read the Mac
+build's absolute data path), and `smackw32.dll`'s code became
+non-executable to FEX after its relocation failed to make the page writable
+again. Both are fixed on the Wine branch.
+
+Still open on the device: sound (`winecoreaudio` loads and no error is
+reported, not yet heard), touch, mouse and keyboard input, the light grey
+margins above and below the game (the window background Wine fills a new
+surface with; the HD mod letterboxes its 16:9 frame), GnuTLS (not in the
+device runtime; the game does not need it for the menu), and performance.
+
 ## What Wine needs from its host, and what Tolkara has
 
 | Wine needs | Tolkara today | Work item |
@@ -514,9 +567,17 @@ Ordered so that each layer is proven before the next depends on it.
   measurement under External JIT is still to be made.
 - **M2 — `wine --version` under Tolkara.** Wine's loader reaches its Unix side
   (W3 and the first half of W2).
+
+  **Result, 2026-09-26, iPad Pro M5.** Reached: the loader, placed by
+  Tolkara from the profile, prints its version on the device.
 - **M3 — `wineserver` in-process and a Wine-shipped program on screen**
   (`notepad.exe` or `winecfg`, both Wine's own; W4, W5).
+  Passed over: the game itself was the first program on screen.
 - **M4 — Heroes III main menu.** W6, W7, and the game's own DLLs under FEX.
+
+  **Result, 2026-09-27, iPad Pro M5, iPadOS 27, Developer service.** The
+  menu shows ("On the iPad"). W6 was not needed for it (the GDI renderer);
+  W7 is unverified.
 - **M5 — a game played through**, recorded in
   [COMPATIBILITY.md](../COMPATIBILITY.md).
 
