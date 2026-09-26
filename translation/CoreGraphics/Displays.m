@@ -1,6 +1,7 @@
 #import <UIKit/UIKit.h>
 #include <stdint.h>
 #import "AKSupport.h"
+#import <Metal/Metal.h>
 bool CGCursorIsVisible(void) { return !AKCursorIsHidden(); }
 CGError CGAssociateMouseAndMouseCursorPosition(boolean_t connected) { AKMouseSetCaptured(!connected); return kCGErrorSuccess; }
 CGError CGWarpMouseCursorPosition(CGPoint point) {
@@ -17,7 +18,28 @@ CGError CGGetActiveDisplayList(uint32_t capacity,CGDirectDisplayID *displays,uin
     if (!count || (capacity && !displays)) return kCGErrorIllegalArgument;
     *count=displays ? (capacity ? 1 : 0) : 1; if(displays && capacity) displays[0]=1; return kCGErrorSuccess;
 }
+// Every display there is is online, and there is one.
+CGError CGGetOnlineDisplayList(uint32_t capacity,CGDirectDisplayID *displays,uint32_t *count) { return CGGetActiveDisplayList(capacity,displays,count); }
 CGRect CGDisplayBounds(CGDirectDisplayID d) { return d==1 ? UIScreen.mainScreen.bounds : CGRectZero; }
+// In millimetres, at the 132 points per inch of an iPad's screen.
+CGSize CGDisplayScreenSize(CGDirectDisplayID d) {
+    if(d!=1) return CGSizeZero;
+    CGSize points=UIScreen.mainScreen.bounds.size;
+    return CGSizeMake(points.width*25.4/132.0,points.height*25.4/132.0);
+}
+double CGDisplayRotation(CGDirectDisplayID d) { (void)d; return 0; }
+uint32_t CGDisplayUnitNumber(CGDirectDisplayID d) { (void)d; return 0; }
+CGDirectDisplayID CGDisplayMirrorsDisplay(CGDirectDisplayID d) { (void)d; return 0; }
+uint32_t CGDisplayIDToOpenGLDisplayMask(CGDirectDisplayID d) { return d==1 ? 1 : 0; }
+CGDirectDisplayID CGOpenGLDisplayMaskToDisplayID(uint32_t mask) { return (mask&1) ? 1 : 0; }
+mach_port_t CGDisplayIOServicePort(CGDirectDisplayID d) { (void)d; return MACH_PORT_NULL; }
+id<MTLDevice> CGDirectDisplayCopyCurrentMetalDevice(CGDirectDisplayID d) { return d==1 ? MTLCreateSystemDefaultDevice() : nil; }
+// Full-screen programs capture the displays and put their window above the
+// shield; an iPad app has its screen to itself already.
+CGError CGCaptureAllDisplays(void) { return kCGErrorSuccess; }
+CGError CGReleaseAllDisplays(void) { return kCGErrorSuccess; }
+int32_t CGShieldingWindowLevel(void) { return 2147483628; }
+void CGRestorePermanentDisplayConfiguration(void) {}
 bool CGDisplayIsMain(CGDirectDisplayID d) { return d==1; }
 size_t CGDisplayPixelsHigh(CGDirectDisplayID d) { return d==1 ? UIScreen.mainScreen.bounds.size.height*UIScreen.mainScreen.nativeScale : 0; }
 CGDisplayModeRef CGDisplayCopyDisplayMode(CGDirectDisplayID d) { return d==1 ? CFBridgingRetain(mode()) : NULL; }
@@ -30,6 +52,14 @@ double CGDisplayModeGetRefreshRate(CGDisplayModeRef m) { return [((__bridge NSDi
 uint32_t CGDisplayModeGetIOFlags(CGDisplayModeRef m) { return m ? 3 : 0; } // valid + safe
 CFStringRef CGDisplayModeCopyPixelEncoding(CGDisplayModeRef m) { return m ? CFRetain(CFSTR("--------RRRRRRRRGGGGGGGGBBBBBBBB")) : NULL; }
 void CGDisplayModeRelease(CGDisplayModeRef m) { if(m) CFRelease(m); }
+CGDisplayModeRef CGDisplayModeRetain(CGDisplayModeRef m) { if(m) CFRetain(m); return m; }
+bool CGDisplayModeIsUsableForDesktopGUI(CGDisplayModeRef m) { return m!=NULL; }
+// The screen's mode is the only one; asking for it again succeeds.
+CGError CGDisplaySetDisplayMode(CGDirectDisplayID d,CGDisplayModeRef m,CFDictionaryRef options) {
+    (void)options;
+    if(d!=1 || !m) return kCGErrorIllegalArgument;
+    return [(__bridge NSDictionary *)m isEqual:mode()] ? kCGErrorSuccess : kCGErrorIllegalArgument;
+}
 uint32_t CGDisplayVendorNumber(CGDirectDisplayID d) { return d==1 ? 0x610 : 0; }
 uint32_t CGDisplayModelNumber(CGDirectDisplayID d) { (void)d; return 0; }
 uint32_t CGDisplaySerialNumber(CGDirectDisplayID d) { (void)d; return 0; }
