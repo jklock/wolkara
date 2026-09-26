@@ -61,11 +61,15 @@ fi
 "$MINGW/bin/arm64ec-w64-mingw32-clang" --version | head -1
 
 step "Sources"
-if [ -d "$SRC/wine/.git" ] && [ "$(git -C "$SRC/wine" rev-parse --abbrev-ref HEAD)" != "$WINE_BRANCH" ]; then
-    # Another tree was built here before: keep it aside, start this one clean.
-    mv "$SRC/wine" "$SRC/wine-$(git -C "$SRC/wine" rev-parse --abbrev-ref HEAD)"; rm -rf "$OUT/wine-build"
+# The tree remembers where it was cloned from (local branches on top of it,
+# such as the Tolkara fork branch, are fine). Another source: keep the old tree
+# aside and start clean.
+WINE_SOURCE_MARK="$SRC/wine.source"
+if [ -d "$SRC/wine/.git" ] && [ -f "$WINE_SOURCE_MARK" ] && [ "$(cat "$WINE_SOURCE_MARK")" != "$WINE_REPO $WINE_BRANCH" ]; then
+    mv "$SRC/wine" "$SRC/wine-$(date +%Y%m%d-%H%M%S)"; rm -f "$WINE_SOURCE_MARK"; rm -rf "$OUT/wine-build"
 fi
 if [ ! -d "$SRC/wine/.git" ]; then git clone --depth 1 --branch "$WINE_BRANCH" "$WINE_REPO" "$SRC/wine"; rm -rf "$OUT/wine-build"; fi
+[ -f "$WINE_SOURCE_MARK" ] || printf '%s %s\n' "$WINE_REPO" "$WINE_BRANCH" > "$WINE_SOURCE_MARK"
 if [ ! -d "$SRC/FEX/.git" ]; then git clone --depth 1 --recurse-submodules --shallow-submodules --branch "$FEX_BRANCH" "$FEX_REPO" "$SRC/FEX"; fi
 (cd "$SRC/wine" && git log -1 --format='wine %h %s')
 (cd "$SRC/FEX" && git log -1 --format='FEX %h %s')
@@ -76,9 +80,12 @@ build_fex() {  # triple, output name
     if [ -f "$OUT/$name" ]; then echo "$name already built"; return; fi
     # The FEX toolchain file finds <triple>-clang in PATH; put llvm-mingw first
     # for this step only (its ar/ranlib would otherwise shadow the host's).
+    # FEX_TEB_TSD_OFFSET: the TEB lives in a pthread TSD slot on this host, as
+    # Wine's -D__WINE_TEB_TSD_OFFSET says (docs/WINDOWS.md, "x18").
     PATH="$MINGW/bin:$PATH" cmake -G Ninja -S "$SRC/FEX" -B "$dir" \
         -DCMAKE_TOOLCHAIN_FILE="$SRC/FEX/Data/CMake/toolchain_mingw.cmake" -DMINGW_TRIPLE="$triple" \
-        -DCMAKE_BUILD_TYPE=Release -DENABLE_LTO=False -DENABLE_JEMALLOC_GLIBC_ALLOC=False -DBUILD_TESTING=False -DTUNE_CPU=none
+        -DCMAKE_BUILD_TYPE=Release -DENABLE_LTO=False -DENABLE_JEMALLOC_GLIBC_ALLOC=False -DBUILD_TESTING=False -DTUNE_CPU=none \
+        -DFEX_TEB_TSD_OFFSET=0x17f8
     PATH="$MINGW/bin:$PATH" cmake --build "$dir" -j "$JOBS"
     built="$(find "$dir" -name "$name" -type f | head -1)"
     [ -n "$built" ] || { echo "error: $name not produced; see $dir"; exit 1; }
@@ -138,8 +145,10 @@ for binary in "$RUNTIME"/bin/* "$RUNTIME"/lib/wine/aarch64-unix/*.so "$RUNTIME"/
     install_name_tool -add_rpath @loader_path/../lib "$binary" 2>/dev/null || true
     install_name_tool -add_rpath @loader_path/../.. "$binary" 2>/dev/null || true
 done
-for f in "$RUNTIME"/bin/* "$RUNTIME"/lib/*.dylib "$RUNTIME"/lib/wine/aarch64-unix/*.so; do
-    [ -f "$f" ] && file "$f" | grep -q Mach-O && codesign -f -s - "$f" >/dev/null 2>&1 || true
+# make install strips the Unix-side binaries, which invalidates their ad-hoc
+# signatures on arm64: sign every Mach-O in the runtime again.
+find "$RUNTIME" -type f | while read -r f; do
+    file -b "$f" | grep -q '^Mach-O' && codesign -f -s - "$f" >/dev/null 2>&1 || true
 done
 step "Runtime assembled in $RUNTIME"
 file "$RUNTIME/bin/wine"
