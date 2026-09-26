@@ -488,6 +488,11 @@ xcrun clang -fobjc-arc -Wall -Wextra -Werror \
     runtime/GuestStubs.m runtime/GuestStubsArm64.S tests/test_guest_stubs.m \
     -o build/emulation/test_guest_stubs
 build/emulation/test_guest_stubs
+xcrun clang -std=c11 -Wall -Wextra -Werror \
+    -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -Iruntime \
+    runtime/GuestWrap.c runtime/GuestWrapArm64.S tests/test_guest_wrap.c \
+    -o build/emulation/test_guest_wrap
+build/emulation/test_guest_wrap
 python3 tests/test_publish.py
 python3 tests/test_arena_publish.py
 python3 tests/test_nib.py
