@@ -694,8 +694,29 @@ static int guest_posix_spawn(pid_t *pid, const char *path, const posix_spawn_fil
     LOG("[native] posix_spawn(%s) -> %d\n",path?shown:"NULL",result);
     return result;
 }
-static void guest_exit(int code) { LOG("[native] exit(%d)\n",code); exit(code); }
-static void guest_abort(void) { LOG("[native] abort()\n"); abort(); }
+// Where a placed image called from, as its file's own (unslid) address, for
+// symbolizing on the Mac; host code is named by dladdr.
+static void describe_caller(const void *address, char *out, size_t size) {
+    uintptr_t at=(uintptr_t)address;
+    const GuestLibrary *library=gl_library_at(&carried,at);
+    const char *path=library?library->path:inside(address,1)?guest.path:NULL;
+    if (path) {
+        const char *leaf=strrchr(path,'/');
+        snprintf(out,size,"%s preferred=%#lx",leaf?leaf+1:path,(unsigned long)(at-(library?library->slide:guest.slide)));
+        return;
+    }
+    Dl_info info={0};
+    if (dladdr(address,&info) && info.dli_fname) snprintf(out,size,"%s+%#lx",info.dli_sname?:info.dli_fname,(unsigned long)(at-(uintptr_t)(info.dli_sname?info.dli_saddr:info.dli_fbase)));
+    else snprintf(out,size,"%p",address);
+}
+static void guest_exit(int code) {
+    char caller[512]; describe_caller(__builtin_return_address(0),caller,sizeof caller);
+    LOG("[native] exit(%d) called from %s\n",code,caller); exit(code);
+}
+static void guest_abort(void) {
+    char caller[512]; describe_caller(__builtin_return_address(0),caller,sizeof caller);
+    LOG("[native] abort() called from %s\n",caller); abort();
+}
 // Each distinct line once: games probe the same missing files in loops. A
 // full table stops the logging, never the guest.
 static void log_once(const char *format, ...) {
