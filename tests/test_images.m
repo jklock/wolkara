@@ -40,5 +40,19 @@ int main(void) { @autoreleasepool {
     assert(!AKCreateCursorPath(NULL,image.size,CGPointZero));
     assert(!AKCreateCursorPath(ring.CGImage,CGSizeZero,CGPointZero));
     assert(!AKCursorIsHidden()); [NSCursor hide]; [NSCursor hide]; [NSCursor unhide]; assert(AKCursorIsHidden()); [NSCursor unhide]; [NSCursor unhide]; assert(!AKCursorIsHidden());
-    puts("bitmap storage, ownership, overflow, snapshot, cursor ABI and native silhouette: PASS");
+    // An image made from a CGImage, as Wine's Mac driver makes its cursors:
+    // the same pixels, its own size unless one is given, and an outline.
+    CGImageRef source=ring.CGImage; CGImageRetain(source);
+    NSBitmapImageRep *copied=[[NSBitmapImageRep alloc] initWithCGImage:source];
+    assert(copied && copied.pixelsWide==3 && copied.pixelsHigh==3 && copied.hasAlpha && copied.bytesPerRow==12);
+    assert(copied.bitmapData[4*4+3]==64 && copied.bitmapData[0*4+3]==255);
+    NSImage *wrapped=[[NSImage alloc] initWithCGImage:source size:CGSizeZero];
+    assert(wrapped && wrapped.size.width==3 && wrapped.size.height==3 && wrapped.representations.count==1);
+    assert([wrapped CGImageForProposedRect:NULL context:nil hints:nil]);
+    assert([[NSImage alloc] initWithCGImage:source size:CGSizeMake(32,32)].size.width==32);
+    silhouette=AKCreateCursorPath([wrapped CGImageForProposedRect:NULL context:nil hints:nil],CGSizeMake(96,96),CGPointMake(3,6));
+    assert(silhouette && CGPathContainsPoint(silhouette,NULL,CGPointMake(2,2),false)); CGPathRelease(silhouette);
+    assert(![[NSBitmapImageRep alloc] initWithCGImage:NULL] && ![[NSImage alloc] initWithCGImage:NULL size:CGSizeZero]);
+    CGImageRelease(source);
+    puts("bitmap storage, ownership, overflow, snapshot, cursor ABI, native silhouette and images from CGImage: PASS");
 } }
