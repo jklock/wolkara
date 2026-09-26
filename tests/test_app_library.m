@@ -150,7 +150,18 @@ int main(int argc, const char **argv) {
         assert([found[0].runtime isEqual:@"W/Runtime"] && [found[0].libraries isEqual:(@[@"lib/core.so"])]);
         assert([[library workingDirectoryForApp:found[0] error:&error] isEqual:[documents stringByAppendingPathComponent:@"W/game"]]);
         assert([[library appWithIdentifier:found[0].identifier].arguments count]==2);
-        assert([library removeApp:found[0] error:&error] && ![library discover].count);
+        // A newer build's profile names another executable: the entry follows it.
+        NSString *layeredID=found[0].identifier;
+        assert([library renameApp:found[0] to:@"Renamed" error:&error]);
+        NSMutableDictionary *moved=[known[1] mutableCopy];
+        moved[@"executable"]=@"lib/run";
+        copy_file(fixture,[documents stringByAppendingPathComponent:@"W/Runtime/lib/run"]);
+        TKAppLibrary *newer=open_library(documents,storage,@[known[0],moved]);
+        found=[newer discover];
+        assert(found.count==1 && [found[0].identifier isEqual:layeredID] && [found[0].executable isEqual:@"W/Runtime/lib/run"]);
+        assert([found[0].name isEqual:@"Renamed"] && newer.apps.count==3 && ![newer discover].count);
+        assert([newer removeApp:found[0] error:&error] && ![newer discover].count);
+        library=open_library(documents,storage,known);
 
         // Integrity at launch.
         NSString *copyPath=[library executablePathForApp:copied error:&error];

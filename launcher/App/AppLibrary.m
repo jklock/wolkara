@@ -260,14 +260,19 @@ static NSString *clean_name(id name) {
 - (TKApp *)addRecord:(NSDictionary *)record error:(NSError **)error {
     @synchronized (self) {
         // An entry for the same file (or copy) already exists: refresh its hash.
+        // A profile's entry follows the profile when a newer one names another
+        // executable (its id, name and launch history stay).
         for (NSUInteger i=0;i<_records.count;i++) {
             NSDictionary *existing=_records[i];
-            BOOL same=[existing[@"source"] isEqual:record[@"source"]] &&
-                ([record[@"source"] isEqual:@"copy"] ? [existing[@"sha256"] isEqual:record[@"sha256"]] : [existing[@"executable"] isEqual:record[@"executable"]]);
+            BOOL documents=[record[@"source"] isEqual:@"documents"] && [existing[@"source"] isEqual:@"documents"];
+            BOOL profiled=documents && record[@"profile"] && [existing[@"profile"] isEqual:record[@"profile"]];
+            BOOL same=profiled || ([existing[@"source"] isEqual:record[@"source"]] &&
+                ([record[@"source"] isEqual:@"copy"] ? [existing[@"sha256"] isEqual:record[@"sha256"]] : [existing[@"executable"] isEqual:record[@"executable"]]));
             if (!same) continue;
             NSMutableArray *records=[_records mutableCopy];
             NSMutableDictionary *updated=[existing mutableCopy];
             if (record[@"sha256"]) updated[@"sha256"]=record[@"sha256"];
+            if (profiled) { updated[@"executable"]=record[@"executable"]; updated[@"workingDirectory"]=record[@"workingDirectory"]; }
             records[i]=updated;
             NSMutableSet *dismissed=[_dismissedProfiles mutableCopy];
             if (updated[@"profile"]) [dismissed removeObject:updated[@"profile"]];
