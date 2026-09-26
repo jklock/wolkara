@@ -13,6 +13,9 @@ build/emulation/test_sparse_memory
 "${CC[@]}" runtime/GuestSparseMemory.c runtime/GuestMemoryInstruction.c runtime/SparseMemoryProbe.c runtime/SparseMemoryProbeProgram.S tests/MemoryInstructionReference.S tests/test_memory_instruction.c -o build/emulation/test_memory_instruction
 build/emulation/test_memory_instruction
 "${CC[@]}" runtime/GuestMemory.c runtime/GuestCPU.c runtime/GuestSparseMemory.c runtime/GuestMemoryInstruction.c runtime/GuestExclusive.c runtime/GuestSoftwareVM.c runtime/SparseMemoryProbeProgram.S tests/test_software_vm.c -o build/emulation/test_software_vm
+# ASan enlarges pthread stacks. Also exercise the exact 64 KiB guest-worker limit.
+"${CC[@]}" -fno-sanitize=address,undefined runtime/GuestMemory.c runtime/GuestCPU.c runtime/GuestSparseMemory.c runtime/GuestMemoryInstruction.c runtime/GuestExclusive.c runtime/GuestSoftwareVM.c runtime/SparseMemoryProbeProgram.S tests/test_software_vm.c -o build/emulation/test_software_vm_small_stack
+build/emulation/test_software_vm_small_stack
 build/emulation/test_software_vm
 "${CC[@]}" runtime/GuestMemory.c runtime/GuestCPU.c runtime/CPUProbe.c runtime/CPUProbeProgram.S tests/test_cpu.c -o build/emulation/test_cpu
 build/emulation/test_cpu

@@ -198,3 +198,12 @@ counter. It counts nonempty writes and successful atomic updates; reads, failed
 compare-exchanges, rejected writes and mapping changes do not increment it.
 This adds no per-access work and does not inspect application data. Its purpose
 is to distinguish repeated read faults from workloads that keep writing data.
+
+The window run later reached GOG Update and about 405 million handled accesses,
+then hit a native stack guard. The crash report identifies `gsv_copy` allocating
+its 64 KiB scratch buffer on a worker with a 64 KiB stack. Transfer scratch is
+now 4 KiB. A synthetic worker with an explicitly supplied, guarded 64 KiB stack
+reproduces SIGBUS with the old buffer and passes copy, overlapping copy, fill,
+and file/stdio bridges with the new one. The suite runs this case both with
+sanitizers and without them, because ASan enlarges pthread stacks. Device
+validation of this fix is pending.
