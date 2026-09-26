@@ -15,6 +15,18 @@
 - (BOOL)layer:(CALayer *)layer shouldInheritContentsScale:(CGFloat)scale fromWindow:(NSWindow *)window { return NO; }
 @end
 
+// Shows itself with orderFront:, as Wine's window class does.
+@interface OrderingWindow : NSWindow
+@property int depth, deepest;
+@end
+@implementation OrderingWindow
+- (void)makeKeyAndOrderFront:(id)sender {
+    self.deepest = MAX(self.deepest, ++self.depth);
+    if (self.depth == 1) { [self orderFront:sender]; [self makeKeyWindow]; [self setIsVisible:YES]; }
+    self.depth--;
+}
+@end
+
 static void run_main_queue(void) { CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.05, false); }
 
 int main(void) { @autoreleasepool {
@@ -63,5 +75,9 @@ int main(void) { @autoreleasepool {
     [other ak_hostBoundsChanged:CGRectMake(0, 0, 200, 100)];
     assert(other.backingScaleFactor > 1 && plain.layer.contentsScale == other.backingScaleFactor);
 
-    puts("display pass, frame rects, panels, tracking areas, layer placement and contents scale: PASS");
+    // Showing a window never calls back into a subclass's makeKeyAndOrderFront:.
+    OrderingWindow *ordering = [[OrderingWindow alloc] initWithContentRect:rect styleMask:0 backing:2 defer:NO];
+    [ordering makeKeyAndOrderFront:nil];
+    assert(ordering.deepest == 1);
+    puts("display pass, frame rects, panels, tracking areas, layer placement, contents scale and window ordering: PASS");
 } }

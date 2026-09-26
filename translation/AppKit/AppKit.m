@@ -497,7 +497,10 @@ static void logLayer(CALayer *layer,unsigned depth) {
         [NSNotificationCenter.defaultCenter postNotificationName:@"NSWindowDidResizeNotification" object:self];
     }
 }
-- (void)makeKeyAndOrderFront:(id)sender {
+// Every way of showing a window ends here, never in a method a guest's window
+// class may override: Wine's makeKeyAndOrderFront: orders with orderFront:.
+- (void)makeKeyAndOrderFront:(id)sender { (void)sender; [self ak_orderFront]; }
+- (void)ak_orderFront {
     BOOL wasKey=self.keyWindow;
     if (!_uiWindow) {
         UIWindowScene *scene = nil;
@@ -531,9 +534,11 @@ static void logLayer(CALayer *layer,unsigned depth) {
     for(UIWindow *window in _uiWindow.windowScene.windows) AKLog(@"UIKit window %@ hidden=%d key=%d level=%g root=%@",window,window.hidden,window.keyWindow,window.windowLevel,window.rootViewController);
     logLayer(_uiWindow.layer,0);
 }
-- (void)orderFront:(id)s { [self makeKeyAndOrderFront:s]; }
+// One game surface: shown is key.
+- (void)orderFront:(id)sender { (void)sender; [self ak_orderFront]; }
+- (void)makeKeyWindow { if (self.visible) [self ak_orderFront]; }
 - (void)orderOut:(id)sender { _uiWindow.hidden = YES; uncoverLauncher(); }
-- (void)setIsVisible:(BOOL)visible { visible ? [self makeKeyAndOrderFront:nil] : [self orderOut:nil]; }
+- (void)setIsVisible:(BOOL)visible { visible ? [self ak_orderFront] : [self orderOut:nil]; }
 - (void)makeMainWindow { }   // single game surface; already key
 - (void)close { [self orderOut:nil]; [(NSMutableArray *)NSApp.windows removeObject:self]; }
 - (void)sendEvent:(NSEvent *)e {
