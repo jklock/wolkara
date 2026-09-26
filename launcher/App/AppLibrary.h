@@ -34,6 +34,9 @@ typedef NS_ENUM(NSInteger, TKAppSource) {
 // executable at start. Nil and empty for an application started on its own.
 @property(nonatomic, readonly, copy, nullable) NSString *runtime;
 @property(nonatomic, readonly, copy) NSArray<NSString *> *libraries;
+// From the profile: megabytes of prepared executable memory the runtime writes
+// its own code into; 0 for none.
+@property(nonatomic, readonly) NSUInteger codePool;
 @property(nonatomic, readonly) NSDate *added;
 @property(nonatomic, readonly, nullable) NSDate *lastLaunched;
 @end

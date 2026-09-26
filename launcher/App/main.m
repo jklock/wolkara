@@ -716,6 +716,10 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
             fprintf(log,"[host] library %s\n",library.UTF8String);
         }
         ng_set_libraries(runtime.fileSystemRepresentation,libraries,count);
+        if (app.codePool) {
+            ng_set_code_pool((size_t)app.codePool<<20);
+            fprintf(log,"[host] code pool %lu MB\n",(unsigned long)app.codePool);
+        }
     }
     // Local signing: the runtime validates the container against this
     // executable and refuses it after Developer service was selected.

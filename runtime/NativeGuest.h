@@ -14,6 +14,11 @@ void ng_set_arguments(const char *const *arguments, size_t count);
 // root, the runtime folder, which then counts as the application's folder.
 // Copied; at most 64. Call before ng_initialize; default: none.
 void ng_set_libraries(const char *root, const char *const *paths, size_t count);
+// Prepared executable memory beyond the images, for a runtime that writes its
+// own code (a JIT): bytes, rounded up to pages. Once the arena is ready,
+// ${CodePool} in the environment's values stands for it, as
+// 0x<start>-0x<end>@0x<writable alias>. Call before ng_initialize; default: none.
+void ng_set_code_pool(size_t size);
 // Developer service: select our integrated helper before the process's one
 // permitted startup. Fails if Local signing was already selected.
 bool ng_use_local_authorization(void);
