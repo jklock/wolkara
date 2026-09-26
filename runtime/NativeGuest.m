@@ -14,6 +14,7 @@ static NativeCodeMemory local_quarantine;
 #include "NativeGuestPolicy.h"
 #include "GuestStubs.h"
 #include "GuestTLS.h"
+#include "GuestWrap.h"
 #include "GuestWait.h"
 #include "SignedImage.h"
 #include <dlfcn.h>
@@ -30,6 +31,13 @@ static NativeCodeMemory local_quarantine;
 #include <pthread.h>
 #include <signal.h>
 #include <spawn.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <poll.h>
+#include <sys/socket.h>
+#include <sys/sysctl.h>
+#include <sys/un.h>
+#include <sys/utsname.h>
 #include <sys/ucontext.h>
 #include <fcntl.h>
 #include <os/lock.h>
@@ -541,6 +549,18 @@ static char *guest_getenv(const char *);
 // known cases without it.
 static bool case_insensitive_files;
 static DIR *guest_opendir(const char *);
+static struct dirent *guest_readdir(DIR *);
+static int guest_socket(int, int, int);
+static int guest_connect(int, const struct sockaddr *, socklen_t);
+static int guest_getsockopt(int, int, int, void *, socklen_t *);
+static int guest_setsockopt(int, int, int, const void *, socklen_t);
+static int guest_shutdown(int, int);
+static int guest_poll(struct pollfd *, nfds_t, int);
+static ssize_t guest_sendto(int, const void *, size_t, int, const struct sockaddr *, socklen_t);
+static ssize_t guest_recvfrom(int, void *, size_t, int, struct sockaddr *, socklen_t *);
+static int guest_sysctlbyname(const char *, void *, size_t *, void *, size_t);
+static int guest_uname(struct utsname *);
+static int guest_gethostname(char *, size_t);
 static char *guest_realpath(const char *, char *);
 static char *guest_realpath_extsn(const char *, char *);
 // Handles to the placed images a guest dlopen yields: the tag, RTLD_FIRST, and
@@ -582,11 +602,18 @@ static void *hook(const char *name) {
         HOOK("access",guest_access); HOOK("opendir",guest_opendir);
         HOOK("fopen",guest_fopen); HOOK("fopen$DARWIN_EXTSN",guest_fopen_extsn);
         HOOK("realpath",guest_realpath); HOOK("realpath$DARWIN_EXTSN",guest_realpath_extsn);
+        if (trace_guest) HOOK("readdir",guest_readdir);
     }
-    if (trace_guest) { HOOK("mkdir",guest_mkdir); HOOK("getenv",guest_getenv); }
+    if (trace_guest) { HOOK("mkdir",guest_mkdir); HOOK("getenv",guest_getenv);
+        HOOK("socket",guest_socket); HOOK("connect",guest_connect);
+        HOOK("getsockopt",guest_getsockopt); HOOK("setsockopt",guest_setsockopt);
+        HOOK("shutdown",guest_shutdown); HOOK("poll",guest_poll);
+        HOOK("sendto",guest_sendto); HOOK("recvfrom",guest_recvfrom);
+        HOOK("uname",guest_uname); HOOK("gethostname",guest_gethostname); }
     HOOK("mmap",guest_mmap); HOOK("mprotect",guest_mprotect); HOOK("munmap",guest_munmap);
     if (gv_enabled(&vm_budget)) HOOK("madvise",guest_madvise);
     HOOK("memcpy",guest_memcpy); HOOK("memmove",guest_memmove); HOOK("memset",guest_memset);
+    HOOK("sysctlbyname",guest_sysctlbyname);
     HOOK("pthread_jit_write_protect_np",guest_jit_protect);
 #undef HOOK
     return NULL;
@@ -598,12 +625,16 @@ static void *guest_dlsym(void *handle, const char *name) {
     guest_dl_error[0]=0;
     void *value = name ? hook(name) : NULL;
     size_t index; bool first;
-    if (!value && guest_handle(handle,&index,&first)) {
+    bool placed=guest_handle(handle,&index,&first);
+    if (!value && placed) {
         value = placed_symbol(index,name,first);
         (void)dlerror();   // a library it links lacking the name is not the guest's error
         if (!value) snprintf(guest_dl_error,sizeof guest_dl_error,"dlsym(%p, %s): symbol not found",handle,name?name:"(null)");
     }
     else if (!value) value = dlsym(handle,name);
+    // Tracing reaches through the application's own libraries: what a placed
+    // image exports is wrapped so each call logs its arguments and result.
+    if (trace_guest && placed && value && inside(value,4)) value=gw_wrap(name,value);
     LOG("[native] dlsym(%s) -> %p\n",name?name:"(null)",value); return value;
 }
 // Placed images stay for the life of the guest.
@@ -680,6 +711,14 @@ static void log_once(const char *format, ...) {
     if (fresh) LOG("%s",line);
     if (fresh && count==LIMIT) LOG("[native] %zu distinct trace lines logged; later ones are not\n",count);
 }
+// Trace lines carry a small per-thread number; the first tracer is the main
+// thread, which starts the guest.
+static unsigned trace_tid(void) {
+    static _Thread_local unsigned mine;
+    static atomic_uint handed_out;
+    if (!mine) mine=atomic_fetch_add(&handed_out,1)+1;
+    return mine;
+}
 // Logging must not change the errno the guest reads.
 static void trace_failure(const char *call, const char *path) {
     if (!trace_guest) return;
@@ -687,6 +726,25 @@ static void trace_failure(const char *call, const char *path) {
     char shown[1024]; if (path) loggable_path(path,shown,sizeof shown);
     log_once("[native] %s(%s) failed errno=%d\n",call,path?shown:"NULL",code);
     errno=code;
+}
+// What the guest finds, not only what it misses: a depot built from a
+// directory listing differs when a file is absent, added or truncated.
+static void trace_success(const char *call, const char *path, long long size) {
+    if (!trace_guest) return;
+    char shown[1024]; if (path) loggable_path(path,shown,sizeof shown);
+    log_once("[native] [t%u] %s(%s) ok size=%lld\n",trace_tid(),call,path?shown:"NULL",size);
+}
+static struct dirent *guest_readdir(DIR *directory) {
+    struct dirent *entry=readdir(directory);
+    if (trace_guest && entry) {
+        char base[PATH_MAX];
+        int fd=dirfd(directory);
+        if (fd>=0 && fcntl(fd,F_GETPATH,base)==0) {
+            char shown[1024]; loggable_path(base,shown,sizeof shown);
+            log_once("[native] [t%u] readdir(%s) -> %s type=%d\n",trace_tid(),shown,entry->d_name,(int)entry->d_type);
+        }
+    }
+    return entry;
 }
 // --case-insensitive-files: the lookup's variant to retry, if any. Never for
 // creating files; Foundation's own file APIs are not covered.
@@ -730,6 +788,7 @@ static int guest_open(const char *path, int flags, ...) {
     char found[PATH_MAX];
     if (fd<0 && !(flags&O_CREAT) && case_variant(path,found,sizeof found) && (fd=open(found,flags,mode))>=0) case_found(path,found);
     if (fd<0) trace_failure("open",path);
+    else if (trace_guest && !(flags&O_CREAT)) { struct stat s; trace_success("open",path,!fstat(fd,&s)?(long long)s.st_size:-1); }
     return fd;
 }
 static int guest_openat(int directory, const char *path, int flags, ...) {
@@ -740,6 +799,7 @@ static int guest_openat(int directory, const char *path, int flags, ...) {
     if (fd<0 && !(flags&O_CREAT) && case_variant_at(directory,path,found,sizeof found) &&
         (fd=openat(directory,found,flags,mode))>=0) case_found(path,found);
     if (fd<0) trace_failure("openat",path);
+    else if (trace_guest && !(flags&O_CREAT)) { struct stat s; trace_success("openat",path,!fstat(fd,&s)?(long long)s.st_size:-1); }
     return fd;
 }
 static int guest_stat(const char *path, struct stat *buffer) {
@@ -747,6 +807,7 @@ static int guest_stat(const char *path, struct stat *buffer) {
     char found[PATH_MAX];
     if (result && case_variant(path,found,sizeof found) && !(result=stat(found,buffer))) case_found(path,found);
     if (result) trace_failure("stat",path);
+    else trace_success("stat",path,(long long)buffer->st_size);
     return result;
 }
 static int guest_lstat(const char *path, struct stat *buffer) {
@@ -754,6 +815,7 @@ static int guest_lstat(const char *path, struct stat *buffer) {
     char found[PATH_MAX];
     if (result && case_variant(path,found,sizeof found) && !(result=lstat(found,buffer))) case_found(path,found);
     if (result) trace_failure("lstat",path);
+    else trace_success("lstat",path,(long long)buffer->st_size);
     return result;
 }
 static int guest_access(const char *path, int mode) {
@@ -761,6 +823,7 @@ static int guest_access(const char *path, int mode) {
     char found[PATH_MAX];
     if (result && case_variant(path,found,sizeof found) && !(result=access(found,mode))) case_found(path,found);
     if (result) trace_failure("access",path);
+    else trace_success("access",path,-1);
     return result;
 }
 // A guest imports fopen and realpath plainly or as $DARWIN_EXTSN (the name
@@ -773,6 +836,7 @@ static FILE *traced_fopen(FILE *(*real)(const char *, const char *), const char 
     bool creates=mode && (strchr(mode,'w') || strchr(mode,'a'));
     if (!file && !creates && case_variant(path,found,sizeof found) && (file=real(found,mode))) case_found(path,found);
     if (!file) trace_failure("fopen",path);
+    else trace_success("fopen",path,-1);
     return file;
 }
 static FILE *guest_fopen(const char *path, const char *mode) { return traced_fopen(plain_fopen,path,mode); }
@@ -782,6 +846,7 @@ static DIR *guest_opendir(const char *path) {
     char found[PATH_MAX];
     if (!directory && case_variant(path,found,sizeof found) && (directory=opendir(found))) case_found(path,found);
     if (!directory) trace_failure("opendir",path);
+    else trace_success("opendir",path,-1);
     return directory;
 }
 static char *traced_realpath(char *(*real)(const char *, char *), const char *path, char *resolved) {
@@ -793,6 +858,163 @@ static char *traced_realpath(char *(*real)(const char *, char *), const char *pa
 }
 static char *guest_realpath(const char *path, char *resolved) { return traced_realpath(plain_realpath,path,resolved); }
 static char *guest_realpath_extsn(const char *path, char *resolved) { return traced_realpath(realpath,path,resolved); }
+// Trace lines carry a small per-thread number; the first tracer is the main
+// thread, which starts the guest.
+static unsigned trace_tid(void);
+// Sockets, under --trace-guest: who the guest tries to talk to (a Galaxy
+// client's local socket, an HTTPS endpoint) says what a failed sign-in needed.
+static int guest_socket(int domain, int type, int protocol) {
+    int fd=socket(domain,type,protocol);
+    int code=errno;
+    if (trace_guest) {
+        const char *family=domain==AF_UNIX?"AF_UNIX":domain==AF_INET?"AF_INET":domain==AF_INET6?"AF_INET6":"?";
+        log_once("[native] [t%u] socket(%s,%d) -> %d errno=%d\n",trace_tid(),family,type,fd,fd<0?code:0);
+    }
+    return fd;
+}
+static int guest_connect(int fd, const struct sockaddr *address, socklen_t size) {
+    int result=connect(fd,address,size);
+    int code=errno;
+    if (trace_guest && address) {
+        char shown[1024]="?";
+        if (address->sa_family==AF_UNIX && size>=sizeof(sa_family_t)) {
+            const struct sockaddr_un *un=(const struct sockaddr_un *)address;
+            loggable_path(un->sun_path,shown,sizeof shown);
+        } else if (address->sa_family==AF_INET && size>=sizeof(struct sockaddr_in)) {
+            const struct sockaddr_in *in=(const struct sockaddr_in *)address;
+            unsigned char *o=(unsigned char *)&in->sin_addr;
+            snprintf(shown,sizeof shown,"%u.%u.%u.%u:%u",o[0],o[1],o[2],o[3],ntohs(in->sin_port));
+        } else snprintf(shown,sizeof shown,"(family %d)",address->sa_family);
+        log_once("[native] [t%u] connect(%s) -> %d errno=%d\n",trace_tid(),shown,result,result?code:0);
+    }
+    return result;
+}
+// What a non-blocking connect is followed by: polling and the error it ends in.
+static int guest_getsockopt(int fd, int level, int option, void *value, socklen_t *size) {
+    int result=getsockopt(fd,level,option,value,size);
+    int code=errno;
+    if (trace_guest)
+        log_once("[native] [t%u] getsockopt(%d,%d,%d) -> %d errno=%d value=%d\n",trace_tid(),fd,level,option,result,result?code:0,
+            value&&size&&*size>=sizeof(int)?*(int *)value:-1);
+    return result;
+}
+static int guest_setsockopt(int fd, int level, int option, const void *value, socklen_t size) {
+    int result=setsockopt(fd,level,option,value,size);
+    int code=errno;
+    if (trace_guest)
+        log_once("[native] [t%u] setsockopt(%d,%d,%d) -> %d errno=%d\n",trace_tid(),fd,level,option,result,result?code:0);
+    return result;
+}
+static int guest_shutdown(int fd, int how) {
+    int result=shutdown(fd,how);
+    int code=errno;
+    if (trace_guest) log_once("[native] [t%u] shutdown(%d,%d) -> %d errno=%d\n",trace_tid(),fd,how,result,result?code:0);
+    return result;
+}
+// macOS answers machdep.cpu.brand_string; the iPadOS sandbox denies it with
+// EPERM. A guest that collects hardware info then holds a null where it never
+// has one on a Mac. The chip is known from the model, which is not denied.
+static const char *guest_chip_name(void) {
+    static char chip[64];
+    if (chip[0]) return chip;
+    char model[64]={0}; size_t size=sizeof model;
+    (void)sysctlbyname("hw.model",model,&size,NULL,0);
+    static const struct { const char *prefix; const char *name; } chips[]={
+        {"iPad17,", "Apple M5"},
+        {"iPad16,3", "Apple M4"}, {"iPad16,4", "Apple M4"},
+        {"iPad16,5", "Apple M4"}, {"iPad16,6", "Apple M4"},
+        {"iPad16,", "Apple A17 Pro"},
+        {"iPhone18,", "Apple A19 Pro"}, {"iPhone17,", "Apple A18 Pro"},
+    };
+    const char *name=NULL;
+    for (size_t i=0;i<sizeof chips/sizeof *chips;i++)
+        if (!strncmp(model,chips[i].prefix,strlen(chips[i].prefix))) { name=chips[i].name; break; }
+    snprintf(chip,sizeof chip,"%s",name?name:"Apple Silicon");
+    return chip;
+}
+// What the guest learns about the machine: an answer the simulator's host
+// passes through (a Mac model name) and the iPad does not have is invisible
+// to every other hook.
+static int guest_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *newp, size_t newlen) {
+    int result=sysctlbyname(name,oldp,oldlenp,newp,newlen);
+    int code=errno;
+    if (result && name && !strcmp(name,"machdep.cpu.brand_string") && oldp && oldlenp && !newp) {
+        const char *chip=guest_chip_name();
+        size_t need=strlen(chip)+1;
+        if (*oldlenp>=need) {
+            memcpy(oldp,chip,need); *oldlenp=need-1;
+            result=0;
+            if (trace_guest) log_once("[native] [t%u] sysctlbyname(%s) denied; answering \"%s\" from the model\n",trace_tid(),name,chip);
+        } else {
+            size_t room=*oldlenp; *oldlenp=need-1;
+            if (room) { memcpy(oldp,chip,room-1); ((char *)oldp)[room-1]=0; }
+            result=0;
+            if (trace_guest) log_once("[native] [t%u] sysctlbyname(%s) denied; answering a truncated \"%s\"\n",trace_tid(),name,chip);
+        }
+        if (!result) return 0;
+        errno=code;
+    }
+    if (trace_guest && name) {
+        char shown[280]="";
+        if (!result && oldp && oldlenp) {
+            size_t n=*oldlenp;
+            const unsigned char *bytes=oldp;
+            bool text=n && memchr(bytes,0,n)==bytes+n-1;
+            for (size_t i=0;!result&&text&&i<n-1;i++) if (bytes[i]<32||bytes[i]>126) text=false;
+            if (text) snprintf(shown,sizeof shown,"\"%s\"",bytes);
+            else { for (size_t i=0;i<n&&i<32;i++) snprintf(shown+i*3,sizeof shown-i*3,"%02x ",bytes[i]); if (n>32) snprintf(shown+96,sizeof shown-96,"...(%zu)",n); }
+        }
+        log_once("[native] [t%u] sysctlbyname(%s) -> %d errno=%d %s\n",trace_tid(),name,result,result?code:0,shown);
+    }
+    return result;
+}
+static int guest_uname(struct utsname *u) {
+    int result=uname(u);
+    if (trace_guest && !result) log_once("[native] [t%u] uname() -> %s %s %s\n",trace_tid(),u->sysname,u->release,u->machine);
+    return result;
+}
+static int guest_gethostname(char *name, size_t size) {
+    int result=gethostname(name,size);
+    if (trace_guest && !result) log_once("[native] [t%u] gethostname() -> %s\n",trace_tid(),name);
+    return result;
+}
+static int guest_poll(struct pollfd *fds, nfds_t count, int timeout) {
+    int result=poll(fds,count,timeout);
+    int code=errno;
+    if (trace_guest)
+        log_once("[native] [t%u] poll(%d,%dms) -> %d errno=%d revents=%#x\n",trace_tid(),(int)count,timeout,result,result<0?code:0,
+            result>0?fds[0].revents:0);
+    return result;
+}
+static ssize_t guest_sendto(int fd, const void *bytes, size_t length, int flags, const struct sockaddr *to, socklen_t tosize) {
+    ssize_t result=sendto(fd,bytes,length,flags,to,tosize);
+    int code=errno;
+    if (trace_guest) log_once("[native] [t%u] sendto(%d,%zu) -> %zd errno=%d\n",trace_tid(),fd,length,result,result<0?code:0);
+    return result;
+}
+static ssize_t guest_recvfrom(int fd, void *bytes, size_t length, int flags, struct sockaddr *from, socklen_t *fromsize) {
+    ssize_t result=recvfrom(fd,bytes,length,flags,from,fromsize);
+    int code=errno;
+    if (trace_guest) log_once("[native] [t%u] recvfrom(%d,%zu) -> %zd errno=%d\n",trace_tid(),fd,length,result,result<0?code:0);
+    return result;
+}
+// A crash on the guest's own pages reports no registers; when tracing, log
+// them before the system takes its report.
+static void guest_crash_registers(int signal_number, siginfo_t *info, void *uap) {
+    ucontext_t *context=uap;
+    arm_thread_state64_t state=context->uc_mcontext->__ss;
+    LOG("[native] guest fault signal=%d pc=%016llx address=%p\n",signal_number,
+        (unsigned long long)arm_thread_state64_get_pc(state),info?info->si_addr:NULL);
+    for (unsigned i=0;i<29;i+=4)
+        LOG("[native] x%-2u=%016llx x%-2u=%016llx x%-2u=%016llx x%-2u=%016llx\n",
+            i,(unsigned long long)state.__x[i],i+1,(unsigned long long)state.__x[i+1],
+            i+2,(unsigned long long)state.__x[i+2],i+3,(unsigned long long)state.__x[i+3]);
+    LOG("[native] x28=%016llx fp=%016llx lr=%016llx sp=%016llx\n",(unsigned long long)state.__x[28],
+        (unsigned long long)arm_thread_state64_get_fp(state),(unsigned long long)arm_thread_state64_get_lr(state),
+        (unsigned long long)arm_thread_state64_get_sp(state));
+    signal(signal_number,SIG_DFL);
+    raise(signal_number);
+}
 static int guest_mkdir(const char *path, mode_t mode) {
     int result=mkdir(path,mode);
     if (result) { trace_failure("mkdir",path); return result; }
@@ -1051,7 +1273,7 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
         fprintf(log,"[native] startup was already attempted; restart the app\n"); return false;
     }
     guest.log=log; guest.path=strdup(path);
-    gs_log(log);
+    gs_log(log); gw_log(log);
     guest_arguments=@[@(path)];
     Method arguments_method=class_getInstanceMethod(NSProcessInfo.class,@selector(arguments));
     original_arguments=(void *)method_setImplementation(arguments_method,(IMP)guest_process_arguments);
@@ -1181,7 +1403,14 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
         if(set_nibs) set_nibs([NSHomeDirectory() stringByAppendingPathComponent:@"Documents/GuestCompatibility/Nibs"].fileSystemRepresentation);
     }
     trace_guest=[NSProcessInfo.processInfo.arguments containsObject:@"--trace-guest"];
-    if (trace_guest) LOG("[native] tracing failed file access, created directories and getenv (--trace-guest)\n");
+    if (trace_guest) LOG("[native] tracing failed file access, created directories, getenv, sockets and the calls dlsym hands out (--trace-guest)\n");
+    if (trace_guest) {
+        struct sigaction crash_registers={0};
+        crash_registers.sa_sigaction=guest_crash_registers;
+        crash_registers.sa_flags=SA_SIGINFO|SA_RESETHAND;
+        sigaction(SIGSEGV,&crash_registers,NULL);
+        sigaction(SIGBUS,&crash_registers,NULL);
+    }
     case_insensitive_files=[NSProcessInfo.processInfo.arguments containsObject:@"--case-insensitive-files"];
     if (case_insensitive_files) LOG("[native] file lookups retried ignoring case (--case-insensitive-files; experimental)\n");
     const char *budget_mb=getenv("TOLKARA_VM_BUDGET_MB");
