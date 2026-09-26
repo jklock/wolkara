@@ -15,6 +15,7 @@ CGPathRef AKCreateCursorPath(CGImageRef image, CGSize size, CGPoint hotSpot) CF_
 @property(readonly) NSUInteger bitmapFormat;
 @property(readonly, getter=isPlanar) BOOL planar;
 @property(readonly) CGImageRef CGImage;
+- (instancetype)initWithCGImage:(CGImageRef)image;
 - (void)getBitmapDataPlanes:(unsigned char **)planes;
 @end
 @interface NSImage : AKStubObject
@@ -22,6 +23,7 @@ CGPathRef AKCreateCursorPath(CGImageRef image, CGSize size, CGPoint hotSpot) CF_
 @property(getter=isTemplate) BOOL template;
 @property(readonly) NSArray<NSImageRep *> *representations;
 - (instancetype)initWithSize:(CGSize)size;
+- (instancetype)initWithCGImage:(CGImageRef)image size:(CGSize)size;
 - (void)addRepresentation:(NSImageRep *)representation;
 - (CGImageRef)CGImageForProposedRect:(CGRect *)rect context:(id)context hints:(NSDictionary *)hints;
 @end

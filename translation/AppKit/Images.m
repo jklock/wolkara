@@ -55,6 +55,23 @@ CGPathRef AKCreateCursorPath(CGImageRef image, CGSize size, CGPoint hotSpot) {
 - (instancetype)initWithBitmapDataPlanes:(unsigned char **)planes pixelsWide:(NSInteger)width pixelsHigh:(NSInteger)height bitsPerSample:(NSInteger)bits samplesPerPixel:(NSInteger)samples hasAlpha:(BOOL)alpha isPlanar:(BOOL)planar colorSpaceName:(NSString *)space bytesPerRow:(NSInteger)rowBytes bitsPerPixel:(NSInteger)pixelBits {
     return [self initWithBitmapDataPlanes:planes pixelsWide:width pixelsHigh:height bitsPerSample:bits samplesPerPixel:samples hasAlpha:alpha isPlanar:planar colorSpaceName:space bitmapFormat:0 bytesPerRow:rowBytes bitsPerPixel:pixelBits];
 }
+// A copy of an image's pixels, 8-bit RGBA premultiplied, top row first.
+- (instancetype)initWithCGImage:(CGImageRef)image {
+    if(!image) return nil;
+    size_t width=CGImageGetWidth(image),height=CGImageGetHeight(image);
+    if(!width || !height || width>(size_t)NSIntegerMax/4) return nil;
+    self=[self initWithBitmapDataPlanes:NULL pixelsWide:(NSInteger)width pixelsHigh:(NSInteger)height bitsPerSample:8 samplesPerPixel:4
+                               hasAlpha:YES isPlanar:NO colorSpaceName:@"NSDeviceRGBColorSpace" bitmapFormat:0
+                            bytesPerRow:(NSInteger)width*4 bitsPerPixel:32];
+    if(!self) return nil;
+    CGColorSpaceRef space=CGColorSpaceCreateDeviceRGB();
+    CGContextRef context=CGBitmapContextCreate(_pixels,width,height,8,width*4,space,(CGBitmapInfo)kCGImageAlphaPremultipliedLast);
+    CGColorSpaceRelease(space);
+    if(!context) return nil;
+    CGContextDrawImage(context,CGRectMake(0,0,width,height),image);
+    CGContextRelease(context);
+    return self;
+}
 - (unsigned char *)bitmapData { return _pixels; }
 - (BOOL)isPlanar { return NO; }
 - (void)getBitmapDataPlanes:(unsigned char **)planes { if(planes) { planes[0]=_pixels; for(int i=1;i<5;i++) planes[i]=NULL; } }
@@ -76,6 +93,14 @@ CGPathRef AKCreateCursorPath(CGImageRef image, CGSize size, CGPoint hotSpot) {
 @implementation NSImage { NSMutableArray<NSImageRep *> *_reps; }
 - (instancetype)init { return [self initWithSize:CGSizeZero]; }
 - (instancetype)initWithSize:(CGSize)size { if((self=[super init])) { _size=size; _reps=[NSMutableArray new]; } return self; }
+// A zero size means the image's own, in pixels.
+- (instancetype)initWithCGImage:(CGImageRef)image size:(CGSize)size {
+    NSBitmapImageRep *rep=[[NSBitmapImageRep alloc] initWithCGImage:image];
+    if(!rep) return nil;
+    if(size.width<=0 || size.height<=0) size=CGSizeMake(rep.pixelsWide,rep.pixelsHigh);
+    if((self=[self initWithSize:size])) [self addRepresentation:rep];
+    return self;
+}
 - (NSArray *)representations { return [_reps copy]; }
 - (void)addRepresentation:(NSImageRep *)rep { if(rep) [_reps addObject:rep]; }
 - (void)removeRepresentation:(NSImageRep *)rep { [_reps removeObject:rep]; }
