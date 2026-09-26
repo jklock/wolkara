@@ -586,6 +586,7 @@ static bool trace_guest;
 static int guest_open(const char *, int, ...);
 static int guest_openat(int, const char *, int, ...);
 static int guest_stat(const char *, struct stat *);
+static int guest_fstatat(int, const char *, struct stat *, int);
 static int guest_lstat(const char *, struct stat *);
 static int guest_access(const char *, int);
 static FILE *guest_fopen(const char *, const char *);
@@ -636,6 +637,7 @@ static void *hook(const char *name) {
     HOOK("exit",guest_exit); HOOK("abort",guest_abort);
     if (trace_guest || case_insensitive_files) {
         HOOK("open",guest_open); HOOK("openat",guest_openat); HOOK("stat",guest_stat); HOOK("lstat",guest_lstat);
+        HOOK("fstatat",guest_fstatat);
         HOOK("access",guest_access); HOOK("opendir",guest_opendir);
         HOOK("fopen",guest_fopen); HOOK("fopen$DARWIN_EXTSN",guest_fopen_extsn);
         HOOK("realpath",guest_realpath); HOOK("realpath$DARWIN_EXTSN",guest_realpath_extsn);
@@ -834,6 +836,14 @@ static int guest_stat(const char *path, struct stat *buffer) {
     char found[PATH_MAX];
     if (result && case_variant(path,found,sizeof found) && !(result=stat(found,buffer))) case_found(path,found);
     if (result) trace_failure("stat",path);
+    return result;
+}
+static int guest_fstatat(int directory, const char *path, struct stat *buffer, int flags) {
+    int result=fstatat(directory,path,buffer,flags);
+    char found[PATH_MAX];
+    if (result && case_variant_at(directory,path,found,sizeof found) && !(result=fstatat(directory,found,buffer,flags)))
+        case_found(path,found);
+    if (result) trace_failure("fstatat",path);
     return result;
 }
 static int guest_lstat(const char *path, struct stat *buffer) {
