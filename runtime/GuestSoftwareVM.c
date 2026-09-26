@@ -1,0 +1,381 @@
+#include "GuestSoftwareVM.h"
+#include "GuestMemoryInstruction.h"
+#include "GuestExclusive.h"
+#include <errno.h>
+#include <limits.h>
+#include <mach/mach.h>
+#include <pthread.h>
+#include <stdatomic.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/mman.h>
+#include <sys/ucontext.h>
+#include <unistd.h>
+
+enum { ACTION_LIMIT = 128, BOUNCE_SIZE = 65536 };
+static GMSparseMemory memory;
+static uint64_t base, span;
+static void *guard;
+static size_t force_threshold;
+static size_t native_pool_size;
+static int log_fd = -1;
+static atomic_bool enabled;
+static atomic_uint_fast64_t fault_count;
+static uintptr_t code_base, code_alias;
+static size_t code_size;
+static atomic_bool code_alias_enabled;
+static struct sigaction original[2], actions[ACTION_LIMIT];
+static _Atomic(struct sigaction *) current[2];
+static size_t action_count;
+static pthread_mutex_t action_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static int error_code(GMResult result) {
+    return result == GM_NOMEM ? ENOMEM : result == GM_PROTECTION ? EACCES : EINVAL;
+}
+static bool rounded(size_t size, uint64_t *result) {
+    if (!size || size > UINT64_MAX - (GM_PAGE_SIZE - 1)) return false;
+    *result = (size + GM_PAGE_SIZE - 1) & ~(uint64_t)(GM_PAGE_SIZE - 1);
+    return true;
+}
+bool gsv_enabled(void) { return atomic_load_explicit(&enabled, memory_order_acquire); }
+void gsv_prefer_native_pool(size_t size) { native_pool_size=size; }
+bool gsv_address(const void *address) {
+    uint64_t a = (uintptr_t)address;
+    return gsv_enabled() && a >= base && a - base < span;
+}
+static void report(const char *message, uint64_t value) {
+    if (log_fd < 0) return;
+    char line[160]; size_t n = 0;
+    while (message[n] && n < 136) { line[n] = message[n]; ++n; }
+    line[n++] = '0'; line[n++] = 'x';
+    for (int shift = 60; shift >= 0; shift -= 4) line[n++] = "0123456789abcdef"[(value >> shift) & 15];
+    line[n++] = '\n'; (void)write(log_fd, line, n);
+}
+bool gsv_code_alias(const void *executable, const void *readable, size_t size) {
+    uintptr_t start=(uintptr_t)executable, alias=(uintptr_t)readable;
+    if(!gsv_enabled() || code_size || !start || !alias || (start&3) || (alias&3) ||
+       size<4 || (size&3) || size>UINTPTR_MAX-start || size>UINTPTR_MAX-alias ||
+       gsv_address(executable) || gsv_address(readable)) return false;
+    code_base=start;code_alias=alias;code_size=size;
+    atomic_store_explicit(&code_alias_enabled,true,memory_order_release);
+    return true;
+}
+void gsv_forget_code_alias(const void *address, size_t size) {
+    if(!atomic_load_explicit(&code_alias_enabled,memory_order_acquire) || !size) return;
+    uintptr_t start=(uintptr_t)address;
+    if(start<=code_base ? size>code_base-start : start-code_base<code_size)
+        atomic_store_explicit(&code_alias_enabled,false,memory_order_release);
+}
+bool gsv_fetch_instruction(uint64_t pc,uint32_t *instruction) {
+    if(!instruction || (pc&3) || gsv_address((void *)(uintptr_t)pc)) return false;
+    if(atomic_load_explicit(&code_alias_enabled,memory_order_acquire) &&
+       pc>=code_base && pc-code_base<=code_size-4) {
+        memcpy(instruction,(const void *)(code_alias+(uintptr_t)(pc-code_base)),sizeof *instruction);
+        return true;
+    }
+    vm_size_t actual=0;
+    return vm_read_overwrite(mach_task_self(),(vm_address_t)pc,sizeof *instruction,
+                            (vm_address_t)instruction,&actual)==KERN_SUCCESS && actual==sizeof *instruction;
+}
+static bool fetch_instruction(uint64_t pc,uint32_t *instruction,void *context) {
+    (void)context;
+    return gsv_fetch_instruction(pc,instruction);
+}
+static bool handle_fault(siginfo_t *info, void *context) {
+    if (!info || !gsv_address(info->si_addr)) return false;
+    ucontext_t *u = context;
+    // Hardware data abort only. Instruction aborts and software-raised signals
+    // must never cause an instruction fetch or a fabricated return to execution.
+    if ((u->uc_mcontext->__es.__esr >> 26) != 0x24) return false;
+    uintptr_t pc = u->uc_mcontext->__ss.__pc;
+    if ((pc & 3) || gsv_address((void *)pc)) return false;
+    uint32_t instruction;
+    if(!fetch_instruction(pc,&instruction,NULL)) return false;
+    GMMemoryRegisters r = {0};
+    for (unsigned i = 0; i < 29; ++i) r.x[i] = u->uc_mcontext->__ss.__x[i];
+    r.x[29] = u->uc_mcontext->__ss.__fp; r.x[30] = u->uc_mcontext->__ss.__lr;
+    r.sp = u->uc_mcontext->__ss.__sp; r.pc = pc;
+    memcpy(r.vector, u->uc_mcontext->__ns.__v, sizeof r.vector);
+    GMResult fault = GM_OK;
+    GMMemoryStep result;
+    uint8_t nzcv=(u->uc_mcontext->__ss.__cpsr>>28)&15;
+    if(gm_exclusive_instruction(instruction)) {
+        GCRegisters state={0};memcpy(state.x,r.x,sizeof state.x);
+        state.sp=r.sp;state.pc=r.pc;state.nzcv=nzcv;
+        GMExclusiveDiagnostic diagnostic={0};
+        result=gm_exclusive_sequence(&memory,instruction,&state,fetch_instruction,NULL,&fault,&diagnostic);
+        if(result!=GM_STEP_OK && diagnostic.reason) {
+            report(diagnostic.reason,diagnostic.pc);
+        }
+        if(result==GM_STEP_OK) {
+            memcpy(r.x,state.x,sizeof r.x);r.sp=state.sp;r.pc=state.pc;nzcv=state.nzcv;
+        }
+    } else result = gm_memory_step(&memory, instruction, &r, &fault);
+    if (result != GM_STEP_OK) {
+        if (result == GM_STEP_UNSUPPORTED) {
+            const char *family = "[software-vm] unsupported memory encoding at ";
+            if ((instruction & 0x3fa07c00) == 0x08207c00 && (instruction >> 30) < 2)
+                family = "[software-vm] requires CASP support at ";
+            else if ((instruction & 0x3f800000) == 0x08000000)
+                family = "[software-vm] requires exclusive sequence support at ";
+            else if ((instruction & 0x3f000000) == 0x08000000)
+                family = "[software-vm] requires ordered access support at ";
+            else if ((instruction & 0xbe000000) == 0x0c000000)
+                family = "[software-vm] requires SIMD structure access support at ";
+            else if ((instruction & 0x3ffffc00) == 0x38bfc000)
+                family = "[software-vm] requires LDAPR support at ";
+            else if ((instruction & 0xffffffe0) == 0xd50b7420)
+                family = "[software-vm] requires cache-zero support at ";
+            report(family, pc);
+        }
+        report(result == GM_STEP_UNSUPPORTED ? "[software-vm] unsupported memory instruction at " :
+               "[software-vm] failed memory access at ", pc);
+        report("[software-vm] memory result ", fault);
+        report("[software-vm] handled faults ", atomic_load(&fault_count));
+        report("[software-vm] backing pages ", gm_sparse_stats(&memory).resident_pages);
+        return false;
+    }
+    for (unsigned i = 0; i < 29; ++i) u->uc_mcontext->__ss.__x[i] = r.x[i];
+    u->uc_mcontext->__ss.__fp = r.x[29]; u->uc_mcontext->__ss.__lr = r.x[30];
+    u->uc_mcontext->__ss.__sp = r.sp; u->uc_mcontext->__ss.__pc = r.pc;
+    u->uc_mcontext->__ss.__cpsr=(u->uc_mcontext->__ss.__cpsr&0x0fffffff)|((uint32_t)nzcv<<28);
+    memcpy(u->uc_mcontext->__ns.__v, r.vector, sizeof r.vector);
+    uint64_t count = atomic_fetch_add(&fault_count, 1) + 1;
+    if (!(count & (count - 1))) report("[software-vm] handled faults ", count);
+    return true;
+}
+static void dispatch_signal(int number, siginfo_t *info, void *context) {
+    int saved_errno = errno;
+    if (handle_fault(info, context)) { errno = saved_errno; return; }
+    unsigned index = number == SIGBUS;
+    struct sigaction *selected = atomic_load_explicit(&current[index], memory_order_acquire);
+    struct sigaction action = *selected;
+    if (action.sa_flags & SA_RESETHAND) atomic_compare_exchange_strong(&current[index], &selected, &actions[0]);
+    errno = saved_errno;
+    if (action.sa_handler == SIG_IGN) return;
+    if (action.sa_handler == SIG_DFL) {
+        sigaction(number, &action, NULL); raise(number); return;
+    }
+    if (action.sa_flags & SA_SIGINFO) action.sa_sigaction(number, info, context);
+    else action.sa_handler(number);
+}
+int gsv_sigaction(int number, const struct sigaction *action, struct sigaction *old) {
+    if (!gsv_enabled() || (number != SIGSEGV && number != SIGBUS)) return sigaction(number, action, old);
+    pthread_mutex_lock(&action_lock);
+    unsigned index = number == SIGBUS;
+    struct sigaction *previous = atomic_load(&current[index]);
+    int result = 0;
+    if (action) {
+        if (action_count == ACTION_LIMIT) { errno = ENOMEM; result = -1; }
+        else {
+            struct sigaction *next = &actions[action_count++]; *next = *action;
+            struct sigaction installed = *action;
+            installed.sa_sigaction = dispatch_signal;
+            installed.sa_flags = (installed.sa_flags & ~SA_RESETHAND) | SA_SIGINFO;
+            atomic_store(&current[index], next);
+            result = sigaction(number, &installed, NULL);
+            if (result) atomic_store(&current[index], previous);
+        }
+    }
+    if (!result && old) *old = *previous;
+    pthread_mutex_unlock(&action_lock);
+    return result;
+}
+bool gsv_start(size_t backing_bytes, size_t force, int fd) {
+    if (gsv_enabled()) return false;
+    span = UINT64_C(512) << 30; base = UINT64_C(1) << 40;
+    guard = MAP_FAILED;
+    task_vm_info_data_t vm = {0}; mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+    if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vm, &count) != KERN_SUCCESS ||
+        count < TASK_VM_INFO_REV2_COUNT) return false;
+    if (vm.max_address > base) {
+        guard = mmap(NULL, span, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
+        if (guard == MAP_FAILED) return false;
+        base = (uintptr_t)guard;
+    }
+    if (gm_sparse_init(&memory, base, span, backing_bytes) != GM_OK) {
+        if (guard != MAP_FAILED) munmap(guard, span);
+        return false;
+    }
+    memset(actions, 0, sizeof actions); actions[0].sa_handler = SIG_DFL;
+    sigemptyset(&actions[0].sa_mask); action_count = 1;
+    struct sigaction installed = {0};
+    sigemptyset(&installed.sa_mask); installed.sa_sigaction = dispatch_signal; installed.sa_flags = SA_SIGINFO;
+    sigaction(SIGSEGV, NULL, &original[0]); sigaction(SIGBUS, NULL, &original[1]);
+    atomic_store(&current[0], &original[0]); atomic_store(&current[1], &original[1]);
+    if (sigaction(SIGSEGV, &installed, NULL) || sigaction(SIGBUS, &installed, NULL)) {
+        sigaction(SIGSEGV, &original[0], NULL); sigaction(SIGBUS, &original[1], NULL);
+        gm_sparse_destroy(&memory); if (guard != MAP_FAILED) munmap(guard, span);
+        return false;
+    }
+    log_fd = fd; force_threshold = force; native_pool_size=0; atomic_store(&fault_count, 0);
+    code_base=code_alias=code_size=0;atomic_store(&code_alias_enabled,false);
+    atomic_store_explicit(&enabled, true, memory_order_release);
+    report("[software-vm] base ", base); report("[software-vm] backing bytes ", backing_bytes);
+    return true;
+}
+void gsv_stop(void) {
+    if (!gsv_enabled()) return;
+    atomic_store(&enabled, false);
+    atomic_store(&code_alias_enabled,false);
+    sigaction(SIGSEGV, &original[0], NULL); sigaction(SIGBUS, &original[1], NULL);
+    gm_sparse_destroy(&memory); if (guard != MAP_FAILED) munmap(guard, span);
+}
+void *gsv_map(void *address, size_t size, int prot, int flags, int fd, off_t offset) {
+    if(flags&MAP_FIXED)gsv_forget_code_alias(address,size);
+    if (!gsv_enabled()) return mmap(address, size, prot, flags, fd, offset);
+    bool software_hint = gsv_address(address);
+    bool eligible = (flags & (MAP_ANON | MAP_PRIVATE)) == (MAP_ANON | MAP_PRIVATE) &&
+                    !(flags & ~(MAP_ANON | MAP_PRIVATE | MAP_FIXED | MAP_NORESERVE)) &&
+                    !(prot & ~(PROT_READ | PROT_WRITE)) && fd == -1 && offset == 0;
+    bool force = eligible && !(flags & MAP_FIXED) &&
+                 ((force_threshold && size >= force_threshold) ||
+                  (native_pool_size && size >= (64u<<20) && size != native_pool_size));
+    if (!software_hint && !force) {
+        void *result = mmap(address, size, prot, flags, fd, offset);
+        if (result != MAP_FAILED || errno != ENOMEM || size < (64u << 20)) return result;
+    }
+    uint64_t length;
+    if (!gsv_enabled() || !eligible || !rounded(size, &length) || (!software_hint && (flags & MAP_FIXED))) {
+        errno = software_hint ? EINVAL : ENOMEM; return MAP_FAILED;
+    }
+    uint64_t at = (uintptr_t)address; GMResult result;
+    if (software_hint && (flags & MAP_FIXED)) result = gm_sparse_map(&memory, at, length, (unsigned)prot, 3, true);
+    else do {
+        result = gm_sparse_find_free(&memory, length, &at);
+        if (result == GM_OK) result = gm_sparse_map(&memory, at, length, (unsigned)prot, 3, false);
+    } while (result == GM_OVERLAP);
+    if (result != GM_OK) { errno = error_code(result); return MAP_FAILED; }
+    report("[software-vm] mapped bytes ", length); report("[software-vm] mapped at ", at);
+    return (void *)(uintptr_t)at;
+}
+int gsv_protect(void *address, size_t size, int prot) {
+    if(!(prot&PROT_READ))gsv_forget_code_alias(address,size);
+    if (!gsv_address(address)) return mprotect(address, size, prot);
+    uint64_t length;
+    if (!rounded(size, &length) || (prot & ~(PROT_READ | PROT_WRITE))) { errno = EINVAL; return -1; }
+    GMResult result = gm_sparse_protect(&memory, (uintptr_t)address, length, (unsigned)prot);
+    if (result != GM_OK) { errno = error_code(result); return -1; }
+    return 0;
+}
+int gsv_unmap(void *address, size_t size) {
+    gsv_forget_code_alias(address,size);
+    if (!gsv_address(address)) return munmap(address, size);
+    uint64_t length;
+    if (!rounded(size, &length)) { errno = EINVAL; return -1; }
+    GMResult result = gm_sparse_unmap(&memory, (uintptr_t)address, length);
+    if (result != GM_OK) { errno = error_code(result); return -1; }
+    return 0;
+}
+int gsv_advise(void *address, size_t size, int advice) {
+    if (!gsv_address(address)) return madvise(address, size, advice);
+    switch (advice) {
+        case MADV_NORMAL: case MADV_RANDOM: case MADV_SEQUENTIAL: case MADV_WILLNEED:
+        case MADV_DONTNEED: case MADV_FREE: case MADV_FREE_REUSABLE: case MADV_FREE_REUSE: break;
+        default: errno = EINVAL; return -1;
+    }
+    GMResult result = gm_sparse_prepare(&memory, (uintptr_t)address, size, 0);
+    if (result != GM_OK) { errno = error_code(result); return -1; }
+    return 0; // Advice is optional; retain valid data rather than discard it.
+}
+static GMResult prepare(const void *p, size_t n, unsigned permissions) {
+    return gsv_address(p) ? gm_sparse_prepare(&memory, (uintptr_t)p, n, permissions) : GM_OK;
+}
+const char *gsv_string(const char *source, char *buffer, size_t capacity) {
+    if (!source) { errno = EFAULT; return NULL; }
+    if (!gsv_address(source)) return source;
+    for (size_t i = 0; i < capacity; ++i) {
+        if (gm_sparse_read(&memory, (uintptr_t)source + i, buffer + i, 1) != GM_OK) {
+            errno = EFAULT; return NULL;
+        }
+        if (!buffer[i]) return buffer;
+    }
+    errno = ENAMETOOLONG; return NULL;
+}
+GMResult gsv_copy(void *destination, const void *source, size_t size) {
+    bool to = gsv_address(destination), from = gsv_address(source);
+    if (!to && !from) { memmove(destination, source, size); return GM_OK; }
+    GMResult result = prepare(source, size, GM_READ);
+    if (result == GM_OK) result = prepare(destination, size, GM_WRITE);
+    if (result != GM_OK) return result;
+    unsigned char bounce[BOUNCE_SIZE];
+    uintptr_t d = (uintptr_t)destination, s = (uintptr_t)source;
+    bool reverse = d > s && d - s < size;
+    for (size_t completed = 0; completed < size;) {
+        size_t chunk = size - completed; if (chunk > sizeof bounce) chunk = sizeof bounce;
+        size_t offset = reverse ? size - completed - chunk : completed;
+        if (from) result = gm_sparse_read(&memory, s + offset, bounce, chunk);
+        else memcpy(bounce, (const void *)(s + offset), chunk);
+        if (result != GM_OK) return result;
+        if (to) result = gm_sparse_write(&memory, d + offset, bounce, chunk);
+        else memcpy((void *)(d + offset), bounce, chunk);
+        if (result != GM_OK) return result;
+        completed += chunk;
+    }
+    return GM_OK;
+}
+GMResult gsv_fill(void *destination, int value, size_t size) {
+    if (!gsv_address(destination)) { memset(destination, value, size); return GM_OK; }
+    GMResult result = prepare(destination, size, GM_WRITE);
+    if (result != GM_OK) return result;
+    unsigned char bounce[BOUNCE_SIZE]; memset(bounce, value, sizeof bounce);
+    for (size_t completed = 0; completed < size;) {
+        size_t chunk = size - completed; if (chunk > sizeof bounce) chunk = sizeof bounce;
+        result = gm_sparse_write(&memory, (uintptr_t)destination + completed, bounce, chunk);
+        if (result != GM_OK) return result;
+        completed += chunk;
+    }
+    return GM_OK;
+}
+static ssize_t file_io(int fd, void *buffer, size_t size, off_t offset, bool positional, bool writing) {
+    if (!gsv_address(buffer)) return writing ? (positional ? pwrite(fd, buffer, size, offset) : write(fd, buffer, size)) :
+                                                            (positional ? pread(fd, buffer, size, offset) : read(fd, buffer, size));
+    if (size > INT_MAX) { errno = EINVAL; return -1; }
+    // Preserve a single syscall's size, file-offset atomicity, short-read and
+    // EINTR behavior. Large buffers use temporary ordinary host memory.
+    GMResult result = prepare(buffer, size, writing ? GM_READ : GM_WRITE);
+    if (result != GM_OK) { errno = EFAULT; return -1; }
+    unsigned char stack[BOUNCE_SIZE];
+    void *bounce = size > sizeof stack ? malloc(size) : stack;
+    if (!bounce) { errno = ENOMEM; return -1; }
+    if (writing && gm_sparse_read(&memory, (uintptr_t)buffer, bounce, size) != GM_OK) {
+        if (bounce != stack) free(bounce);
+        errno = EFAULT; return -1;
+    }
+    ssize_t done = writing ? (positional ? pwrite(fd, bounce, size, offset) : write(fd, bounce, size)) :
+                            (positional ? pread(fd, bounce, size, offset) : read(fd, bounce, size));
+    if (!writing && done > 0 && gm_sparse_write(&memory, (uintptr_t)buffer, bounce, (size_t)done) != GM_OK) {
+        errno = EFAULT; done = -1;
+    }
+    int saved_errno = errno;
+    if (bounce != stack) free(bounce);
+    errno = saved_errno;
+    return done;
+}
+ssize_t gsv_read(int fd, void *b, size_t n) { return file_io(fd, b, n, 0, false, false); }
+ssize_t gsv_pread(int fd, void *b, size_t n, off_t o) { return file_io(fd, b, n, o, true, false); }
+ssize_t gsv_write(int fd, const void *b, size_t n) { return file_io(fd, (void *)b, n, 0, false, true); }
+ssize_t gsv_pwrite(int fd, const void *b, size_t n, off_t o) { return file_io(fd, (void *)b, n, o, true, true); }
+static size_t stream_io(void *buffer, size_t size, size_t count, FILE *file, bool writing) {
+    if (!gsv_address(buffer)) return writing ? fwrite(buffer, size, count, file) : fread(buffer, size, count, file);
+    if (!size || !count) return 0;
+    if (count > SIZE_MAX / size) { errno = EOVERFLOW; return 0; }
+    size_t total = size * count;
+    if (prepare(buffer, total, writing ? GM_READ : GM_WRITE) != GM_OK) { errno = EFAULT; return 0; }
+    unsigned char bounce[BOUNCE_SIZE]; size_t completed = 0;
+    flockfile(file);
+    while (completed < total) {
+        size_t chunk = total - completed; if (chunk > sizeof bounce) chunk = sizeof bounce;
+        if (writing && gm_sparse_read(&memory, (uintptr_t)buffer + completed, bounce, chunk) != GM_OK) { errno = EFAULT; break; }
+        size_t done = writing ? fwrite(bounce, 1, chunk, file) : fread(bounce, 1, chunk, file);
+        if (!writing && gm_sparse_write(&memory, (uintptr_t)buffer + completed, bounce, done) != GM_OK) { errno = EFAULT; break; }
+        completed += done;
+        if (done < chunk) break;
+    }
+    funlockfile(file);
+    return completed / size;
+}
+size_t gsv_fread(void *b, size_t s, size_t n, FILE *f) { return stream_io(b, s, n, f, false); }
+size_t gsv_fwrite(const void *b, size_t s, size_t n, FILE *f) { return stream_io((void *)b, s, n, f, true); }
+GMSparseStats gsv_stats(void) { return gm_sparse_stats(&memory); }
+uint64_t gsv_fault_count(void) { return atomic_load(&fault_count); }
