@@ -6,12 +6,14 @@
 > profile [`heroes3-hota`](../profiles/heroes3-hota). Nothing below is
 > validated on a device yet; each section says what is proven and what is not.
 >
-> **Status, 2026-09-25: blocked below Tolkara.** The runtime builds and runs
-> on an Apple silicon Mac, but a native arm64 Darwin process has no address
-> space below 4 GB, and Wine's 32-bit side needs it ("The 4 GB floor" below).
-> A 32-bit program such as Heroes III cannot run this way on macOS or iPadOS
-> until FEX can run 32-bit guests at a translated address; 64-bit programs
-> need a smaller Wine change. The rest of the design stands for those.
+> **Status, 2026-09-26: in progress on the Mac, not yet on the iPad.** A
+> native arm64 Darwin process has no address space below 4 GB, and Wine's
+> 32-bit side needs it ("The 4 GB floor" below). Tolkara's own branches of
+> Wine and FEX work around it ("The downstream forks"): 64-bit programs run
+> with `KUSER_SHARED_DATA` moved, and 32-bit programs run with their address
+> space at a translated window ("The 32-bit window"). On the Mac, Heroes III
+> gets through its start-up but does not open its window yet, so M0 is not
+> reached ("The game, 2026-09-26 afternoon").
 
 ## The stack
 
@@ -85,9 +87,9 @@ What it means for the two kinds of Windows program:
   host addresses (bylaws' Wine series even forces every host allocation out
   of the 32-bit range to keep it free for the guest). With no memory below
   4 GB there is no 32-bit address space to give. Running such a program on
-  arm64 Darwin needs a 32-bit guest at a translated base address, which FEX
-  does not have; QEMU's user mode has that (`guest_base`) but no Darwin
-  host. This is a change in FEX, upstream of everything here.
+  arm64 Darwin needs a 32-bit guest at a translated base address, which
+  upstream FEX does not have; QEMU's user mode has that (`guest_base`) but
+  no Darwin host. Tolkara's FEX branch adds it ("The 32-bit window" below).
 - **64-bit x86.** The guest's own allocations live above 4 GB anyway. What
   sits below is `KUSER_SHARED_DATA` at `0x7ffe0000`, which Wine maps at that
   address because Windows programs read it there directly. Wine's ARM64EC
@@ -97,10 +99,11 @@ What it means for the two kinds of Windows program:
   in their unpublished FEX and Wine changes; it is a bounded patch.
 
 On the iPad the floor is the same kernel rule, so nothing Tolkara does can
-lift it; the arena Tolkara prepares also lives above 4 GB. Until FEX gains a
-translated 32-bit mode, this profile cannot reach M0, and the milestones
-below apply to 64-bit Windows programs. The alternatives for this particular
-game are in "Working rules".
+lift it; the arena Tolkara prepares also lives above 4 GB. With upstream FEX
+this profile cannot reach M0; it depends on the 32-bit window in Tolkara's
+Wine and FEX branches ("The 32-bit window" below), and with those the
+milestones apply to this 32-bit game as well as to 64-bit programs. The
+alternatives for this particular game are in "Working rules".
 
 ### The downstream forks
 
@@ -226,7 +229,7 @@ the syscall-callback flag, the SRA spill path), which worked until the
 first return from a signal handler zeroed `x18` in the middle of the
 dispatcher; all TEB reads now go through one `LoadTEB` helper.
 
-**State of the branches, 2026-09-26 (Wine: 15 commits on
+**State of the branches, 2026-09-26 (Wine: 14 commits on
 `upstream-arm64ec`; FEX: 3 on main):** `wineboot -u` creates a complete
 prefix on this Mac in 73 s, Wine's own `notepad.exe` (ARM64EC) runs with a
 window, and **an x86-64 Windows program runs under FEX**: a hello program
@@ -343,6 +346,45 @@ gather-without-base loads translate only the base register; a fault on a
 64-bit process's `0x7ffe0000` read stays as before; each block compile
 still costs the three signals of the JIT pool.
 
+**The game, 2026-09-26 afternoon.** `h3hota HD.exe` now runs its whole
+start-up under the window without a guest crash: the HD mod's patcher and
+its `HD_*` libraries, HotA, `opengl32`, the Miles and Bink libraries,
+Galaxy and the Discord library load and initialize, and worker threads
+run. Five more fixes got it there, six commits across the two branches:
+
+- FEX's x87 stack pass read and wrote the x87 register file through a host
+  address it formed from the CPU state, and under the window every memory
+  operation's address is taken as a guest address, so the game's first x87
+  code faulted. The pass now uses the context-relative indexed loads and
+  stores (FEX).
+- The Unix side of every builtin (`opengl32.so`, `win32u.so`, …) widened
+  guest pointers with the identity `ULongToPtr`; `unixlib.h` now routes it
+  through `ntdll_wow64_ptr` (Wine).
+- A 32-bit request bounded below 4 GB with no lower limit was shifted to
+  the window base itself, so one allocation landed at guest address 0 and
+  the guest saw `VirtualAlloc` return NULL: HotA then built a hook bridge
+  around a NULL routine and jumped to 0. Such requests now start at 64k, as
+  on Windows (Wine).
+- FEXCore hands guest addresses to the WoW64 module's executable-range
+  hooks, whose tracker is host-addressed, and the decoder derived the
+  "RIP" it range-checks from the host pointer; valid guest code was
+  declared non-executable or the decoder looped (FEX, two commits).
+- **16K host pages defeat 4K guard pages.** Wine gives a host page the
+  most permissive protection of the 4K pages in it, so FEX's 4K guards
+  around the call-return stack and at the end of its JIT buffers never
+  trapped; the call-return stack ran 24 MB past its region and overwrote
+  other memory. The fork sizes those guards at 16K. Any guard-page scheme
+  on this host needs the same care.
+
+Where it stops now: after start-up the main thread runs at full CPU in a
+loop through `win32u` menu calls (`NtUserThunkedMenuItemInfo`,
+`NtUserCallTwoParam` for menu info, about a million system calls a
+second) and never creates the game window; the OLE helper window it asks
+for fails to be created (`CreateWindowEx` returns NULL, error 1400, the
+same error `explorer.exe /desktop` logs). The window path through
+`win32u`'s WoW64 thunks is the next thing to examine. FreeType and GnuTLS
+are still not bundled into the runtime.
+
 ## What Wine needs from its host, and what Tolkara has
 
 | Wine needs | Tolkara today | Work item |
@@ -387,8 +429,10 @@ Ordered so that each layer is proven before the next depends on it.
   programs run under FEX with the JIT pool (see "State of the branches").
   Later the same day the 32-bit half followed: 32-bit x86 programs run
   through WoW64 and FEX with the address window (see "The 32-bit window").
-  Next is the game itself: `profiles/heroes3-hota/install.py` against the
-  GOG installer, then `HotA.exe` under this runtime.
+  The game is staged with `profiles/heroes3-hota/install.py` and
+  `h3hota HD.exe` gets through its start-up but does not open its window
+  yet ("The game, 2026-09-26 afternoon" above). M0 is not reached until
+  the main menu shows.
 - **M1 — the device JIT measurement.** Launch the installed, enrolled app
   once with `xcrun devicectl device process launch --device "$DEVICE"
   "$TOLKARA_BUNDLE_ID" --local-game-startup --jit-probe` (any library app will
