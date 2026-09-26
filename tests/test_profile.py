@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -99,6 +100,18 @@ class ProfileTests(unittest.TestCase):
                                            'lib/wine/aarch64-windows/ntdll.dll', 'lib/wine/aarch64-windows/libwow64fex.dll',
                                            'lib/libfreetype.6.dylib']))
             self.assertEqual((staged / 'lib/wine/aarch64-unix/ntdll.so').read_text(), 'lib/wine/aarch64-unix/ntdll.so')
+            # The prefix goes without its links into this Mac and without a server's state.
+            prefix = Path(directory) / 'prefix'
+            for name in ['system.reg', 'volatile.reg', 'drive_c/windows/system32/kernel32.dll', '.wineserver/server-1-2/socket']:
+                (prefix / name).parent.mkdir(parents=True, exist_ok=True)
+                (prefix / name).write_text(name)
+            (prefix / 'dosdevices').mkdir()
+            os.symlink('../drive_c', prefix / 'dosdevices' / 'c:')
+            (prefix / 'drive_c/users/vk').mkdir(parents=True)
+            os.symlink('/Users/vk/Documents', prefix / 'drive_c/users/vk/Documents')
+            staged = install.device_prefix(prefix, Path(directory) / 'prefix-stage')
+            kept = sorted(str(p.relative_to(staged)) for p in staged.rglob('*') if not p.is_dir())
+            self.assertEqual(kept, ['drive_c/windows/system32/kernel32.dll', 'system.reg', 'volatile.reg'])
 
 
 if __name__ == '__main__': unittest.main()
