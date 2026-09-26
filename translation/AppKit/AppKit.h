@@ -4,6 +4,7 @@
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
 #import "AKSupport.h"
+#import "WindowFullscreen.h"
 
 typedef CGRect NSRect;
 typedef CGPoint NSPoint;
@@ -86,7 +87,7 @@ typedef NS_OPTIONS(NSUInteger, NSEventModifierFlags) {
 - (NSRect)convertRectToBacking:(NSRect)r;
 @end
 
-@interface NSWindow : NSResponder
+@interface NSWindow : NSResponder <AKFullscreenWindow>
 - (instancetype)initWithContentRect:(NSRect)r styleMask:(NSUInteger)m backing:(NSUInteger)b defer:(BOOL)d;
 @property (nonatomic, strong) NSView *contentView;
 @property (copy) NSString *title;
@@ -116,6 +117,7 @@ typedef NS_OPTIONS(NSUInteger, NSEventModifierFlags) {
 @property (readonly) NSRect contentLayoutRect;
 - (NSPoint)convertPointToScreen:(NSPoint)p;
 - (NSPoint)convertPointFromScreen:(NSPoint)p;
+- (void)toggleFullScreen:(id)sender;
 - (void)makeKeyAndOrderFront:(id)sender;
 - (void)orderOut:(id)sender;
 - (BOOL)makeFirstResponder:(NSResponder *)r;

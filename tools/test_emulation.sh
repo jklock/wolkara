@@ -537,6 +537,10 @@ xcrun clang -fobjc-arc -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined
     -Itranslation/AppKit -framework Foundation translation/AppKit/ImageHints.m tests/test_image_hints.m \
     -o build/emulation/test_image_hints
 build/emulation/test_image_hints
+xcrun clang -fobjc-arc -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined \
+    -Itranslation/AppKit -framework Foundation translation/AppKit/WindowFullscreen.m tests/test_window_fullscreen.m \
+    -o build/emulation/test_window_fullscreen
+build/emulation/test_window_fullscreen
 # --metal-managed-storage on the Mac's own device, where Managed is valid: on, then off.
 xcrun clang -fobjc-arc -Wall -Wextra -Werror -Wno-deprecated-declarations -O1 -g -fsanitize=address,undefined \
     -Itranslation/AKSupport -Itranslation/Metal -framework Foundation -framework Metal \
