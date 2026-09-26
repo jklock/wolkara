@@ -58,6 +58,17 @@ typedef NS_OPTIONS(NSUInteger, NSEventModifierFlags) {
 @property NSInteger buttonNumber, clickCount;
 @end
 
+// A region of a view whose mouse movement its owner follows. The iPad's
+// pointer never leaves the application's view, so no entered or exited
+// events are sent; the area is kept for its owner.
+@interface NSTrackingArea : AKStubObject
+- (instancetype)initWithRect:(NSRect)rect options:(NSUInteger)options owner:(id)owner userInfo:(NSDictionary *)userInfo;
+@property (readonly) NSRect rect;
+@property (readonly) NSUInteger options;
+@property (readonly, weak) id owner;
+@property (readonly, copy) NSDictionary *userInfo;
+@end
+
 @interface NSView : NSResponder
 - (instancetype)initWithFrame:(NSRect)frame;
 @property (nonatomic) NSRect frame;
@@ -84,6 +95,18 @@ typedef NS_OPTIONS(NSUInteger, NSEventModifierFlags) {
 - (NSSize)convertSizeToBacking:(NSSize)s;
 - (NSRect)convertRectFromBacking:(NSRect)r;
 - (NSRect)convertRectToBacking:(NSRect)r;
+@property (nonatomic, readonly) NSArray<NSTrackingArea *> *trackingAreas;
+- (void)addTrackingArea:(NSTrackingArea *)area;
+- (void)removeTrackingArea:(NSTrackingArea *)area;
+- (void)updateTrackingAreas;
+// Layer-backed drawing: a view marked for display gets updateLayer on the
+// main thread's next turn, if it wants that (drawRect: is not supported).
+@property (nonatomic) BOOL needsDisplay;
+- (void)setNeedsDisplayInRect:(NSRect)rect;
+- (void)displayIfNeeded;
+- (void)display;
+@property (nonatomic, readonly) BOOL wantsUpdateLayer;
+- (void)updateLayer;
 @end
 
 @interface NSWindow : NSResponder
@@ -116,6 +139,11 @@ typedef NS_OPTIONS(NSUInteger, NSEventModifierFlags) {
 @property (readonly) NSRect contentLayoutRect;
 - (NSPoint)convertPointToScreen:(NSPoint)p;
 - (NSPoint)convertPointFromScreen:(NSPoint)p;
+// Windows on the iPad have no frame of their own: content and frame are one.
+- (NSRect)frameRectForContentRect:(NSRect)rect;
+- (NSRect)contentRectForFrameRect:(NSRect)rect;
++ (NSRect)frameRectForContentRect:(NSRect)rect styleMask:(NSUInteger)style;
++ (NSRect)contentRectForFrameRect:(NSRect)rect styleMask:(NSUInteger)style;
 - (void)makeKeyAndOrderFront:(id)sender;
 - (void)orderOut:(id)sender;
 - (BOOL)makeFirstResponder:(NSResponder *)r;
@@ -143,6 +171,12 @@ typedef NS_OPTIONS(NSUInteger, NSEventModifierFlags) {
 - (void)sendEvent:(NSEvent *)e;
 - (void)postEvent:(NSEvent *)e atStart:(BOOL)atStart;
 - (NSEvent *)nextEventMatchingMask:(NSUInteger)mask untilDate:(NSDate *)date inMode:(NSString *)mode dequeue:(BOOL)dq;
+@end
+
+// A window that floats above documents; on the iPad, a window like any other.
+@interface NSPanel : NSWindow
+@property (getter=isFloatingPanel) BOOL floatingPanel;
+@property BOOL becomesKeyOnlyIfNeeded, worksWhenModal;
 @end
 
 extern NSApplication *NSApp;
