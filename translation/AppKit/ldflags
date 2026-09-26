@@ -1,1 +1,1 @@
--framework UIKit -framework QuartzCore -framework CoreGraphics -framework GameController
+-framework UIKit -framework QuartzCore -framework CoreGraphics -framework GameController -Wl,-alias,_OBJC_CLASS_$_AKColor,_OBJC_CLASS_$_NSColor -Wl,-alias,_OBJC_METACLASS_$_AKColor,_OBJC_METACLASS_$_NSColor

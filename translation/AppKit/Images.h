@@ -17,7 +17,10 @@ CGPathRef AKCreateCursorPath(CGImageRef image, CGSize size, CGPoint hotSpot) CF_
 @property(readonly) CGImageRef CGImage;
 - (instancetype)initWithCGImage:(CGImageRef)image;
 - (void)getBitmapDataPlanes:(unsigned char **)planes;
+// Shim-internal: the pixel layout as Core Graphics names it.
+@property(readonly) CGBitmapInfo ak_bitmapInfo;
 @end
+extern NSString *const NSImageNameApplicationIcon;
 @interface NSImage : AKStubObject
 @property CGSize size;
 @property(getter=isTemplate) BOOL template;
