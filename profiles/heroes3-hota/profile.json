@@ -3,8 +3,9 @@
   "name": "Heroes of Might and Magic III: Horn of the Abyss",
   "workingDirectory": "Heroes 3 HotA/prefix/drive_c/GOG Games/Heroes of Might and Magic III - Horn of the Abyss",
   "runtime": "Heroes 3 HotA/Wine",
-  "executable": "bin/wine",
+  "executable": "lib/wine/aarch64-unix/wine",
   "arguments": ["h3hota HD.exe"],
+  "libraries": ["lib/wine/aarch64-unix/ntdll.so"],
   "environment": {
     "WINEPREFIX": "${Documents}/Heroes 3 HotA/prefix",
     "WINEDEBUG": "err+all,fixme-all"
