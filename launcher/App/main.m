@@ -7,6 +7,7 @@
 #import "DiagnosticsViewController.h"
 #import "ExecutionMode.h"
 #import "LibraryViewController.h"
+#import "LaunchProgressView.h"
 #import "NativeGuest.h"
 #import "SignedFileProbe.h"
 #include "HostDiagnostics.h"
@@ -22,6 +23,7 @@
 @interface AKHostSceneDelegate : UIResponder <UIWindowSceneDelegate, TKLibraryViewControllerDelegate>
 @property(nonatomic, strong) UIWindow *window;
 @property(nonatomic, strong) UILabel *status;
+@property(nonatomic, strong) TKLaunchProgressView *launchProgress;
 @property(nonatomic, strong) UIButton *diagnosticsButton;
 @property(nonatomic, strong) UINavigationController *navigation;
 @property(nonatomic, strong) TKLibraryViewController *libraryController;
@@ -192,6 +194,10 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
 #if TOLKARA_INTEGRATED_AUTH
     (void)[TKEnrollmentImport prepare];
     self.localAuthorization=[TKLocalAuthorization new];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(arenaWillPrepare:)
+        name:TKLocalArenaWillPrepare object:nil];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(arenaDidPrepare:)
+        name:TKLocalArenaDidPrepare object:nil];
 #endif
     // A plain launch (no arguments, or only a per-launch --execution-mode)
     // shows the app library. Any other launch is a development run from
@@ -228,6 +234,9 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     self.status.font = [UIFont monospacedSystemFontOfSize:18 weight:UIFontWeightRegular];
     self.status.translatesAutoresizingMaskIntoConstraints = NO;
     [controller.view addSubview:self.status];
+    self.launchProgress = [TKLaunchProgressView new];
+    self.launchProgress.translatesAutoresizingMaskIntoConstraints = NO;
+    [controller.view addSubview:self.launchProgress];
     self.diagnosticsButton=[UIButton buttonWithType:UIButtonTypeSystem];
     [self.diagnosticsButton setTitle:@"Diagnostics and logs" forState:UIControlStateNormal];
     [self.diagnosticsButton addTarget:self action:@selector(showDiagnostics) forControlEvents:UIControlEventTouchUpInside];
@@ -238,7 +247,9 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
         [self.status.leadingAnchor constraintEqualToAnchor:controller.view.safeAreaLayoutGuide.leadingAnchor constant:32],
         [self.status.trailingAnchor constraintEqualToAnchor:controller.view.safeAreaLayoutGuide.trailingAnchor constant:-32],
         [self.status.centerYAnchor constraintEqualToAnchor:controller.view.centerYAnchor],
-        [self.diagnosticsButton.topAnchor constraintEqualToAnchor:self.status.bottomAnchor constant:24],
+        [self.launchProgress.topAnchor constraintEqualToAnchor:self.status.bottomAnchor constant:20],
+        [self.launchProgress.leadingAnchor constraintEqualToAnchor:self.status.leadingAnchor],
+        [self.diagnosticsButton.topAnchor constraintEqualToAnchor:self.launchProgress.bottomAnchor constant:24],
         [self.diagnosticsButton.centerXAnchor constraintEqualToAnchor:controller.view.centerXAnchor],
     ]];
     return controller;
@@ -253,6 +264,7 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     [self.navigation pushViewController:controller animated:YES];
 }
 - (void)showStartStopped {
+    [self.launchProgress stop];
     self.diagnosticsButton.hidden=NO;
     UIApplication.sharedApplication.idleTimerDisabled=NO;
 }
@@ -470,7 +482,8 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     if([NSProcessInfo.processInfo.arguments containsObject:@"--local-shaders-only"])
         setenv("TOLKARA_LOCAL_SHADERS_ONLY","1",1);
     UIApplication.sharedApplication.idleTimerDisabled=YES;
-    self.status.text=[NSString stringWithFormat:@"Preparing local launch of %@…",app.name];
+    self.status.text=[NSString stringWithFormat:@"Preparing %@\nConnecting to the developer service…",app.name];
+    [self.launchProgress start];
     [self.localAuthorization startAndPrepareLocalAuthorization:^(NSString *report) {
         [report writeToFile:TKDocumentsPath(@"local-game-setup.txt") atomically:YES encoding:NSUTF8StringEncoding error:NULL];
         if(!self.localAuthorization.localSessionReady || !ng_use_local_authorization()) {
@@ -639,7 +652,8 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
 - (void)prepareNativeDiagnostic:(BOOL)fullStartup app:(TKApp *)app {
     self.launchingApp=app;
     self.nativeFullStartup=fullStartup;
-    self.status.text=@"Preparing Developer service on this iPad…";
+    self.status.text=[NSString stringWithFormat:@"Preparing %@\nConnecting to the developer service…",app.name ?: @"app"];
+    [self.launchProgress start];
     [self.localAuthorization startAndPrepareLocalAuthorization:^(NSString *report) {
         [report writeToFile:TKDocumentsPath(@"local-game-setup.txt") atomically:YES encoding:NSUTF8StringEncoding error:NULL];
         if(!self.localAuthorization.localSessionReady || !ng_use_local_authorization()) {
@@ -652,6 +666,18 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     }];
 }
 - (void)startPreparedNativeDiagnostic { [self runNativeGame:self.nativeFullStartup app:self.launchingApp container:nil]; }
+- (void)arenaWillPrepare:(NSNotification *)notification {
+    double mib = [notification.userInfo[@"bytes"] unsignedLongLongValue] / (1024.0 * 1024.0);
+    self.status.text=[NSString stringWithFormat:@"Preparing %@\nSetting up %.0f MiB of execution memory.\nThis step can take a few minutes. Keep Tolkara open.", self.launchingApp.name ?: @"app", mib];
+    [self.launchProgress start];
+    [self.status.superview layoutIfNeeded];
+}
+- (void)arenaDidPrepare:(NSNotification *)notification {
+    if ([notification.userInfo[@"prepared"] boolValue] && self.launchingApp)
+        self.status.text=[NSString stringWithFormat:@"Loading %@…\nMemory preparation is complete. Starting the app.",self.launchingApp.name ?: @"app"];
+    else [self.launchProgress stop];
+    [self.status.superview layoutIfNeeded];
+}
 #endif
 // container: Local signing's validated page container, or nil for the
 // Developer-service/debugger path. Callers choose it; this only applies it.
