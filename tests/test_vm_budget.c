@@ -115,6 +115,25 @@ int main(void) {
     if (other && other < start + 16 * MB) assert(mapped(other) && !vm_deallocate(mach_task_self(), other, page));
     assert(!gv_unmap(&budget, whole, 2 * MB) && !budget.count && !budget.reserved);
 
+    // The guest sees requested ranges, not shortened mappings. A later pool
+    // must not occupy an earlier pool's missing tail: range-based ownership
+    // checks would otherwise attribute its pointers to the wrong pool.
+    gv_init(&budget, MB, MB, MB);
+    void *pools[8];
+    size_t requested[8];
+    for (size_t i = 0; i < sizeof pools / sizeof *pools; i++) {
+        requested[i] = i % 2 ? MB : 16 * MB;
+        pools[i] = gv_reserve(&budget, requested[i], PROT_READ | PROT_WRITE, ANON, -1, &granted);
+        assert(pools[i] != MAP_FAILED && granted == MB);
+        for (size_t j = 0; j < i; j++) {
+            uintptr_t a = (uintptr_t)pools[i], b = (uintptr_t)pools[j];
+            assert(a + requested[i] <= b || b + requested[j] <= a);
+        }
+    }
+    for (size_t i = 0; i < sizeof pools / sizeof *pools; i++) assert(!gv_unmap(&budget, pools[i], requested[i]));
+    assert(!budget.count && !budget.reserved);
+    gv_init(&budget, 4 * MB, MB, MB);
+
     // A later mapping of the application inside a missing part is its own.
     pool = gv_reserve(&budget, 16 * MB, PROT_READ | PROT_WRITE, ANON, -1, &granted);
     assert(pool != MAP_FAILED && granted == 4 * MB);
@@ -182,6 +201,6 @@ int main(void) {
     for (int i = 0; i < 8; i++) assert(!pthread_join(threads[i], NULL));
     assert(!shared.count && !shared.reserved);
 
-    puts("PASS: VM budget: counted reservations downsized with a guard page, missing parts never unmapped or made usable, "
+    puts("PASS: VM budget: disjoint counted reservation ranges, downsizing with a guard page, missing parts never unmapped or made usable, "
          "trims, holes, page rounding, full table, threads");
 }

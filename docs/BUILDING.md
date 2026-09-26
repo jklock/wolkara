@@ -286,15 +286,14 @@ for apps started from the library:
   own file APIs are not covered, and each miss costs a directory listing. For
   a known case, prefer a profile's `caseAliases` (see
   [profiles/README.md](../profiles/README.md)).
-- `TOLKARA_VM_BUDGET_MB=<megabytes>` in the launch environment (experimental,
-  not yet validated on a device): iPadOS grants an app about 64 GB of virtual
-  reservations, charged when they are made, while some macOS applications
-  reserve pools for far more (Cyberpunk 2077: about 118 GB). Anonymous
-  reservations of 64 MB and more then count against this budget; past it they
-  are mapped smaller than asked and end in a guard page. The application still
-  believes it got everything: making the missing part usable with `mprotect`
-  fails with `ENOMEM`, but a pool that writes past what it got faults instead
-  of failing cleanly. Each downsizing is logged once.
+- `TOLKARA_VM_BUDGET_MB=<megabytes>` in the launch environment (experimental):
+  anonymous reservations of 64 MiB and more count against this budget; past
+  it they are mapped smaller than requested, followed by a guard page. Counted
+  reservations are kept outside earlier requested ranges, including their
+  unmapped tails; if no suitable location can be mapped, allocation fails.
+  The guest still believes it received the full length, so accesses beyond
+  the grant can fault. This does not make Cyberpunk fit on the tested iPad:
+  separate large ranges fail during startup. See [the VM investigation](CYBERPUNK_VM.md).
 - `--vm-probe` (experimental): instead of starting an app, measures how much
   virtual memory iPadOS lets Tolkara reserve (single, cumulative, `PROT_NONE`,
   at fixed addresses, file-backed) and writes `Documents/vm-probe.txt`. It only

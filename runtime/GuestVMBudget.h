@@ -12,8 +12,10 @@
 //
 // Large anonymous reservations the kernel places are counted against a budget
 // and, beyond it, mapped smaller than asked, ending in a PROT_NONE guard page,
-// where the whole span asked for is free address space if such a place is
-// found. The application still believes it has the whole region, so the
+// where the whole span asked for is free address space and does not overlap
+// another counted reservation's requested span. If no such location can be
+// mapped, the reservation fails. The application still believes it has the
+// whole region, so the
 // missing part is never unmapped, protected or advised for it (other code's
 // mappings may come to live there); a fixed mapping into it, or an mprotect
 // that would make any of it usable, fails with ENOMEM as for unmapped memory;

@@ -6,14 +6,14 @@ early so that the work on it is visible and others can build on it.
 What works: the loader handles this client's chained fixups, `__init_offsets`
 initializers, thread-local variables and the four libraries it ships in
 `Contents/Frameworks` (Bink 2 and GOG Galaxy); every one of its 717,321 fixups
-matches `dyld_info`. With a development build that also carried local
-diagnostics which are not part of this repository, an iPad Pro M5 ran all
-6,540 initializers and the original `main`, opened the game's window and
-locked the pointer. The latest such run ended in a crash after about 13
-minutes. Nobody has watched the picture or played. Expect a build from this
-repository to stop earlier, in the Metal setup, where one of the game's
-dictionaries holds an invalid key; that is being investigated. The simulator
-stops in the renderer, because its Metal cannot create heap buffers.
+matches `dyld_info`. The iPad reaches all 6,540 initializers and `main`
+with the old experimental VM budget, then crashes after opening its first
+archive. A controlled simulator run now reproduces this: shortened VM pools
+were placed inside ranges already reported to the guest. Preventing that
+collision passes the archive stage in the simulator, but the iPad cannot
+place the separate ranges and reports out-of-memory during initialization.
+See [the investigation](../../docs/CYBERPUNK_VM.md) for the tested results.
+No gameplay is validated.
 
 You need your own copy from GOG, installed on a Mac with GOG Galaxy (version
 2.3.x, macOS arm64). Nothing from the game is included here.
@@ -50,13 +50,13 @@ application's bundled libraries, and startup stops with a message saying so.
 The executable and its libraries need about 233 MB of prepared memory, which
 took about 3.6 minutes per launch on an iPad Pro M5.
 
-**Memory.** The Mac version asks for 16 GB of unified memory and reserves about
-118 GB of virtual address space for its pools; iPadOS grants an app about
-64 GB, charged when it is reserved. Start it as a development run with
-`TOLKARA_VM_BUDGET_MB=49152` in the launch environment (experimental; see
-"Development runs on the iPad" in [docs/BUILDING.md](../../docs/BUILDING.md)),
-so that large reservations are downsized to fit and every pool exists. A pool
-that fills up then faults instead of growing. Start with the lowest texture
-quality, and expect the system to end the app if it goes over its memory
-limit. `--metal-managed-storage` (experimental) translates the Managed storage
-the Mac renderer asks for.
+**Memory.** The first three large reservations alone request 112 GiB of
+virtual address space. The tested iPad process can reserve about 64 GiB in
+large mappings, even with both memory entitlements. This concerns address
+space, not physical RAM. `TOLKARA_VM_BUDGET_MB=49152` remains an experimental
+diagnostic: it shortens mappings and cannot provide the requested capacity.
+It is not a working launch configuration. The placement safeguard now fails
+when it cannot keep counted reservations outside earlier reported ranges.
+The simulator can place those ranges, but a shortened pool later runs out
+while loading the shader cache. `--metal-managed-storage` translates Managed
+storage requests but does not address this startup blocker.
