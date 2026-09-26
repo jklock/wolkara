@@ -250,6 +250,67 @@ Remaining noise: FreeType, GnuTLS and SDL2 are `dlopen`ed by bare soname and
 not found in the bundled runtime (configure should record `@rpath` sonames
 and the build script bundle them); no Vulkan (MoltenVK) yet.
 
+### The 32-bit window (design, 2026-09-26)
+
+The kernel rule behind the 4 GB floor is explicit in XNU's Mach-O loader
+(`bsd/kern/mach_loader.c`, `load_machfile`): every 64-bit `CPU_TYPE_ARM64`
+binary must have a hard page zero of 4 GB, the check has no bypass (the
+compatibility clause covers 32-bit non-PIE apps only, and only Rosetta
+processes are exempt), and the map's minimum offset is committed at exec.
+So the identity-mapped 32-bit address space that Windows-on-ARM's WoW64 and
+FEX's 32-bit JIT assume cannot exist here, on the Mac or the iPad. HotA and
+the HD mod are 32-bit; they need a translated window.
+
+The window is 4 GB of host address space at a 4 GB-aligned base `W`
+(chosen at startup from Wine's reserved areas, above the loader, the
+shared cache and the JIT pool). A 32-bit guest address `g` lives at host
+address `W | g`, so **the guest address is the low half of the host
+address**: converting host to guest is truncation, which is what Wine's
+WoW64 layer already does everywhere (`PtrToUlong`, `put_addr`), and only
+the widening direction (`ULongToPtr`, `get_ptr`, `addr_32to64`) has to
+learn about `W`. Any 32-bit structure's host address gives `W` (the
+32-bit PEB, the 32-bit TEB), so no new interface carries it.
+
+*Wine, Unix side (`ntdll`):* reserve the window in every 64-bit process
+(4 GB of address space costs nothing) the way the Linux preloader range is
+treated: ordinary allocations avoid it, allocations bounded inside it
+are served from it. A request with a 32-bit bound (`zero_bits`, the WoW64
+user-space limit, a 32-bit image's preferred base) is shifted by `W`;
+the TEB block, whose 32-bit TEBs must be guest-addressable, goes there
+too; the `KUSER_SHARED_DATA` section is mapped a second time at
+`W | 0x7ffe0000`, so a 32-bit program that hardcodes the address works
+(the 64-bit relocation stays for ARM64EC and x86-64 code). The Unix side
+touches 32-bit pointers in a dozen places (the i386 exception, APC and
+callback frames it builds on the guest stack, the 32-bit PEB); those use
+one `wow64_ptr()` helper.
+
+*Wine, PE side:* `wow64.dll` and `wow64win.dll` convert every argument
+through `get_ptr`/`ULongToPtr`/`addr_32to64` from their private headers,
+about a thousand sites through three helpers; the headers redefine the
+widening helpers with `W` (from the 32-bit PEB the module already holds).
+The aarch64 `ntdll.dll` has a few dozen WoW64 conversions of its own to
+review one by one.
+
+*FEX (`libwow64fex.dll`):* the JIT keeps guest semantics in its IR (every
+address is a 32-bit guest address, segment bases are guest values) and
+maps to host addresses at the last step: in 32-bit mode a reserved host
+register holds `W`, and each memory operation forms its address with one
+`add Xt, Xw, Wn, uxtw` before the load or store, which also keeps the
+unaligned-access backpatcher looking at a plain register operand. The
+C++ side gets a `GuestToHost` helper for the places that read guest
+memory directly: the frontend's instruction fetch, the syscall bridge
+that reads the guest stack, and the WoW64 module's use of 32-bit
+pointers; host addresses that arrive from Wine (memory notifications,
+fault addresses, image bases) are truncated to guest addresses for the
+invalidation and image trackers. Windows' own 4 KiB page semantics for
+32-bit programs are already emulated by Wine's page tables on this 16 KiB
+host, and FEX's trackers work in 4 KiB guest pages.
+
+Order of work: the Wine side first, checked by a 64-bit process still
+running and a WoW64 process reaching the 32-bit `ntdll` (it fails at the
+first emulated instruction until FEX follows); then FEX; then a 32-bit
+hello program, then HotA under M0.
+
 ## What Wine needs from its host, and what Tolkara has
 
 | Wine needs | Tolkara today | Work item |
