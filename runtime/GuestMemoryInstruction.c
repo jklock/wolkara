@@ -21,7 +21,20 @@ static GMMemoryStep atomic_step(GMSparseMemory *m, uint32_t instruction,
     unsigned rt = instruction & 31, rn = (instruction >> 5) & 31;
     unsigned rs = (instruction >> 16) & 31, size = 1u << (instruction >> 30);
     uint64_t address = get(r, rn, true), previous = 0;
-    if ((instruction & 0x3fa07c00) == 0x08a07c00) {
+    if ((instruction & 0xbfa07c00) == 0x08207c00) {
+        // CASP operates on two adjacent registers and one aligned memory pair.
+        if ((rs & 1) || (rt & 1)) return GM_STEP_UNSUPPORTED;
+        size = (instruction & (1u << 30)) ? 8 : 4;
+        unsigned char expected[16], desired[16], old[16];
+        for (unsigned j = 0; j < 2; ++j) {
+            scalar_bytes(expected + j * size, get(r, rs + j, false), size);
+            scalar_bytes(desired + j * size, get(r, rt + j, false), size);
+        }
+        *fault = gm_sparse_compare_exchange(m, address, expected, desired, old, size * 2);
+        if (*fault != GM_OK) return GM_STEP_FAULT;
+        for (unsigned j = 0; j < 2; ++j)
+            if (rs + j != 31) r->x[rs + j] = scalar_value(old + j * size, size);
+    } else if ((instruction & 0x3fa07c00) == 0x08a07c00) {
         unsigned char expected[8], desired[8], old[8];
         scalar_bytes(expected, get(r, rs, false), size);
         scalar_bytes(desired, get(r, rt, false), size);
@@ -52,13 +65,16 @@ GMMemoryStep gm_memory_step(GMSparseMemory *memory, uint32_t instruction,
     if (r->pc > UINT64_MAX - 4 || (r->pc & 3) || (rn == 31 && (r->sp & 15))) {
         *fault = GM_INVALID; return GM_STEP_FAULT;
     }
-    if ((instruction & 0x3fa07c00) == 0x08a07c00 ||
-        (instruction & 0x3f200c00) == 0x38200000)
+    bool rcpc_load = (instruction & 0x3ffffc00) == 0x38bfc000;
+    if (!rcpc_load && ((instruction & 0xbfa07c00) == 0x08207c00 ||
+        (instruction & 0x3fa07c00) == 0x08a07c00 ||
+        (instruction & 0x3f200c00) == 0x38200000))
         return atomic_step(memory, instruction, r, fault);
-    if ((instruction & 0x3f9ffc00) == 0x089ffc00) {
-        // LDAR/STLR: the backing lock provides acquire/release ordering.
+    if (rcpc_load || (instruction & 0x3f9ffc00) == 0x089ffc00) {
+        // LDAR/STLR/LDAPR: the backing lock provides acquire/release ordering,
+        // which is also sufficient for LDAPR's weaker RCpc acquire requirement.
         size = 1u << (instruction >> 30);
-        load = (instruction >> 22) & 1;
+        load = rcpc_load || ((instruction >> 22) & 1);
         if (address % size) { *fault = GM_INVALID; return GM_STEP_FAULT; }
     } else if ((instruction & 0x3b000000) == 0x39000000 ||
                (instruction & 0x3b000000) == 0x38000000) {

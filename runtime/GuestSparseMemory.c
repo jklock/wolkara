@@ -236,6 +236,30 @@ static GMResult access_locked(Space *s, uint64_t a, void *buffer, size_t n, bool
 done:
     return result;
 }
+GMResult gm_sparse_prepare(GMSparseMemory *memory, uint64_t a, size_t n, unsigned permissions) {
+    Space *s = memory ? memory->implementation : NULL;
+    if (!s || (permissions & ~(GM_READ | GM_WRITE))) return GM_INVALID;
+    lock(s);
+    GMResult result = check_access(s, a, n, permissions);
+    if (result != GM_OK || !n || !(permissions & GM_WRITE)) goto done;
+    uint64_t end = a + n;
+    size_t needed = 0;
+    for (uint64_t page = a - a % GM_PAGE_SIZE; page < end; page += GM_PAGE_SIZE)
+        if (page_slot(s, page, false) == SIZE_MAX && ++needed > s->capacity - s->resident) {
+            result = GM_NOMEM; goto done;
+        }
+    for (uint64_t page = a - a % GM_PAGE_SIZE; page < end; page += GM_PAGE_SIZE) {
+        if (page_slot(s, page, false) != SIZE_MAX) continue;
+        size_t slot = page_slot(s, page, true);
+        size_t backing = s->free_count ? s->free_backing[--s->free_count] : s->next_backing++;
+        memset(s->backing + backing * GM_PAGE_SIZE, 0, GM_PAGE_SIZE);
+        s->pages[slot] = (Page){page, backing};
+        ++s->resident;
+    }
+done:
+    unlock(s);
+    return result;
+}
 static GMResult access_memory(GMSparseMemory *memory, uint64_t a, void *buffer, size_t n, bool write) {
     Space *s = memory ? memory->implementation : NULL;
     if (!s) return GM_INVALID;

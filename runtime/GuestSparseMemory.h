@@ -35,6 +35,10 @@ GMResult gm_sparse_read(GMSparseMemory *memory, uint64_t address, void *buffer,
                         size_t size);
 GMResult gm_sparse_write(GMSparseMemory *memory, uint64_t address,
                          const void *buffer, size_t size);
+// Validate an API buffer before a syscall. Writable buffers obtain backing
+// before the syscall consumes input; existing contents are preserved.
+GMResult gm_sparse_prepare(GMSparseMemory *memory, uint64_t address, size_t size,
+                           unsigned permissions);
 GMResult gm_sparse_load_exclusive(GMSparseMemory *memory, uint64_t address,
                                   void *buffer, size_t size, GMSparseExclusive *monitor);
 GMResult gm_sparse_store_exclusive(GMSparseMemory *memory, uint64_t address,

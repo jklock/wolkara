@@ -54,8 +54,28 @@ static double seconds(void) {
     struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t);
     return t.tv_sec + t.tv_nsec * 1e-9;
 }
+static void native_pool_placement(FILE *log) {
+    const size_t mib=(size_t)1<<20, pool_size=(size_t)64<<30;
+    const unsigned banks[]={64,256,1024,4096};
+    // Our own anonymous mappings only: model the loader arena's address-space
+    // use, then check whether allocation order can keep a 64 GiB pool native.
+    void *arena=mmap(NULL,233*mib,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANON,-1,0);
+    for(unsigned order=0;order<2;order++)for(unsigned i=0;i<4;i++) {
+        size_t bank_size=banks[i]*mib;
+        void *first=mmap(NULL,order?pool_size:bank_size,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANON,-1,0);
+        void *second=mmap(NULL,order?bank_size:pool_size,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANON,-1,0);
+        fprintf(log,"Native placement arena=%s order=%s bank=%u MiB first=%s second=%s\n",
+                arena==MAP_FAILED?"failed":"ok",order?"pool-first":"bank-first",banks[i],
+                first==MAP_FAILED?"failed":"ok",second==MAP_FAILED?"failed":"ok");
+        if(second!=MAP_FAILED)munmap(second,order?bank_size:pool_size);
+        if(first!=MAP_FAILED)munmap(first,order?pool_size:bank_size);
+    }
+    if(arena!=MAP_FAILED)munmap(arena,233*mib);
+    fflush(log);
+}
 bool guest_sparse_memory_probe(FILE *log) {
     if (!log || atomic_flag_test_and_set(&probe_busy)) return false;
+    native_pool_placement(log);
     int lse = 0; size_t feature_size = sizeof lse;
     if (sysctlbyname("hw.optional.arm.FEAT_LSE", &lse, &feature_size, NULL, 0) || lse != 1) {
         fprintf(log, "The extended fixture requires confirmed hardware LSE support.\n");

@@ -12,8 +12,15 @@ typedef struct {
 } GCDecoded;
 enum { GC_CACHE_SIZE = 4096 };
 typedef struct {
-    uint64_t x[31], sp, pc, retired;
+    uint64_t x[31], sp, pc;
     uint8_t nzcv; // N Z C V in bits 3..0.
+} GCRegisters;
+typedef struct {
+    union {
+        GCRegisters registers;
+        struct { uint64_t x[31], sp, pc; uint8_t nzcv; };
+    };
+    uint64_t retired;
     GMThread thread;
     GMResult memory_result;
     uint32_t fault_instruction;
@@ -26,4 +33,7 @@ typedef struct {
 // multi-threaded access. Reset CPU whenever the backing GuestMemory is replaced.
 void gc_reset(GuestCPU *cpu, uint64_t entry, uint64_t stack);
 GCResult gc_run(GuestCPU *cpu, GuestMemory *memory, uint64_t budget, uint64_t return_pc);
+// Execute one register/control-flow instruction without fetching code or
+// accessing data memory. Unsupported instructions leave registers unchanged.
+bool gc_register_step(GCRegisters *registers, uint32_t instruction);
 const char *gc_result_string(GCResult result);

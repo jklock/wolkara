@@ -11,6 +11,7 @@ static NativeCodeMemory local_quarantine;
 #include "GuestLink.h"
 #include "GuestPaths.h"
 #include "GuestVMBudget.h"
+#include "GuestSoftwareVM.h"
 #include "NativeGuestPolicy.h"
 #include "GuestStubs.h"
 #include "GuestTLS.h"
@@ -180,6 +181,7 @@ static void diagnostic_signal(int number,siginfo_t *info,void *context) {
     else action.sa_handler(number);
 }
 static int guest_sigaction(int number,const struct sigaction *action,struct sigaction *old) {
+    if (gsv_enabled() && (number==SIGSEGV || number==SIGBUS)) return gsv_sigaction(number,action,old);
     if(signal_log_fd<0 || number<=0 || number>=NSIG) return sigaction(number,action,old);
     struct sigaction installed={0},replacement;
     const struct sigaction *requested=action;
@@ -374,7 +376,10 @@ static void *guest_memcpy(void *destination, const void *source, size_t size) {
         return destination;
     }
     void *alias = write_view(destination, size);
-    memcpy(alias, source, size);
+    if (gsv_address(alias) || gsv_address(source)) {
+        GMResult result=gsv_copy(alias,source,size);
+        if (result!=GM_OK) { LOG("[software-vm] memcpy failed result=%d bytes=%zu\n",result,size); abort(); }
+    } else memcpy(alias, source, size);
     if (alias != destination) { sys_dcache_flush(alias,size); sys_icache_invalidate(destination,size); }
     return destination;
 }
@@ -386,7 +391,10 @@ static void *guest_memmove(void *destination, const void *source, size_t size) {
     void *alias = write_view(destination, size);
     // Use the same view for overlapping guest source and destination.
     if (alias != destination && inside(source,size)) source = write_view((void *)source,size);
-    memmove(alias, source, size);
+    if (gsv_address(alias) || gsv_address(source)) {
+        GMResult result=gsv_copy(alias,source,size);
+        if (result!=GM_OK) { LOG("[software-vm] memmove failed result=%d bytes=%zu\n",result,size); abort(); }
+    } else memmove(alias, source, size);
     if (alias != destination) { sys_dcache_flush(alias,size); sys_icache_invalidate(destination,size); }
     return destination;
 }
@@ -395,9 +403,23 @@ static void *guest_memset(void *destination, int value, size_t size) {
         if (!final_image_memset(destination,value,size)) abort();
         return destination;
     }
-    void *alias = write_view(destination,size); memset(alias,value,size);
+    void *alias = write_view(destination,size);
+    if (gsv_address(alias)) {
+        GMResult result=gsv_fill(alias,value,size);
+        if (result!=GM_OK) { LOG("[software-vm] memset failed result=%d bytes=%zu\n",result,size); abort(); }
+    } else memset(alias,value,size);
     if (alias != destination) { sys_dcache_flush(alias,size); sys_icache_invalidate(destination,size); }
     return destination;
+}
+static void guest_bzero(void *destination,size_t size) { guest_memset(destination,0,size); }
+static void *guest_memcpy_chk(void *d,const void *s,size_t n,size_t bound) {
+    if(n>bound) abort(); return guest_memcpy(d,s,n);
+}
+static void *guest_memmove_chk(void *d,const void *s,size_t n,size_t bound) {
+    if(n>bound) abort(); return guest_memmove(d,s,n);
+}
+static void *guest_memset_chk(void *d,int c,size_t n,size_t bound) {
+    if(n>bound) abort(); return guest_memset(d,c,n);
 }
 static int guest_dladdr(const void *address, Dl_info *info) {
     // Libraries find their own file and header this way, as they would with dyld.
@@ -415,7 +437,9 @@ static int guest_dladdr(const void *address, Dl_info *info) {
 // Experimental, opt-in (TOLKARA_VM_BUDGET_MB, off by default): the guest's
 // large anonymous reservations fit a virtual-memory budget; see GuestVMBudget.h.
 static GVBudget vm_budget;
-static int guest_madvise(void *address, size_t size, int advice) { return gv_advise(&vm_budget,address,size,advice); }
+static int guest_madvise(void *address, size_t size, int advice) {
+    return gsv_enabled()?gsv_advise(address,size,advice):gv_advise(&vm_budget,address,size,advice);
+}
 static int guest_mprotect(void *address, size_t size, int prot) {
     LOG("[native] mprotect(%p,%#zx,%d)\n",address,size,prot);
     // Local signing: shadow pages are plain writable anonymous memory; signed
@@ -426,11 +450,12 @@ static int guest_mprotect(void *address, size_t size, int prot) {
     }
     // Keep executable backing RX; imported stores/copies use its shared RW view.
     if (inside(address,size) && (prot & PROT_EXEC)) prot &= ~PROT_WRITE;
-    int result = gv_protect(&vm_budget,address,size,prot);
+    int result = gsv_enabled()?gsv_protect(address,size,prot):gv_protect(&vm_budget,address,size,prot);
     if (result) LOG("[native] mprotect failed errno=%d\n",errno);
     return result;
 }
 static int guest_munmap(void *address, size_t size) {
+    gsv_forget_code_alias(address,size);
     LOG("[native] munmap(%p,%#zx)\n",address,size);
     // Local signing: keep validated pages; shadow pages stay mapped+writable.
     if (inside_exec(address,size)) {
@@ -440,7 +465,7 @@ static int guest_munmap(void *address, size_t size) {
     // Reserve the runtime arena so a later fixed/hinted remap preserves the RX
     // backing established before guest execution. Inaccessible until remapped.
     if (inside(address,size)) return mprotect(address,size,PROT_NONE);
-    return gv_unmap(&vm_budget,address,size);
+    return gsv_enabled()?gsv_unmap(address,size):gv_unmap(&vm_budget,address,size);
 }
 static void *guest_mmap(void *address, size_t size, int prot, int flags, int fd, off_t offset) {
     LOG("[native] mmap(%p,%#zx,%d,%#x,%d,%lld)\n",address,size,prot,flags,fd,(long long)offset);
@@ -464,7 +489,8 @@ static void *guest_mmap(void *address, size_t size, int prot, int flags, int fd,
         return address;
     }
     void *result;
-    if (gv_counts(&vm_budget,address,size,flags)) {
+    if (gsv_enabled()) result=gsv_map(address,size,prot,flags,fd,offset);
+    else if (gv_counts(&vm_budget,address,size,flags)) {
         size_t granted;
         result=gv_reserve(&vm_budget,size,prot,flags,fd,&granted);
         int code=errno;
@@ -538,6 +564,7 @@ static int guest_open(const char *, int, ...);
 static int guest_openat(int, const char *, int, ...);
 static int guest_stat(const char *, struct stat *);
 static int guest_lstat(const char *, struct stat *);
+static int guest_fstat(int, struct stat *);
 static int guest_access(const char *, int);
 static FILE *guest_fopen(const char *, const char *);
 static FILE *guest_fopen_extsn(const char *, const char *);
@@ -597,7 +624,7 @@ static void *hook(const char *name) {
     HOOK("dlopen",guest_dlopen); HOOK("dlclose",guest_dlclose); HOOK("dlerror",guest_dlerror);
     HOOK("system",guest_system); HOOK("popen",guest_popen); HOOK("posix_spawn",guest_posix_spawn);
     HOOK("exit",guest_exit); HOOK("abort",guest_abort);
-    if (trace_guest || case_insensitive_files) {
+    if (trace_guest || case_insensitive_files || gsv_enabled()) {
         HOOK("open",guest_open); HOOK("openat",guest_openat); HOOK("stat",guest_stat); HOOK("lstat",guest_lstat);
         HOOK("access",guest_access); HOOK("opendir",guest_opendir);
         HOOK("fopen",guest_fopen); HOOK("fopen$DARWIN_EXTSN",guest_fopen_extsn);
@@ -611,8 +638,15 @@ static void *hook(const char *name) {
         HOOK("sendto",guest_sendto); HOOK("recvfrom",guest_recvfrom);
         HOOK("uname",guest_uname); HOOK("gethostname",guest_gethostname); }
     HOOK("mmap",guest_mmap); HOOK("mprotect",guest_mprotect); HOOK("munmap",guest_munmap);
-    if (gv_enabled(&vm_budget)) HOOK("madvise",guest_madvise);
+    if (gv_enabled(&vm_budget) || gsv_enabled()) HOOK("madvise",guest_madvise);
     HOOK("memcpy",guest_memcpy); HOOK("memmove",guest_memmove); HOOK("memset",guest_memset);
+    if (gsv_enabled()) {
+        HOOK("fstat",guest_fstat);
+        HOOK("bzero",guest_bzero);
+        HOOK("__memcpy_chk",guest_memcpy_chk); HOOK("__memmove_chk",guest_memmove_chk); HOOK("__memset_chk",guest_memset_chk);
+        HOOK("read",gsv_read); HOOK("pread",gsv_pread); HOOK("write",gsv_write); HOOK("pwrite",gsv_pwrite);
+        HOOK("fread",gsv_fread); HOOK("fwrite",gsv_fwrite);
+    }
     HOOK("sysctlbyname",guest_sysctlbyname);
     HOOK("pthread_jit_write_protect_np",guest_jit_protect);
 #undef HOOK
@@ -782,6 +816,8 @@ static void case_found(const char *path, const char *found) {
     errno=code;
 }
 static int guest_open(const char *path, int flags, ...) {
+    char local_path[PATH_MAX]; path=gsv_string(path,local_path,sizeof local_path);
+    if(!path) return -1;
     int mode=0;
     if (flags&O_CREAT) { va_list arguments; va_start(arguments,flags); mode=va_arg(arguments,int); va_end(arguments); }
     int fd=open(path,flags,mode);
@@ -792,6 +828,8 @@ static int guest_open(const char *path, int flags, ...) {
     return fd;
 }
 static int guest_openat(int directory, const char *path, int flags, ...) {
+    char local_path[PATH_MAX]; path=gsv_string(path,local_path,sizeof local_path);
+    if(!path) return -1;
     int mode=0;
     if (flags&O_CREAT) { va_list arguments; va_start(arguments,flags); mode=va_arg(arguments,int); va_end(arguments); }
     int fd=openat(directory,path,flags,mode);
@@ -803,22 +841,41 @@ static int guest_openat(int directory, const char *path, int flags, ...) {
     return fd;
 }
 static int guest_stat(const char *path, struct stat *buffer) {
+    char local_path[PATH_MAX]; path=gsv_string(path,local_path,sizeof local_path);
+    if(!path) return -1;
+    struct stat local_stat, *output=buffer;
+    if(gsv_address(buffer)) buffer=&local_stat;
     int result=stat(path,buffer);
     char found[PATH_MAX];
     if (result && case_variant(path,found,sizeof found) && !(result=stat(found,buffer))) case_found(path,found);
     if (result) trace_failure("stat",path);
     else trace_success("stat",path,(long long)buffer->st_size);
+    if(!result && output!=buffer && gsv_copy(output,buffer,sizeof *buffer)!=GM_OK) { errno=EFAULT; return -1; }
     return result;
 }
 static int guest_lstat(const char *path, struct stat *buffer) {
+    char local_path[PATH_MAX]; path=gsv_string(path,local_path,sizeof local_path);
+    if(!path) return -1;
+    struct stat local_stat, *output=buffer;
+    if(gsv_address(buffer)) buffer=&local_stat;
     int result=lstat(path,buffer);
     char found[PATH_MAX];
     if (result && case_variant(path,found,sizeof found) && !(result=lstat(found,buffer))) case_found(path,found);
     if (result) trace_failure("lstat",path);
     else trace_success("lstat",path,(long long)buffer->st_size);
+    if(!result && output!=buffer && gsv_copy(output,buffer,sizeof *buffer)!=GM_OK) { errno=EFAULT; return -1; }
+    return result;
+}
+static int guest_fstat(int fd, struct stat *buffer) {
+    if(!gsv_address(buffer)) return fstat(fd,buffer);
+    struct stat local_stat;
+    int result=fstat(fd,&local_stat);
+    if(!result && gsv_copy(buffer,&local_stat,sizeof local_stat)!=GM_OK) { errno=EFAULT; return -1; }
     return result;
 }
 static int guest_access(const char *path, int mode) {
+    char local_path[PATH_MAX]; path=gsv_string(path,local_path,sizeof local_path);
+    if(!path) return -1;
     int result=access(path,mode);
     char found[PATH_MAX];
     if (result && case_variant(path,found,sizeof found) && !(result=access(found,mode))) case_found(path,found);
@@ -831,6 +888,9 @@ static int guest_access(const char *path, int mode) {
 extern FILE *plain_fopen(const char *, const char *) __asm("_fopen");
 extern char *plain_realpath(const char *, char *) __asm("_realpath");
 static FILE *traced_fopen(FILE *(*real)(const char *, const char *), const char *path, const char *mode) {
+    char local_path[PATH_MAX],local_mode[32];
+    path=gsv_string(path,local_path,sizeof local_path); mode=gsv_string(mode,local_mode,sizeof local_mode);
+    if(!path || !mode) return NULL;
     FILE *file=real(path,mode);
     char found[PATH_MAX];
     bool creates=mode && (strchr(mode,'w') || strchr(mode,'a'));
@@ -842,6 +902,8 @@ static FILE *traced_fopen(FILE *(*real)(const char *, const char *), const char 
 static FILE *guest_fopen(const char *path, const char *mode) { return traced_fopen(plain_fopen,path,mode); }
 static FILE *guest_fopen_extsn(const char *path, const char *mode) { return traced_fopen(fopen,path,mode); }
 static DIR *guest_opendir(const char *path) {
+    char local_path[PATH_MAX]; path=gsv_string(path,local_path,sizeof local_path);
+    if(!path) return NULL;
     DIR *directory=opendir(path);
     char found[PATH_MAX];
     if (!directory && case_variant(path,found,sizeof found) && (directory=opendir(found))) case_found(path,found);
@@ -850,10 +912,19 @@ static DIR *guest_opendir(const char *path) {
     return directory;
 }
 static char *traced_realpath(char *(*real)(const char *, char *), const char *path, char *resolved) {
+    char local_path[PATH_MAX],local_result[PATH_MAX];
+    path=gsv_string(path,local_path,sizeof local_path);
+    if(!path) return NULL;
+    char *output=resolved;
+    if(gsv_address(resolved)) resolved=local_result;
     char *result=real(path,resolved);
     char found[PATH_MAX];
     if (!result && case_variant(path,found,sizeof found) && (result=real(found,resolved))) case_found(path,found);
     if (!result) trace_failure("realpath",path);
+    if(result && output!=resolved) {
+        if(gsv_copy(output,result,strlen(result)+1)!=GM_OK) { errno=EFAULT; return NULL; }
+        return output;
+    }
     return result;
 }
 static char *guest_realpath(const char *path, char *resolved) { return traced_realpath(plain_realpath,path,resolved); }
@@ -1005,7 +1076,7 @@ static void guest_crash_registers(int signal_number, siginfo_t *info, void *uap)
     arm_thread_state64_t state=context->uc_mcontext->__ss;
     LOG("[native] guest fault signal=%d pc=%016llx address=%p\n",signal_number,
         (unsigned long long)arm_thread_state64_get_pc(state),info?info->si_addr:NULL);
-    for (unsigned i=0;i<29;i+=4)
+    for (unsigned i=0;i+3<29;i+=4)
         LOG("[native] x%-2u=%016llx x%-2u=%016llx x%-2u=%016llx x%-2u=%016llx\n",
             i,(unsigned long long)state.__x[i],i+1,(unsigned long long)state.__x[i+1],
             i+2,(unsigned long long)state.__x[i+2],i+3,(unsigned long long)state.__x[i+3]);
@@ -1413,8 +1484,38 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
     }
     case_insensitive_files=[NSProcessInfo.processInfo.arguments containsObject:@"--case-insensitive-files"];
     if (case_insensitive_files) LOG("[native] file lookups retried ignoring case (--case-insensitive-files; experimental)\n");
+    bool software_requested=[NSProcessInfo.processInfo.arguments containsObject:@"--cyberpunk-software-vm"];
+    if (software_requested) {
+        if (![NSProcessInfo.processInfo.arguments containsObject:@"--app=cyberpunk-2077"] ||
+            ![@(guest.path) hasSuffix:@"Cyberpunk2077.app/Contents/MacOS/Cyberpunk2077"] || signed_image.active) {
+            LOG("[software-vm] refused: this opt-in is restricted to the Cyberpunk native profile\n"); goto done;
+        }
+        const char *backing=getenv("TOLKARA_SOFTWARE_VM_MB"), *force=getenv("TOLKARA_SOFTWARE_VM_FORCE_MB");
+        char *rest=NULL; unsigned long long megabytes=4096, forced=0;
+        if(backing && *backing) {
+            megabytes=strtoull(backing,&rest,10);
+            if(*rest || megabytes<64 || megabytes>8192) { LOG("[software-vm] backing must be 64..8192 whole MiB\n"); goto done; }
+        }
+        if(force && *force) {
+            forced=strtoull(force,&rest,10);
+            if(*rest || forced>(1ULL<<20)) { LOG("[software-vm] invalid forced reservation threshold\n"); goto done; }
+        }
+        if(!gsv_start((size_t)megabytes<<20,(size_t)forced<<20,fileno(guest.log))) {
+            LOG("[software-vm] initialization failed\n"); goto done;
+        }
+        const char *native_pool=getenv("TOLKARA_SOFTWARE_VM_NATIVE_POOL_MB");
+        if(native_pool && *native_pool) {
+            unsigned long long native_mb=strtoull(native_pool,&rest,10);
+            if(*rest || native_mb<64 || native_mb>(1ULL<<20)) {
+                LOG("[software-vm] invalid preferred native pool size\n"); goto done;
+            }
+            gsv_prefer_native_pool((size_t)native_mb<<20);
+            LOG("[software-vm] prefer native pool=%llu MiB; other large reservations use software\n",native_mb);
+        }
+        LOG("[software-vm] Cyberpunk-only runtime emulation enabled, backing=%llu MiB; native mappings attempted first\n",megabytes);
+    }
     const char *budget_mb=getenv("TOLKARA_VM_BUDGET_MB");
-    if (budget_mb && *budget_mb) {
+    if (!software_requested && budget_mb && *budget_mb) {
         char *rest=NULL; unsigned long long megabytes=strtoull(budget_mb,&rest,10);
         if (*rest || !megabytes || megabytes>(1ULL<<24)) LOG("[native] TOLKARA_VM_BUDGET_MB ignored: whole megabytes, 1 to 16777216\n");
         else {
@@ -1485,6 +1586,9 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
             }
         }
         gm_destroy(&library->image.memory);
+    }
+    if(gsv_enabled() && !gsv_code_alias(guest.arena.executable,guest.arena.writable,guest.arena.size)) {
+        LOG("[software-vm] cannot register the loader-owned instruction view\n"); goto done;
     }
     {
         // The unpacking initializer runs in both backends. With Local signing
