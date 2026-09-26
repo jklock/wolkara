@@ -17,6 +17,7 @@ static NativeCodeMemory local_quarantine;
 #include "GuestTLS.h"
 #include "GuestWrap.h"
 #include "GuestWait.h"
+#include "GuestWaitTrace.h"
 #include "SignedImage.h"
 #include <dlfcn.h>
 #include <mach-o/loader.h>
@@ -130,6 +131,7 @@ bool ng_reserve_arena(FILE *log) {
 }
 #define LOG(...) do { fprintf(guest.log, __VA_ARGS__); fflush(guest.log); } while (0)
 static void log_once(const char *format, ...) __attribute__((format(printf,1,2)));
+static unsigned trace_tid(void);
 __attribute__((noinline,used,visibility("default")))
 void host_debugger_publish_arena(void *address, size_t size, volatile uint64_t *completion) {
     __asm__ volatile("" : : "r"(address), "r"(size), "r"(completion) : "memory");
@@ -211,6 +213,38 @@ static bool publish(void *address, size_t size, void *context) {
 static bool inside(const void *address, size_t size) {
     uintptr_t a = (uintptr_t)address, base = (uintptr_t)guest.arena.executable;
     return a >= base && a - base <= guest.arena.size && size <= guest.arena.size - (a - base);
+}
+// Progress telemetry reads only runtime counters and kernel thread metadata.
+// In particular, it does not sample registers, stacks or application memory.
+static void schedule_memory_progress(unsigned tick, uint64_t previous) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,10*NSEC_PER_SEC),dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
+        if(!gsv_enabled()) return;
+        uint64_t faults=gsv_fault_count();
+        GMSparseStats stats=gsv_stats();
+        thread_act_array_t threads=NULL; mach_msg_type_number_t count=0;
+        unsigned running=0,waiting=0,other=0;
+        if(task_threads(mach_task_self(),&threads,&count)==KERN_SUCCESS) {
+            for(mach_msg_type_number_t i=0;i<count;i++) {
+                thread_basic_info_data_t info={0}; mach_msg_type_number_t length=THREAD_BASIC_INFO_COUNT;
+                if(thread_info(threads[i],THREAD_BASIC_INFO,(thread_info_t)&info,&length)==KERN_SUCCESS) {
+                    if(info.run_state==TH_STATE_RUNNING) running++;
+                    else if(info.run_state==TH_STATE_WAITING) waiting++;
+                    else other++;
+                } else other++;
+                mach_port_deallocate(mach_task_self(),threads[i]);
+            }
+            vm_deallocate(mach_task_self(),(vm_address_t)threads,count*sizeof(thread_act_t));
+        }
+        log_once("[software-vm] progress tick=%u faults=%llu delta=%llu backing_pages=%zu threads_running=%u waiting=%u other=%u\n",
+            tick,(unsigned long long)faults,(unsigned long long)(faults-previous),stats.resident_pages,running,waiting,other);
+        for(unsigned thread=1;thread<=GWT_THREAD_LIMIT;thread++) {
+            GWWaitRecord wait;
+            if(gwt_snapshot(thread,&wait))
+                log_once("[software-vm] wait tick=%u t%u %s address=%p software=%d\n",tick,thread,
+                    wait.operation,(void *)wait.address,gsv_address((void *)wait.address));
+        }
+        if(tick<360) schedule_memory_progress(tick+1,faults);
+    });
 }
 // Optional diagnostics after debugger detachment. Log our own threads'
 // program counters and symbols only; never copy guest code or data, attach,
@@ -605,11 +639,46 @@ extern int __ulock_wait(uint32_t,void *,uint64_t,uint32_t);
 static bool (*shader_wait_pending)(void);
 static bool shader_pending(void) { return shader_wait_pending && shader_wait_pending(); }
 static void pump_shader_wait(void) { CFRunLoopRunInMode(kCFRunLoopDefaultMode,.001,true); }
+#define WAIT_TRACE_CALL(name,address,expression) \
+    unsigned tid=(trace_guest && gsv_enabled())?trace_tid():0; \
+    GWWaitRecord previous=gwt_begin(tid,name,address); \
+    int result=(expression); int code=errno; gwt_end(tid,previous); errno=code; return result
+static int guest_mutex_lock(pthread_mutex_t *mutex) {
+    WAIT_TRACE_CALL("pthread_mutex_lock",mutex,pthread_mutex_lock(mutex));
+}
+static int guest_cond_wait(pthread_cond_t *condition,pthread_mutex_t *mutex) {
+    WAIT_TRACE_CALL("pthread_cond_wait",condition,pthread_cond_wait(condition,mutex));
+}
+static int guest_cond_timedwait(pthread_cond_t *condition,pthread_mutex_t *mutex,const struct timespec *deadline) {
+    WAIT_TRACE_CALL("pthread_cond_timedwait",condition,pthread_cond_timedwait(condition,mutex,deadline));
+}
+static int guest_cond_relativewait(pthread_cond_t *condition,pthread_mutex_t *mutex,const struct timespec *timeout) {
+    WAIT_TRACE_CALL("pthread_cond_timedwait_relative_np",condition,pthread_cond_timedwait_relative_np(condition,mutex,timeout));
+}
+static int guest_rwlock_read(pthread_rwlock_t *lock) {
+    WAIT_TRACE_CALL("pthread_rwlock_rdlock",lock,pthread_rwlock_rdlock(lock));
+}
+static int guest_rwlock_write(pthread_rwlock_t *lock) {
+    WAIT_TRACE_CALL("pthread_rwlock_wrlock",lock,pthread_rwlock_wrlock(lock));
+}
+static kern_return_t guest_semaphore_wait(semaphore_t semaphore) {
+    WAIT_TRACE_CALL("semaphore_wait",(void *)(uintptr_t)semaphore,semaphore_wait(semaphore));
+}
+#undef WAIT_TRACE_CALL
+static long guest_dispatch_wait(dispatch_semaphore_t semaphore,dispatch_time_t timeout) {
+    unsigned tid=(trace_guest && gsv_enabled())?trace_tid():0;
+    GWWaitRecord previous=gwt_begin(tid,"dispatch_semaphore_wait",(__bridge void *)semaphore);
+    long result=dispatch_semaphore_wait(semaphore,timeout);
+    int code=errno;gwt_end(tid,previous);errno=code;return result;
+}
 static int guest_ulock_wait(uint32_t operation,void *address,uint64_t value,uint32_t timeout) {
     static _Thread_local bool pumping;
     if(pumping) return __ulock_wait(operation,address,value,timeout);
     pumping=true;
+    unsigned tid=(trace_guest && gsv_enabled())?trace_tid():0;
+    GWWaitRecord previous=gwt_begin(tid,"__ulock_wait",address);
     int result=gw_wait(__ulock_wait,operation,address,value,timeout,pthread_main_np()!=0,shader_pending,pump_shader_wait);
+    int code=errno;gwt_end(tid,previous);errno=code;
     pumping=false; return result;
 }
 static void *hook(const char *name) {
@@ -649,6 +718,13 @@ static void *hook(const char *name) {
         HOOK("strlen",gsv_strlen); HOOK("strnlen",gsv_strnlen);
         HOOK("strcmp",gsv_strcmp); HOOK("strncmp",gsv_strncmp);
         HOOK("memcmp",gsv_memcmp); HOOK("memchr",gsv_memchr); HOOK("strchr",gsv_strchr);
+        if(trace_guest) {
+            HOOK("pthread_mutex_lock",guest_mutex_lock);
+            HOOK("pthread_cond_wait",guest_cond_wait); HOOK("pthread_cond_timedwait",guest_cond_timedwait);
+            HOOK("pthread_cond_timedwait_relative_np",guest_cond_relativewait);
+            HOOK("pthread_rwlock_rdlock",guest_rwlock_read); HOOK("pthread_rwlock_wrlock",guest_rwlock_write);
+            HOOK("semaphore_wait",guest_semaphore_wait); HOOK("dispatch_semaphore_wait",guest_dispatch_wait);
+        }
     }
     HOOK("sysctlbyname",guest_sysctlbyname);
     HOOK("pthread_jit_write_protect_np",guest_jit_protect);
@@ -1516,6 +1592,7 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
             LOG("[software-vm] prefer native pool=%llu MiB; other large reservations use software\n",native_mb);
         }
         LOG("[software-vm] Cyberpunk-only runtime emulation enabled, backing=%llu MiB; native mappings attempted first\n",megabytes);
+        if(trace_guest) schedule_memory_progress(1,0);
     }
     const char *budget_mb=getenv("TOLKARA_VM_BUDGET_MB");
     if (!software_requested && budget_mb && *budget_mb) {

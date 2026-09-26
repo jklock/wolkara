@@ -4,6 +4,8 @@ cd "$(dirname "$0")/.."
 mkdir -p build/emulation
 CC=(xcrun clang -std=c11 -D_DARWIN_C_SOURCE -Wall -Wextra -Werror -O1 -g
     -fsanitize=address,undefined -fno-omit-frame-pointer -Iruntime)
+"${CC[@]}" runtime/GuestWaitTrace.c tests/test_wait_trace.c -o build/emulation/test_wait_trace
+build/emulation/test_wait_trace
 "${CC[@]}" runtime/GuestMemory.c runtime/DarwinMemory.c runtime/MemoryProbe.c tests/test_memory.c -o build/emulation/test_memory
 build/emulation/test_memory
 "${CC[@]}" runtime/GuestMemory.c runtime/GuestSparseMemory.c tests/test_sparse_memory.c -o build/emulation/test_sparse_memory

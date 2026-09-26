@@ -140,3 +140,11 @@ Simulator launch-to-heap-assertion time improved only from about 6m20s to 6m10s
 A false-returning `CGDisplayModeIsUsableForDesktopGUI` stub was replaced with
 an implementation for the UIKit screen mode; its physical-device test is in
 progress.
+
+With `--trace-guest`, the runtime reports fault totals and increments, backing
+page counts and kernel thread states every ten seconds for at most one hour.
+It also reports active imported mutex, condition, rwlock and semaphore wait
+boundaries. These diagnostics use runtime-owned counters and kernel metadata;
+they do not read application registers, stacks or memory. The display usability
+fix removed the stub call on the iPad, but startup still paused after a worker's
+memory-capacity query. The instrumented device test is investigating that pause.
