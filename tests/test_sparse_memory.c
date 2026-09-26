@@ -8,6 +8,27 @@ static const uint64_t base = UINT64_C(0x10000000000);
 #define PAGE GM_PAGE_SIZE
 #define GIB (UINT64_C(1) << 30)
 
+static void write_statistics(void) {
+    GMSparseMemory m={0};
+    assert(gm_sparse_init(&m,base,GIB,2*PAGE)==GM_OK);
+    assert(gm_sparse_map(&m,base,PAGE,GM_READ|GM_WRITE,GM_READ|GM_WRITE,false)==GM_OK);
+    uint64_t value=7,old=0,wrong=9;
+    assert(gm_sparse_stats(&m).write_operations==0);
+    assert(gm_sparse_read(&m,base,&old,8)==GM_OK);
+    assert(gm_sparse_write(&m,base,NULL,0)==GM_OK);
+    assert(gm_sparse_write(&m,base+PAGE,&value,8)==GM_UNMAPPED);
+    assert(gm_sparse_stats(&m).write_operations==0);
+    assert(gm_sparse_write(&m,base,&value,8)==GM_OK);
+    assert(gm_sparse_compare_exchange(&m,base,&wrong,&old,&value,8)==GM_OK);
+    assert(gm_sparse_stats(&m).write_operations==1); // failed comparison is only a read
+    assert(gm_sparse_compare_exchange(&m,base,&value,&wrong,&old,8)==GM_OK);
+    assert(gm_sparse_stats(&m).write_operations==2);
+    assert(gm_sparse_unmap(&m,base,PAGE)==GM_OK);
+    assert(gm_sparse_stats(&m).write_operations==2);
+    gm_sparse_destroy(&m);
+    assert(gm_sparse_stats(&m).write_operations==0);
+}
+
 static void large_reservations(void) {
     GMSparseMemory m = {0};
     assert(gm_sparse_init(&m, base, 256 * GIB, 16 * PAGE) == GM_OK);
@@ -290,6 +311,7 @@ static void malformed_and_limits(void) {
     gm_sparse_destroy(&m); gm_sparse_destroy(&m);
 }
 int main(void) {
+    write_statistics();
     large_reservations(); exhaustion_and_recycling(); reference_comparison();
     concurrent_pages(); atomic_operations(); exclusive_page_isolation(); concurrent_atomics(); malformed_and_limits();
     puts("PASS: 112 GiB sparse reservations, independent reference comparison, atomic failures, recycling and concurrent pages");

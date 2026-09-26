@@ -370,6 +370,7 @@ GMSparseStats gm_sparse_stats(GMSparseMemory *memory) {
     if (!s) return result;
     lock(s);
     for (size_t i = 0; i < s->count; ++i) result.reserved_bytes += s->regions[i].end - s->regions[i].start;
+    result.write_operations = s->generation;
     result.regions = s->count; result.resident_pages = s->resident; result.capacity_pages = s->capacity;
     unlock(s);
     return result;

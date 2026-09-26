@@ -9,6 +9,7 @@
 typedef struct { void *implementation; } GMSparseMemory;
 typedef struct {
     uint64_t reserved_bytes;
+    uint64_t write_operations; // successful nonempty writes, including atomic updates
     size_t regions, resident_pages, capacity_pages;
 } GMSparseStats;
 typedef struct {
