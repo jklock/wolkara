@@ -628,6 +628,15 @@ static void *guest_dlsym(void *handle, const char *name) {
         (void)dlerror();   // a library it links lacking the name is not the guest's error
         if (!value) snprintf(guest_dl_error,sizeof guest_dl_error,"dlsym(%p, %s): symbol not found",handle,name?name:"(null)");
     }
+    else if (!value && handle==RTLD_DEFAULT) {
+        // Every loaded image in load order, as dyld searches: the placed ones
+        // (the executable, then what it carries) come first.
+        char symbol[1024]; uint64_t address=0;
+        if (name && snprintf(symbol,sizeof symbol,"_%s",name)<(int)sizeof symbol &&
+            gl_lookup(&carried,&guest.image,guest.path,BIND_SPECIAL_DYLIB_FLAT_LOOKUP,symbol,&address,NULL))
+            value=(void *)(uintptr_t)address;
+        else value=dlsym(handle,name);
+    }
     else if (!value) value = dlsym(handle,name);
     LOG("[native] dlsym(%s) -> %p\n",name?name:"(null)",value); return value;
 }
