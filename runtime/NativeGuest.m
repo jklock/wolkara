@@ -621,6 +621,8 @@ static int guest_poll(struct pollfd *, nfds_t, int);
 static ssize_t guest_sendto(int, const void *, size_t, int, const struct sockaddr *, socklen_t);
 static ssize_t guest_recvfrom(int, void *, size_t, int, struct sockaddr *, socklen_t *);
 static int guest_sysctlbyname(const char *, void *, size_t *, void *, size_t);
+static int guest_sysctl(int *, u_int, void *, size_t *, void *, size_t);
+static long guest_sysconf(int);
 static int guest_uname(struct utsname *);
 static int guest_gethostname(char *, size_t);
 static char *guest_realpath(const char *, char *);
@@ -728,6 +730,7 @@ static void *hook(const char *name) {
         }
     }
     HOOK("sysctlbyname",guest_sysctlbyname);
+    HOOK("sysctl",guest_sysctl); HOOK("sysconf",guest_sysconf);
     HOOK("pthread_jit_write_protect_np",guest_jit_protect);
 #undef HOOK
     return NULL;
@@ -1121,6 +1124,26 @@ static int guest_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, voi
         log_once("[native] [t%u] sysctlbyname(%s) -> %d errno=%d %s\n",trace_tid(),name,result,result?code:0,shown);
     }
     return result;
+}
+static int guest_sysctl(int *name,u_int count,void *oldp,size_t *oldlenp,void *newp,size_t newlen) {
+    int result=sysctl(name,count,oldp,oldlenp,newp,newlen), saved=errno;
+    const char *cpu=result ? NULL : ng_cpu_mib_name(name,count);
+    if(!result && gsv_enabled() && oldlenp && !newp && !newlen &&
+       ng_limit_cpu_answer(cpu,oldp,*oldlenp,software_cpu_limit))
+        log_once("[software-vm] guest numeric CPU topology query %s capped at %u\n",cpu,software_cpu_limit);
+    if(trace_guest && cpu) {
+        int value=0;
+        if(!result && oldp && oldlenp && *oldlenp==sizeof value) memcpy(&value,oldp,sizeof value);
+        log_once("[native] [t%u] sysctl(%s) -> %d errno=%d value=%d\n",trace_tid(),cpu,result,result?saved:0,value);
+    }
+    errno=saved;return result;
+}
+static long guest_sysconf(int name) {
+    long value=sysconf(name);int saved=errno;
+    if(gsv_enabled()) value=ng_limit_cpu_sysconf(name,value,software_cpu_limit);
+    if(trace_guest && (name==_SC_NPROCESSORS_CONF || name==_SC_NPROCESSORS_ONLN))
+        log_once("[native] [t%u] sysconf(%d) -> %ld\n",trace_tid(),name,value);
+    errno=saved;return value;
 }
 static int guest_uname(struct utsname *u) {
     int result=uname(u);

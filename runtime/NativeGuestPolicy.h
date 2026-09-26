@@ -4,6 +4,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <string.h>
+#include <sys/sysctl.h>
+#include <unistd.h>
 
 // Optional CPU topology limit for the software-memory performance experiment.
 // Apply only to a successful native integer result; never increase capacity.
@@ -17,6 +19,18 @@ static inline bool ng_limit_cpu_answer(const char *name,void *answer,size_t size
     int count;memcpy(&count,answer,sizeof count);
     if(count<=0 || (unsigned)count<=limit)return false;
     count=(int)limit;memcpy(answer,&count,sizeof count);return true;
+}
+
+// The legacy numeric sysctl interface exposes these two CPU-count queries.
+static inline const char *ng_cpu_mib_name(const int *name,unsigned count) {
+    if(!name || count!=2 || name[0]!=CTL_HW) return NULL;
+    if(name[1]==HW_NCPU) return "hw.ncpu";
+    if(name[1]==HW_AVAILCPU) return "hw.activecpu";
+    return NULL;
+}
+static inline long ng_limit_cpu_sysconf(int name,long value,unsigned limit) {
+    if(!limit || value<=0 || (name!=_SC_NPROCESSORS_CONF && name!=_SC_NPROCESSORS_ONLN)) return value;
+    return (unsigned long)value>limit ? (long)limit : value;
 }
 
 // An import nothing provides becomes a logged stub only where no build-time
