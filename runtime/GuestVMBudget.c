@@ -1,6 +1,7 @@
 #include "GuestVMBudget.h"
 #include <errno.h>
 #include <mach/mach.h>
+#include <mach-o/dyld.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -128,8 +129,23 @@ static bool unmapped(uintptr_t from, size_t size) {
     return address >= from + size;
 }
 // The first address at or above `from` with `size` free bytes, or 0.
-static uintptr_t free_span(uintptr_t from, size_t size) {
+static bool overlaps_reservation(const GVBudget *budget, uintptr_t from, size_t size) {
+    uintptr_t end = page_end(budget, from, size);
+    if (!end) return true;
+    for (size_t i = 0; i < budget->count; i++) {
+        const GVRegion *r = &budget->regions[i];
+        if (from < r->span && end > r->start) return true;
+    }
+    return false;
+}
+static uintptr_t free_span(const GVBudget *budget, uintptr_t from, size_t size) {
     for (int step = 0; step < 4096 && from + size > from; step++) {
+        uintptr_t next = from;
+        for (size_t i = 0; i < budget->count; i++) {
+            const GVRegion *r = &budget->regions[i];
+            if (from < r->span && from + size > r->start && r->span > next) next = r->span;
+        }
+        if (next != from) { from = next; continue; }
         vm_address_t address = from;
         vm_size_t length = 0;
         vm_region_basic_info_data_64_t info;
@@ -171,12 +187,24 @@ void *gv_reserve(GVBudget *budget, size_t size, int prot, int flags, int fd, siz
     if (result == MAP_FAILED) { os_unfair_lock_unlock(&budget->lock); return result; }
     uintptr_t start = (uintptr_t)result;
     uintptr_t asked = page_end(budget, start, size);
-    if (want < size && asked > start + mapped && !unmapped(start + mapped, asked - start - mapped)) {
-        // Something lies where the missing part would be: move where the whole span is free.
-        uintptr_t hole = free_span(start, size);
+    if (overlaps_reservation(budget, start, size) ||
+        (want < size && asked > start + mapped && !unmapped(start + mapped, asked - start - mapped))) {
+        // A guest may identify its pools by their requested address ranges.
+        // Missing tails still belong to those ranges, even though the kernel
+        // is free to place another mapping there. Search from the bottom so
+        // a high reservation does not hide usable lower address space.
+        // PAGEZERO is not reported as a mapped region. Begin at the host's
+        // executable header rather than mistaking that low range for a hole.
+        uintptr_t hole = free_span(budget, (uintptr_t)_dyld_get_image_header(0), size);
         void *moved = hole ? mmap((void *)hole, mapped, prot, flags, fd, 0) : MAP_FAILED;
         if (moved == (void *)hole) { munmap(result, mapped); result = moved; start = hole; }
-        else if (moved != MAP_FAILED) munmap(moved, mapped);
+        else {
+            if (moved != MAP_FAILED) munmap(moved, mapped);
+            munmap(result, mapped);
+            os_unfair_lock_unlock(&budget->lock);
+            errno = ENOMEM;
+            return MAP_FAILED;
+        }
     }
     uintptr_t own = page_end(budget, start, want);
     GVRegion region = {start, own, own, own};
