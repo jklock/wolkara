@@ -38,7 +38,11 @@ static BOOL eventMonitorsEnabled(void) {
     });
     return enabled;
 }
+// Where the pointer is, in screen coordinates (bottom-left origin), as the
+// last mouse event left it.
+static NSPoint mouseScreenLocation;
 @implementation NSEvent
++ (NSPoint)mouseLocation { return mouseScreenLocation; }
 - (NSString *)description { return [NSString stringWithFormat:@"<NSEvent type=%lu loc=%@ key=%d>", (unsigned long)_type, NSStringFromCGPoint(_locationInWindow), _keyCode]; }
 + (id)addLocalMonitorForEventsMatchingMask:(NSUInteger)mask handler:(id)handler {
     return eventMonitorsEnabled() ? AKEventMonitorAdd(mask, handler) : nil;
@@ -50,10 +54,17 @@ static BOOL eventMonitorsEnabled(void) {
 
 #pragma mark - NSView
 
-@implementation NSView { NSMutableArray<NSView *> *_subviews; NSMutableArray<NSDictionary *> *_cursorRects; __weak NSView *_superview; }
+@implementation NSTrackingArea
+- (instancetype)initWithRect:(NSRect)rect options:(NSUInteger)options owner:(id)owner userInfo:(NSDictionary *)userInfo {
+    if ((self = [super init])) { _rect = rect; _options = options; _owner = owner; _userInfo = [userInfo copy]; }
+    return self;
+}
+@end
+
+@implementation NSView { NSMutableArray<NSView *> *_subviews; NSMutableArray<NSDictionary *> *_cursorRects; NSMutableArray<NSTrackingArea *> *_trackingAreas; __weak NSView *_superview; }
 - (instancetype)init { return [self initWithFrame:CGRectZero]; }
 - (instancetype)initWithFrame:(NSRect)frame {
-    if ((self = [super init])) { _frame = frame; _bounds = (CGRect){CGPointZero, frame.size}; _subviews = [NSMutableArray new]; _cursorRects=[NSMutableArray new]; }
+    if ((self = [super init])) { _frame = frame; _bounds = (CGRect){CGPointZero, frame.size}; _subviews = [NSMutableArray new]; _cursorRects=[NSMutableArray new]; _trackingAreas=[NSMutableArray new]; }
     return self;
 }
 - (CALayer *)makeBackingLayer { return [CALayer layer]; }
@@ -91,6 +102,28 @@ static BOOL eventMonitorsEnabled(void) {
     [self viewDidMoveToWindow];
 }
 - (void)viewDidMoveToWindow {}
+- (NSArray<NSTrackingArea *> *)trackingAreas { return [_trackingAreas copy]; }
+- (void)addTrackingArea:(NSTrackingArea *)area { if (area && ![_trackingAreas containsObject:area]) [_trackingAreas addObject:area]; }
+- (void)removeTrackingArea:(NSTrackingArea *)area { if (area) [_trackingAreas removeObject:area]; }
+- (void)updateTrackingAreas {}
+- (BOOL)wantsUpdateLayer { return NO; }
+- (void)updateLayer {}
+- (void)setNeedsDisplay:(BOOL)flag {
+    if (!flag) { _needsDisplay = NO; return; }
+    if (_needsDisplay) return;
+    _needsDisplay = YES;
+    // One pass per turn of the main run loop, however often it is asked for.
+    dispatch_async(dispatch_get_main_queue(), ^{ [self displayIfNeeded]; });
+}
+- (void)setNeedsDisplayInRect:(NSRect)rect { (void)rect; self.needsDisplay = YES; }
+- (void)displayIfNeeded { if (_needsDisplay) [self display]; }
+- (void)display {
+    _needsDisplay = NO;
+    if (!self.wantsUpdateLayer) return;
+    [CATransaction begin]; [CATransaction setDisableActions:YES];
+    [self updateLayer];
+    [CATransaction commit];
+}
 - (void)discardCursorRects { [_cursorRects removeAllObjects]; }
 - (void)resetCursorRects { [self discardCursorRects]; }
 - (void)addCursorRect:(NSRect)rect cursor:(NSCursor *)cursor { if(cursor) [_cursorRects addObject:@{@"rect":[NSValue valueWithCGRect:rect],@"cursor":cursor}]; }
@@ -227,6 +260,7 @@ static NSEventModifierFlags AKMods(UIKeyModifierFlags f) {
     e.type = t; e.window = self.nsWindow; e.modifierFlags = _mods; e.buttonNumber = b; e.clickCount = 1;
     e.timestamp = NSProcessInfo.processInfo.systemUptime;
     e.locationInWindow = CGPointMake(p.x, self.bounds.size.height - p.y); self.nsWindow.ak_mouseLocation=e.locationInWindow;   // AppKit: bottom-left origin
+    mouseScreenLocation=[self.nsWindow convertPointToScreen:e.locationInWindow];
     e.deltaX = p.x - _last.x; e.deltaY = p.y - _last.y; _last = p;
     NSView *view=self.nsWindow.contentView;
     NSCursor *cursor=[view ak_cursorAtPoint:[view convertPoint:e.locationInWindow fromView:nil]];
@@ -421,6 +455,10 @@ static void logLayer(CALayer *layer,unsigned depth) {
 - (void)setMinSize:(NSSize)size { _contentMinSize=size; }   // frame and content sizes coincide here
 - (NSSize)minSize { return _contentMinSize; }
 - (void)setFrameOrigin:(NSPoint)origin { _contentRect.origin=origin; }
+- (NSRect)frameRectForContentRect:(NSRect)rect { return rect; }
+- (NSRect)contentRectForFrameRect:(NSRect)rect { return rect; }
++ (NSRect)frameRectForContentRect:(NSRect)rect styleMask:(NSUInteger)style { (void)style; return rect; }
++ (NSRect)contentRectForFrameRect:(NSRect)rect styleMask:(NSUInteger)style { (void)style; return rect; }
 - (NSResponder *)firstResponder { return _firstResponder ?: self; }
 - (BOOL)makeFirstResponder:(NSResponder *)r {
     if (r && ![r acceptsFirstResponder]) return NO;
@@ -509,6 +547,8 @@ static void logLayer(CALayer *layer,unsigned depth) {
 
 #pragma mark - NSWindowController
 
+@implementation NSPanel
+@end
 @implementation NSWindowController { NSWindow *_window; }
 - (instancetype)initWithWindow:(NSWindow *)window { if ((self=[super init])) _window=window; return self; }
 - (NSWindow *)window { return _window; }
