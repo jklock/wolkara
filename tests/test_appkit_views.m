@@ -11,6 +11,8 @@
 @implementation LayerView
 - (BOOL)wantsUpdateLayer { return YES; }
 - (void)updateLayer { self.updates++; self.layer.position = CGPointMake(5, 6); }
+// One pixel a point, whatever the screen's scale.
+- (BOOL)layer:(CALayer *)layer shouldInheritContentsScale:(CGFloat)scale fromWindow:(NSWindow *)window { return NO; }
 @end
 
 static void run_main_queue(void) { CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.05, false); }
@@ -45,5 +47,21 @@ int main(void) { @autoreleasepool {
     assert(view.trackingAreas.count == 1);
     [view removeTrackingArea:area]; assert(view.trackingAreas.count == 0);
 
-    puts("display pass, frame rects, panels and tracking areas: PASS");
+    // A view's layer is placed by its origin, as AppKit's are: Wine's Mac driver sets the position.
+    NSView *plain = [[NSView alloc] initWithFrame:CGRectMake(10, 20, 30, 40)];
+    plain.wantsLayer = YES;
+    assert(CGPointEqualToPoint(plain.layer.anchorPoint, CGPointZero));
+    assert(CGPointEqualToPoint(plain.layer.position, CGPointMake(10, 20)) && CGRectEqualToRect(plain.layer.frame, CGRectMake(10, 20, 30, 40)));
+    assert(CGRectEqualToRect(view.layer.frame, CGRectMake(5, 6, 100, 50)));
+
+    // The window's scale reaches a content view's layer unless the view keeps its own.
+    window.contentView = view; view.layer.contentsScale = 1;
+    [window ak_hostBoundsChanged:CGRectMake(0, 0, 200, 100)];
+    assert(view.layer.contentsScale == 1 && CGSizeEqualToSize(view.frame.size, CGSizeMake(200, 100)));
+    NSWindow *other = [[NSWindow alloc] initWithContentRect:CGRectMake(0, 0, 100, 50) styleMask:0 backing:2 defer:NO];
+    other.contentView = plain; plain.layer.contentsScale = 1;
+    [other ak_hostBoundsChanged:CGRectMake(0, 0, 200, 100)];
+    assert(other.backingScaleFactor > 1 && plain.layer.contentsScale == other.backingScaleFactor);
+
+    puts("display pass, frame rects, panels, tracking areas, layer placement and contents scale: PASS");
 } }

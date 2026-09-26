@@ -3,6 +3,7 @@
 #import "Images.h"
 #import "TextInput.h"
 #import <GameController/GameController.h>
+#import <objc/message.h>
 #import <objc/runtime.h>
 
 NSApplication *NSApp;
@@ -74,6 +75,8 @@ static NSPoint mouseScreenLocation;
 }
 - (void)setLayer:(CALayer *)l {
     _layer = l;
+    // As AppKit's: a view's layer is placed by its origin, which Wine's Mac driver sets as the position.
+    l.anchorPoint = CGPointZero;
     l.frame = _frame; l.delegate = nil;
 }
 - (void)setFrame:(NSRect)f {
@@ -478,7 +481,13 @@ static void logLayer(CALayer *layer,unsigned depth) {
 }
 - (void)ak_hostBoundsChanged:(CGRect)b {
     if (CGSizeEqualToSize(b.size, CGSizeZero)) return;
-    _contentView.layer.contentsScale = self.backingScaleFactor;
+    // As AppKit: the view may keep its own scale, as Wine's does when it draws
+    // one pixel a point.
+    CALayer *layer = _contentView.layer; CGFloat scale = self.backingScaleFactor;
+    SEL keep = @selector(layer:shouldInheritContentsScale:fromWindow:);
+    if (layer.contentsScale != scale && (![_contentView respondsToSelector:keep] ||
+        ((BOOL (*)(id, SEL, CALayer *, CGFloat, NSWindow *))objc_msgSend)(_contentView, keep, layer, scale, self)))
+        layer.contentsScale = scale;
     BOOL resized = !CGSizeEqualToSize(_contentView.frame.size, b.size);
     _contentView.frame = b;
     if (resized) {
