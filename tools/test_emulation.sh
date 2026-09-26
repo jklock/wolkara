@@ -88,6 +88,8 @@ done
 build/emulation/test_native_memory
 "${CC[@]}" runtime/HostDiagnostics.c runtime/HostExecutionProbe.c runtime/NativeCodeMemory.c tests/test_host_diagnostics.c -o build/emulation/test_host_diagnostics
 build/emulation/test_host_diagnostics
+"${CC[@]}" runtime/HostExecutionProbe.c runtime/NativeCodeMemory.c tests/test_arena_probe.c -o build/emulation/test_arena_probe
+build/emulation/test_arena_probe
 "${CC[@]}" runtime/DebuggerArena.c runtime/HostDiagnostics.c runtime/HostExecutionProbe.c runtime/NativeCodeMemory.c tests/test_debugger_arena.c -o build/emulation/test_debugger_arena
 build/emulation/test_debugger_arena
 "${CC[@]}" tests/test_native_policy.c -o build/emulation/test_native_policy

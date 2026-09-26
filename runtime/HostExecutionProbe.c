@@ -66,6 +66,58 @@ done:
     return result;
 }
 
+static int call_sample(void *code, size_t size, FILE *log, const char *stage, int expected) {
+    sys_icache_invalidate(code, size);
+    fprintf(log, "[arena-probe] %s: calling sample, expected=%d\n", stage, expected); fflush(log);
+    int value = ((int (*)(void))code)();
+    fprintf(log, "[arena-probe] %s: returned %d\n", stage, value); fflush(log);
+    return value;
+}
+
+HPArenaResult arena_execution_probe(void *executable, void *writable, size_t size, FILE *log) {
+    HPArenaResult result = {0};
+#if defined(__aarch64__)
+    const uint32_t ret = 0xd65f03c0;
+    uint32_t sample[2] = {0x52800540, ret}; // mov w0, #42; ret
+    fprintf(log, "[arena-probe] begin rx=%p rw=%p size=%zu; host samples only\n", executable, writable, size); fflush(log);
+    memcpy(writable, sample, sizeof sample);
+    sys_dcache_flush(writable, sizeof sample);
+    result.alias_execute = call_sample(executable, sizeof sample, log, "alias write", 42) == 42;
+    if (!result.alias_execute) goto done;
+    sample[0] = 0x5280a720; // mov w0, #1337
+    memcpy(writable, sample, sizeof sample);
+    sys_dcache_flush(writable, sizeof sample);
+    result.alias_rewrite = call_sample(executable, sizeof sample, log, "alias rewrite", 1337) == 1337;
+    if (!result.alias_rewrite) goto done;
+    fprintf(log, "[arena-probe] direct: RX view to RW\n"); fflush(log);
+    if (mprotect(executable, size, PROT_READ | PROT_WRITE)) { result.direct_errno = errno; goto rwx; }
+    sample[0] = 0x528000e0; // mov w0, #7
+    memcpy(executable, sample, sizeof sample);
+    fprintf(log, "[arena-probe] direct: written, back to RX\n"); fflush(log);
+    if (mprotect(executable, size, PROT_READ | PROT_EXEC)) { result.direct_errno = errno; goto rwx; }
+    result.direct_rewrite = call_sample(executable, sizeof sample, log, "direct rewrite", 7) == 7;
+    if (!result.direct_rewrite) goto done;
+    sample[0] = 0x52800c60; // mov w0, #99
+    memcpy(writable, sample, sizeof sample);
+    sys_dcache_flush(writable, sizeof sample);
+    result.alias_after_direct = call_sample(executable, sizeof sample, log, "alias after direct", 99) == 99;
+rwx:
+    fprintf(log, "[arena-probe] rwx: RX view to RWX\n"); fflush(log);
+    result.rwx_errno = mprotect(executable, size, PROT_READ | PROT_WRITE | PROT_EXEC) ? errno : 0;
+    fprintf(log, "[arena-probe] rwx: %s errno=%d\n", result.rwx_errno ? "denied" : "allowed", result.rwx_errno); fflush(log);
+    mprotect(executable, size, PROT_READ | PROT_EXEC);
+done:
+    fprintf(log, "[arena-probe] result alias=%s rewrite=%s direct=%s(errno %d) after-direct=%s rwx-errno=%d\n",
+            result.alias_execute ? "PASS" : "FAIL", result.alias_rewrite ? "PASS" : "FAIL", result.direct_rewrite ? "PASS" : "FAIL",
+            result.direct_errno, result.alias_after_direct ? "PASS" : "FAIL", result.rwx_errno);
+    fflush(log);
+#else
+    (void)executable; (void)writable; (void)size;
+    fprintf(log, "[arena-probe] unsupported host architecture; arm64 required\n"); fflush(log);
+#endif
+    return result;
+}
+
 HPResult host_execution_probe(HPMode mode, FILE *log) {
     HPResult result = {0};
 #if defined(__aarch64__)
