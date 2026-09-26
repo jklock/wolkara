@@ -6,14 +6,15 @@
 > profile [`heroes3-hota`](../profiles/heroes3-hota). Nothing below is
 > validated on a device yet; each section says what is proven and what is not.
 >
-> **Status, 2026-09-26: in progress on the Mac, not yet on the iPad.** A
+> **Status, 2026-09-26: M0 reached on the Mac, not yet on the iPad.** A
 > native arm64 Darwin process has no address space below 4 GB, and Wine's
 > 32-bit side needs it ("The 4 GB floor" below). Tolkara's own branches of
 > Wine and FEX work around it ("The downstream forks"): 64-bit programs run
 > with `KUSER_SHARED_DATA` moved, and 32-bit programs run with their address
 > space at a translated window ("The 32-bit window"). On the Mac, Heroes III
-> gets through its start-up but does not open its window yet, so M0 is not
-> reached ("The game, 2026-09-26 afternoon").
+> (HotA 1.8.1 with the HD mod 5.8) reaches its main menu with music on
+> Tolkara's arm64 Wine and FEX, no Rosetta involved ("The main menu,
+> 2026-09-26 evening").
 
 ## The stack
 
@@ -376,14 +377,74 @@ run. Five more fixes got it there, six commits across the two branches:
   other memory. The fork sizes those guards at 16K. Any guard-page scheme
   on this host needs the same care.
 
-Where it stops now: after start-up the main thread runs at full CPU in a
-loop through `win32u` menu calls (`NtUserThunkedMenuItemInfo`,
-`NtUserCallTwoParam` for menu info, about a million system calls a
-second) and never creates the game window; the OLE helper window it asks
-for fails to be created (`CreateWindowEx` returns NULL, error 1400, the
-same error `explorer.exe /desktop` logs). The window path through
-`win32u`'s WoW64 thunks is the next thing to examine. FreeType and GnuTLS
-are still not bundled into the runtime.
+Where it stopped then: after start-up the main thread ran at full CPU in a
+loop through `win32u` menu calls and never created the game window.
+
+**The main menu, 2026-09-26 evening.** `h3hota HD.exe` reaches the HotA
+main menu on the Mac with music and the system cursor, on the arm64
+runtime (fifteen more commits: twelve on the Wine branch, three on FEX's).
+What stood in the way, in the order it showed up:
+
+- *No 32-bit window could be created.* `winemac.drv`'s Unix side read the
+  localized menu strings through 64-bit parameter fields the 32-bit side
+  fills with zero-extended pointers, so the driver's init faulted in every
+  WoW64 process and top-level windows fell back to the null driver.
+- *Every user handle the game created was invalid.* A program without the
+  NX compatibility flag makes ntdll add `PROT_EXEC` to every host mapping;
+  macOS refuses that for shared file mappings, and ntdll then read them in
+  as private copies. The session's shared memory (where win32u looks up
+  user handles) became a snapshot of the moment it was mapped, so menus the
+  game had just created were "invalid" and it looped on them. Emulated code
+  never needs host execute permission; the branch no longer forces it.
+- *Widening, round two.* Values are not addresses: atoms and resource ids
+  (below 64k), window procedure handles and -1 (the top 64k, which a large
+  address aware 32-bit process no longer gets, as on Windows), `opengl32`
+  handles and `GLintptr`/`GLsizeiptr` values stay as they are. Addresses
+  that were missed are now widened: the pointer arguments of
+  `NtUserCallOneParam`/`TwoParam`/`HwndParam` codes and of messages
+  (following win32u's own list of messages that carry pointers), socket
+  ioctl buffers, `opengl32`'s pointer arrays; and `NtMapViewOfSection`
+  checks a fixed 32-bit view address against its 32-bit bounds (DirectPlay
+  maps its shared data at `0x50000000`).
+- *Deadlocks under FEX.* `rpmalloc`, FEX's heap, tells threads apart by
+  `NtCurrentTeb()`, which mingw reads from `x18`; after any preemption or
+  signal return a thread saw itself as "another thread", pushed its own
+  blocks onto its deferred free list and spun there holding FEX's code
+  cache locks. The FEX branch force-includes the TSD-slot `NtCurrentTeb()`
+  into rpmalloc. Separately, Wine now honours FEX's suspend doorbell for
+  WoW64 threads (it did so only for ARM64EC), so a thread suspended by the
+  game is parked at a consistent point rather than inside a compile.
+- *Two more window translation slips in FEX's JIT.* `MemSet` (`rep stos`)
+  formed the updated `EDI` from the translated host address, and a segment
+  register load (`pop es`, Miles' mixer does it) looked its descriptor up
+  through a host pointer taken for a guest address; descriptors now live in
+  the CPU state and are read with a context-relative load.
+- *16 KiB pages once more.* Decommitting pages that share a host page with
+  committed ones left their contents in place; programs rely on recommitted
+  memory being zero (rpmalloc hands it out for `calloc`). Those pages are
+  now zeroed.
+
+The staged copy sets two HD mod options (`profiles/heroes3-hota/install.py`,
+`hota.ini`): no update check at start (it offers to replace the game's own
+libraries and runs its installer as a second process) and renderer mode 2,
+which draws through GDI. The mod's automatic choice, its OpenGL renderer,
+presents frames but uploads them empty under this runtime (the same game
+under x86-64 Wine and Rosetta shows the menu that way), which is still to
+be explained; GDI suits the iPad anyway, which has no OpenGL. FreeType and
+GnuTLS are now bundled with the runtime and opened by `@rpath` name; the
+menu shows with nothing from Homebrew on the library search path. Wine's
+Unix-side libraries have header room for one more `LC_RPATH` only, and
+dyld refuses a library that names the same run path twice, which silently
+takes `winemac.drv` (no window) and `mountmgr` down with it.
+
+Still open on the Mac: the OpenGL renderer's empty frames; `winemac.drv`
+gives ordinary windows a squashed client area on this macOS (a 400x300
+window shows 392x63, 64-bit programs too; the HD mod's windowed mode is
+affected); the game pauses while it is not the active Mac application, as
+on Windows, so runs started from a terminal show nothing until the window
+is clicked; performance is unmeasured. In the FEX branch, libc++abi's exception
+globals still read `x18`; a fourth FEX commit translates emulated vector
+gathers through the window (the game does not use them).
 
 ## What Wine needs from its host, and what Tolkara has
 
@@ -429,10 +490,10 @@ Ordered so that each layer is proven before the next depends on it.
   programs run under FEX with the JIT pool (see "State of the branches").
   Later the same day the 32-bit half followed: 32-bit x86 programs run
   through WoW64 and FEX with the address window (see "The 32-bit window").
-  The game is staged with `profiles/heroes3-hota/install.py` and
-  `h3hota HD.exe` gets through its start-up but does not open its window
-  yet ("The game, 2026-09-26 afternoon" above). M0 is not reached until
-  the main menu shows.
+  The game is staged with `profiles/heroes3-hota/install.py`, and that
+  evening `h3hota HD.exe` reached the HotA main menu with music, natively
+  on this Mac ("The main menu, 2026-09-26 evening" above). **M0 is reached**
+  with the HD mod's GDI renderer.
 - **M1 — the device JIT measurement.** Launch the installed, enrolled app
   once with `xcrun devicectl device process launch --device "$DEVICE"
   "$TOLKARA_BUNDLE_ID" --local-game-startup --jit-probe` (any library app will
