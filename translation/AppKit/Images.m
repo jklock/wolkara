@@ -34,12 +34,13 @@ CGPathRef AKCreateCursorPath(CGImageRef image, CGSize size, CGPoint hotSpot) {
 }
 - (instancetype)initWithBitmapDataPlanes:(unsigned char **)planes pixelsWide:(NSInteger)width pixelsHigh:(NSInteger)height bitsPerSample:(NSInteger)bits samplesPerPixel:(NSInteger)samples hasAlpha:(BOOL)alpha isPlanar:(BOOL)planar colorSpaceName:(NSString *)space bitmapFormat:(NSUInteger)format bytesPerRow:(NSInteger)rowBytes bitsPerPixel:(NSInteger)pixelBits {
     AKLog(@"bitmap %ldx%ld bits=%ld samples=%ld alpha=%d planar=%d format=%lu stride=%ld pixelBits=%ld space=%@",(long)width,(long)height,(long)bits,(long)samples,alpha,planar,(unsigned long)format,(long)rowBytes,(long)pixelBits,space);
-    // Packed 8-bit RGB(A), including caller-owned planes. Reject other formats
-    // explicitly instead of returning storage with an incompatible layout.
+    // Packed 8-bit RGB(A), including caller-owned planes; RGB may be padded to
+    // 32 bits a pixel. Reject other formats explicitly instead of returning
+    // storage with an incompatible layout.
     if(width<=0 || height<=0 || bits!=8 || planar || samples!=(alpha ? 4 : 3) || (format & ~3UL) || ![space hasSuffix:@"RGBColorSpace"]) return nil;
     if(!pixelBits) pixelBits=bits*samples;
-    if(pixelBits!=bits*samples || width>LONG_MAX/samples) return nil;
-    NSInteger minimum=width*samples;
+    if((pixelBits!=bits*samples && (alpha || pixelBits!=32)) || width>LONG_MAX/(pixelBits/8)) return nil;
+    NSInteger minimum=width*(pixelBits/8);
     if(!rowBytes) rowBytes=minimum;
     if(rowBytes<minimum || height>LONG_MAX/rowBytes) return nil;
     if((self=[super init])) {
@@ -81,15 +82,20 @@ CGPathRef AKCreateCursorPath(CGImageRef image, CGSize size, CGPoint hotSpot) {
     NSData *bytes=[NSData dataWithBytes:_pixels length:(NSUInteger)_bytesPerPlane];
     CGDataProviderRef provider=CGDataProviderCreateWithCFData((__bridge CFDataRef)bytes);
     CGColorSpaceRef space=CGColorSpaceCreateDeviceRGB();
-    CGImageAlphaInfo info=kCGImageAlphaNone;
-    if(self.hasAlpha) info=(_bitmapFormat&1) ? ((_bitmapFormat&2) ? kCGImageAlphaFirst : kCGImageAlphaPremultipliedFirst) : ((_bitmapFormat&2) ? kCGImageAlphaLast : kCGImageAlphaPremultipliedLast);
-    CGImageRef next=CGImageCreate(self.pixelsWide,self.pixelsHigh,8,_bitsPerPixel,_bytesPerRow,space,(CGBitmapInfo)info,provider,NULL,false,kCGRenderingIntentDefault);
+    CGImageRef next=CGImageCreate(self.pixelsWide,self.pixelsHigh,8,_bitsPerPixel,_bytesPerRow,space,self.ak_bitmapInfo,provider,NULL,false,kCGRenderingIntentDefault);
     CGColorSpaceRelease(space); CGDataProviderRelease(provider);
     if(_snapshot) CGImageRelease(_snapshot); _snapshot=next;
     return _snapshot;
 }
+- (CGBitmapInfo)ak_bitmapInfo {
+    BOOL first=_bitmapFormat&1,straight=_bitmapFormat&2;
+    CGImageAlphaInfo info=_bitsPerPixel==32 ? (first ? kCGImageAlphaNoneSkipFirst : kCGImageAlphaNoneSkipLast) : kCGImageAlphaNone;
+    if(self.hasAlpha) info=first ? (straight ? kCGImageAlphaFirst : kCGImageAlphaPremultipliedFirst) : (straight ? kCGImageAlphaLast : kCGImageAlphaPremultipliedLast);
+    return (CGBitmapInfo)info;
+}
 - (void)dealloc { if(_snapshot) CGImageRelease(_snapshot); }
 @end
+NSString *const NSImageNameApplicationIcon=@"NSApplicationIcon";
 @implementation NSImage { NSMutableArray<NSImageRep *> *_reps; }
 - (instancetype)init { return [self initWithSize:CGSizeZero]; }
 - (instancetype)initWithSize:(CGSize)size { if((self=[super init])) { _size=size; _reps=[NSMutableArray new]; } return self; }

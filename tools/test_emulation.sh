@@ -551,6 +551,12 @@ xcrun clang -fobjc-arc -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined
 build/emulation/test_images
 
 xcrun clang -fobjc-arc -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined \
+    -Itranslation/AKSupport -Itranslation/AppKit -framework Foundation -framework CoreGraphics \
+    translation/AKSupport/AKSupport.m translation/AppKit/Images.m translation/AppKit/Drawing.m tests/test_drawing.m \
+    -o build/emulation/test_drawing
+build/emulation/test_drawing
+
+xcrun clang -fobjc-arc -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined \
     -Itranslation/AKSupport -framework Foundation translation/AppKit/TextInput.m tests/test_text_input.m \
     -o build/emulation/test_text_input
 build/emulation/test_text_input
