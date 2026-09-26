@@ -77,5 +77,28 @@ class ProfileTests(unittest.TestCase):
             install.hd_settings(game)
             self.assertFalse((folder / 'hota.ini').exists())
 
+    def test_heroes3_device_runtime(self):
+        # The iPad gets the runtime's Unix side, data, 32-bit modules, the server library, the
+        # native modules a WoW64 process loads and the placed libraries: nothing else.
+        sys.path.insert(0, str(ROOT / 'profiles' / 'heroes3-hota'))
+        import install
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = Path(directory) / 'Wine'
+            files = ['bin/wine', 'bin/wineserver', 'bin/wineserver.so', 'share/wine/nls/l_intl.nls',
+                     'lib/wine/aarch64-unix/wine', 'lib/wine/aarch64-unix/ntdll.so',
+                     'lib/wine/i386-windows/kernel32.dll', 'lib/wine/i386-windows/libkernel32.a',
+                     'lib/wine/aarch64-windows/ntdll.dll', 'lib/wine/aarch64-windows/libwow64fex.dll',
+                     'lib/wine/aarch64-windows/shell32.dll', 'lib/libfreetype.6.dylib', 'lib/libavcodec.63.dylib']
+            for name in files:
+                (runtime / name).parent.mkdir(parents=True, exist_ok=True)
+                (runtime / name).write_text(name)
+            staged = install.device_runtime(runtime, Path(directory) / 'stage')
+            kept = sorted(str(p.relative_to(staged)) for p in staged.rglob('*') if p.is_file())
+            self.assertEqual(kept, sorted(['bin/wineserver.so', 'share/wine/nls/l_intl.nls', 'lib/wine/aarch64-unix/wine',
+                                           'lib/wine/aarch64-unix/ntdll.so', 'lib/wine/i386-windows/kernel32.dll',
+                                           'lib/wine/aarch64-windows/ntdll.dll', 'lib/wine/aarch64-windows/libwow64fex.dll',
+                                           'lib/libfreetype.6.dylib']))
+            self.assertEqual((staged / 'lib/wine/aarch64-unix/ntdll.so').read_text(), 'lib/wine/aarch64-unix/ntdll.so')
+
 
 if __name__ == '__main__': unittest.main()

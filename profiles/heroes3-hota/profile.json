@@ -5,9 +5,18 @@
   "runtime": "Heroes 3 HotA/Wine",
   "executable": "lib/wine/aarch64-unix/wine",
   "arguments": ["h3hota HD.exe"],
-  "libraries": ["lib/wine/aarch64-unix/ntdll.so"],
+  "libraries": [
+    "lib/wine/aarch64-unix/ntdll.so", "bin/wineserver.so", "lib/wine/aarch64-unix/win32u.so",
+    "lib/wine/aarch64-unix/winemac.so", "lib/wine/aarch64-unix/winecoreaudio.so", "lib/wine/aarch64-unix/ws2_32.so",
+    "lib/wine/aarch64-unix/opengl32.so", "lib/wine/aarch64-unix/bcrypt.so", "lib/wine/aarch64-unix/crypt32.so",
+    "lib/wine/aarch64-unix/secur32.so", "lib/wine/aarch64-unix/kerberos.so", "lib/wine/aarch64-unix/msv1_0.so",
+    "lib/wine/aarch64-unix/netapi32.so", "lib/wine/aarch64-unix/dnsapi.so", "lib/libfreetype.6.dylib"
+  ],
+  "codePool": 96,
   "environment": {
     "WINEPREFIX": "${Documents}/Heroes 3 HotA/prefix",
+    "WINESINGLEPROCESS": "1",
+    "WINEJITPOOL": "${CodePool}",
     "WINEDEBUG": "err+all,fixme-all"
   },
   "notes": "A Windows (x86) game run by an arm64 macOS Wine with FEX inside it. Not yet started on a device: the runtime work is listed in docs/WINDOWS.md. Build the runtime with tools/build_windows_runtime.sh, then profiles/heroes3-hota/install.py copies your own GOG installation. See profiles/heroes3-hota/README.md."
