@@ -154,19 +154,42 @@ static void signal_hex(const char *label, uintptr_t value) {
     for(int shift=60;shift>=0;shift-=4) buffer[n++]="0123456789abcdef"[(value>>shift)&15];
     buffer[n++]='\n'; (void)write(signal_log_fd,buffer,n);
 }
+static void signal_text(const char *label, const char *text) {
+    char buffer[256]; size_t n=0;
+    for(;*label && n<64;label++) buffer[n++]=*label;
+    for(;text && *text && n<sizeof buffer-1;text++) buffer[n++]=*text;
+    buffer[n++]='\n'; (void)write(signal_log_fd,buffer,n);
+}
+// Which image an address lies in: a placed one by its file and unslid
+// address, anything else by what dladdr says (this handler is opt-in).
+static void signal_where(const char *label, uintptr_t address) {
+    signal_hex(label,address);
+    const GuestLibrary *library=gl_library_at(&carried,address);
+    uintptr_t base=(uintptr_t)guest.arena.executable;
+    if(library) {
+        const char *leaf=strrchr(library->path,'/');
+        signal_text("  image=",leaf?leaf+1:library->path); signal_hex("  preferred=",address-library->slide);
+    }
+    else if(address>=base && address-base<guest.arena.size) signal_hex("  preferred=",address-guest.slide);
+    else {
+        Dl_info info={0};
+        if(dladdr((void *)address,&info)) {
+            const char *leaf=info.dli_fname?strrchr(info.dli_fname,'/'):NULL;
+            signal_text("  image=",leaf?leaf+1:info.dli_fname); signal_text("  symbol=",info.dli_sname);
+        }
+    }
+}
 static void diagnostic_signal(int number,siginfo_t *info,void *context) {
     ucontext_t *uc=context;
     signal_hex("signal=",number); signal_hex("fault=",(uintptr_t)info->si_addr);
     arm_thread_state64_t state=uc->uc_mcontext->__ss;
     uintptr_t pc=arm_thread_state64_get_pc(state),fp=arm_thread_state64_get_fp(state);
-    signal_hex("pc=",pc); signal_hex("lr=",arm_thread_state64_get_lr(state));
+    signal_where("pc=",pc); signal_where("lr=",arm_thread_state64_get_lr(state));
     for(unsigned i=0;i<32 && fp && !(fp&7);i++) {
         uintptr_t frame[2]; vm_size_t actual=0;
         if(vm_read_overwrite(mach_task_self(),fp,sizeof frame,(vm_address_t)frame,&actual)!=KERN_SUCCESS || actual!=sizeof frame) break;
         uintptr_t lr=frame[1]&0x0000ffffffffffffULL;
-        signal_hex("frame=",lr);
-        uintptr_t base=(uintptr_t)guest.arena.executable;
-        if(lr>=base && lr-base<guest.arena.size) signal_hex("preferred=",lr-guest.slide);
+        signal_where("frame=",lr);
         if(frame[0]<=fp || frame[0]-fp>8*1024*1024) break; fp=frame[0];
     }
     struct sigaction action=guest_signal_actions[number];
@@ -212,6 +235,7 @@ static bool inside(const void *address, size_t size) {
 // Optional diagnostics after debugger detachment. Log our own threads'
 // program counters and symbols only; never copy guest code or data, attach,
 // suspend a thread, or modify guest registers/instructions.
+static void describe_caller(const void *address, char *out, size_t size);
 static void sample_all_threads(unsigned number) {
     thread_act_array_t threads=NULL; mach_msg_type_number_t count=0;
     if(task_threads(mach_task_self(),&threads,&count)!=KERN_SUCCESS) return;
@@ -221,17 +245,15 @@ static void sample_all_threads(unsigned number) {
         arm_thread_state64_t state={0}; mach_msg_type_number_t stateCount=ARM_THREAD_STATE64_COUNT;
         kern_return_t kr=thread_get_state(threads[i],ARM_THREAD_STATE64,(thread_state_t)&state,&stateCount);
         uintptr_t pc=kr==KERN_SUCCESS?arm_thread_state64_get_pc(state):0;
-        Dl_info info={0}; if(pc) dladdr((void *)pc,&info);
-        LOG("[native] thread %u pc=%#lx preferred=%#llx symbol=%s image=%s\n",i,(unsigned long)pc,
-            pc&&inside((void *)pc,1)?pc-guest.slide:0,info.dli_sname?:"unknown",info.dli_fname?:"unknown");
+        char where[512]; describe_caller((void *)pc,where,sizeof where);
+        LOG("[native] thread %u pc=%#lx %s\n",i,(unsigned long)pc,where);
         if(kr!=KERN_SUCCESS) { mach_port_deallocate(mach_task_self(),threads[i]); continue; }
         // Poor-man's stack: guest frames carry no frame pointers, so scan the
         // live stack and log only words that resolve to code, never the data.
         uintptr_t sp=arm_thread_state64_get_sp(state);
         uintptr_t lr=arm_thread_state64_get_lr(state)&0x0000ffffffffffffULL;
-        Dl_info linfo={0}; if(lr) dladdr((void *)lr,&linfo);
-        LOG("[native] thread %u lr=%#lx preferred=%#llx symbol=%s image=%s\n",i,(unsigned long)lr,
-            lr&&inside((void *)lr,1)?lr-guest.slide:0,linfo.dli_sname?:"unknown",linfo.dli_fname?:"unknown");
+        describe_caller((void *)lr,where,sizeof where);
+        LOG("[native] thread %u lr=%#lx %s\n",i,(unsigned long)lr,where);
         enum { SCAN=16384 };
         uintptr_t window[SCAN/8];
         vm_size_t got=0;
@@ -244,8 +266,8 @@ static void sample_all_threads(unsigned number) {
                 bool guestCode=inside((void *)value,1);
                 if(!guestCode && !vinfo.dli_fname) continue;
                 previous=value; shown++;
-                LOG("[native] thread %u stack %u %#lx preferred=%#llx symbol=%s image=%s\n",i,shown,(unsigned long)value,
-                    guestCode?value-guest.slide:0,vinfo.dli_sname?:"unknown",vinfo.dli_fname?:"unknown");
+                describe_caller((void *)value,where,sizeof where);
+                LOG("[native] thread %u stack %u %#lx %s\n",i,shown,(unsigned long)value,where);
             }
         }
         mach_port_deallocate(mach_task_self(),threads[i]);
