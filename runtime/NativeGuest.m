@@ -646,6 +646,9 @@ static void *hook(const char *name) {
         HOOK("__memcpy_chk",guest_memcpy_chk); HOOK("__memmove_chk",guest_memmove_chk); HOOK("__memset_chk",guest_memset_chk);
         HOOK("read",gsv_read); HOOK("pread",gsv_pread); HOOK("write",gsv_write); HOOK("pwrite",gsv_pwrite);
         HOOK("fread",gsv_fread); HOOK("fwrite",gsv_fwrite);
+        HOOK("strlen",gsv_strlen); HOOK("strnlen",gsv_strnlen);
+        HOOK("strcmp",gsv_strcmp); HOOK("strncmp",gsv_strncmp);
+        HOOK("memcmp",gsv_memcmp); HOOK("memchr",gsv_memchr); HOOK("strchr",gsv_strchr);
     }
     HOOK("sysctlbyname",guest_sysctlbyname);
     HOOK("pthread_jit_write_protect_np",guest_jit_protect);

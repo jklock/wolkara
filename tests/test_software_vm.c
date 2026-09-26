@@ -17,6 +17,7 @@ extern void gm_sparse_exclusive_probe(void *, uint64_t, void *);
 extern void gm_sparse_exclusive_increment(void *);
 extern void gm_sparse_exclusive_ordered(void *);
 extern void gm_sparse_probe_program_end(void);
+extern void gm_sparse_structure_probe(void *,void *);
 static volatile sig_atomic_t delivered;
 static void original_handler(int number) { assert(number == SIGSEGV); ++delivered; }
 static void *thread_fixture(void *pointer) {
@@ -152,6 +153,39 @@ int main(void) {
     gm_sparse_exclusive_ordered(ranges[0]);
     assert(gsv_copy(ordered_soft,ranges[0],sizeof ordered_soft)==GM_OK);
     assert(!memcmp(ordered_native,ordered_soft,sizeof ordered_soft));
+    uint64_t before_scans=gsv_fault_count();
+    char text[600];memset(text,'x',sizeof text);text[599]=0;text[257]='y';
+    char *soft_text=(char *)ranges[0]+GM_PAGE_SIZE-100;
+    assert(gsv_copy(soft_text,text,sizeof text)==GM_OK);
+    assert(gsv_strlen(soft_text)==strlen(text));
+    assert(gsv_strnlen(soft_text,256)==256);
+    assert(gsv_strcmp(soft_text,text)==0 && gsv_strcmp(text,soft_text)==0);
+    assert(gsv_strcmp(soft_text,"")>0 && gsv_strcmp("",soft_text)<0);
+    assert(gsv_strncmp(soft_text,"xxxz",3)==0 && gsv_strncmp(soft_text,"xxxz",4)<0);
+    assert(gsv_strcmp(soft_text,soft_text)==0);
+    assert(gsv_memcmp(soft_text,text,sizeof text)==0);
+    text[500]='z';
+    assert(gsv_memcmp(soft_text,text,sizeof text)<0 && gsv_memcmp(text,soft_text,sizeof text)>0);
+    assert(gsv_memchr(soft_text,'y',599)==soft_text+257);
+    assert(gsv_memchr(soft_text,'z',599)==NULL);
+    assert(gsv_strchr(soft_text,'y')==soft_text+257);
+    assert(gsv_strchr(soft_text,0)==soft_text+599 && !gsv_strchr(soft_text,'z'));
+    assert(gsv_strnlen(NULL,0)==0 && gsv_strncmp(NULL,NULL,0)==0 && gsv_memcmp(NULL,NULL,0)==0);
+    char *edge=gsv_map(NULL,GM_PAGE_SIZE,3,MAP_ANON|MAP_PRIVATE,-1,0);
+    assert(edge!=MAP_FAILED && gsv_address(edge));
+    char *last=edge+GM_PAGE_SIZE-1;
+    assert(gsv_copy(last,"",1)==GM_OK);
+    assert(gsv_strlen(last)==0 && gsv_strcmp(last,"")==0 && gsv_strchr(last,0)==last);
+    assert(!gsv_unmap(edge,GM_PAGE_SIZE));
+    assert(gsv_fault_count()==before_scans);
+    unsigned char structure_host[64],structure_soft[64],structure_native_out[128],structure_soft_out[128];
+    for(unsigned i=0;i<64;i++)structure_host[i]=(unsigned char)(i*17+3);
+    assert(gsv_copy(ranges[0],structure_host,sizeof structure_host)==GM_OK);
+    gm_sparse_structure_probe(structure_host,structure_native_out);
+    gm_sparse_structure_probe(ranges[0],structure_soft_out);
+    assert(!memcmp(structure_native_out,structure_soft_out,sizeof structure_native_out));
+    assert(gsv_copy(structure_soft,ranges[0],sizeof structure_soft)==GM_OK);
+    assert(!memcmp(structure_host,structure_soft,sizeof structure_host));
     for (unsigned i=0; i<4; ++i) {
         uint64_t native_value=candidates[i], host_result[4], software_result[4];
         gm_sparse_ldapr_probe(&native_value,host_result);

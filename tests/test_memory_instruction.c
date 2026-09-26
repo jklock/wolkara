@@ -7,6 +7,53 @@
 static const uint64_t base = UINT64_C(0x10000000000);
 extern uint64_t gm_sparse_probe_program(void *, uint64_t, void *);
 extern const unsigned char gm_memory_atomic_references[], gm_memory_atomic_references_end[];
+extern const unsigned char gm_memory_structure_references[], gm_memory_structure_references_end[];
+extern uintptr_t gm_memory_structure_call(const void *, void *, uintptr_t, void *);
+static void native_structure_comparison(void) {
+    GMSparseMemory m={0};
+    assert(gm_sparse_init(&m,base,2*GM_PAGE_SIZE,2*GM_PAGE_SIZE)==GM_OK);
+    assert(gm_sparse_map(&m,base,2*GM_PAGE_SIZE,3,3,false)==GM_OK);
+    size_t count=(size_t)(gm_memory_structure_references_end-gm_memory_structure_references)/8;
+    assert(count==164);
+    uint32_t first,replicate;
+    memcpy(&first,gm_memory_structure_references,4);
+    memcpy(&replicate,gm_memory_structure_references_end-8,4);
+    const uint32_t invalid[]={first|(1u<<21),first|(1u<<16),
+        (first&~(15u<<12))|(15u<<12),replicate&~(1u<<22)};
+    for(unsigned n=0;n<sizeof invalid/sizeof *invalid;n++) {
+        GMMemoryRegisters r={0};r.pc=0x4000;r.x[0]=base;memset(r.vector,0x91,sizeof r.vector);
+        GMMemoryRegisters before=r;GMResult fault;
+        assert(gm_memory_step(&m,invalid[n],&r,&fault)==GM_STEP_UNSUPPORTED);
+        assert(!memcmp(&r,&before,sizeof r));
+    }
+    for(size_t n=0;n<count;n++)for(unsigned seed=0;seed<3;seed++)for(unsigned skew=0;skew<2;skew++) {
+        const unsigned char *code=gm_memory_structure_references+n*8;
+        uint32_t instruction;memcpy(&instruction,code,4);
+        unsigned char host[128],actual[128],vectors[96];
+        for(unsigned j=0;j<sizeof host;j++)host[j]=(unsigned char)(j*13+seed*71);
+        for(unsigned j=0;j<sizeof vectors;j++)vectors[j]=(unsigned char)(j*19+seed*23);
+        GMMemoryRegisters r={0};GMResult fault;
+        r.pc=0x4000;r.x[0]=base+GM_PAGE_SIZE-32+skew*3;r.x[1]=17;
+        memcpy(r.vector,vectors,64);memcpy(r.vector[30],vectors+64,32);
+        assert(gm_sparse_write(&m,base+GM_PAGE_SIZE-32,host,sizeof host)==GM_OK);
+        uintptr_t result=gm_memory_structure_call(code,host+skew*3,17,vectors);
+        assert(gm_memory_step(&m,instruction,&r,&fault)==GM_STEP_OK);
+        assert(r.x[0]-(base+GM_PAGE_SIZE-32)==result-(uintptr_t)host && r.pc==0x4004 && r.x[1]==17);
+        assert(!memcmp(r.vector,vectors,64) && !memcmp(r.vector[30],vectors+64,32));
+        assert(gm_sparse_read(&m,base+GM_PAGE_SIZE-32,actual,sizeof actual)==GM_OK);
+        assert(!memcmp(actual,host,sizeof actual));
+        // No access or writeback may partially retire when permissions fail.
+        assert(gm_sparse_protect(&m,base+GM_PAGE_SIZE,GM_PAGE_SIZE,0)==GM_OK);
+        r.x[0]=base+GM_PAGE_SIZE;GMMemoryRegisters before=r;
+        assert(gm_memory_step(&m,instruction,&r,&fault)==GM_STEP_FAULT && fault==GM_PROTECTION);
+        assert(!memcmp(&r,&before,sizeof r));
+        assert(gm_sparse_protect(&m,base+GM_PAGE_SIZE,GM_PAGE_SIZE,3)==GM_OK);
+        assert(gm_sparse_read(&m,base+GM_PAGE_SIZE-32,actual,sizeof actual)==GM_OK);
+        assert(!memcmp(actual,host,sizeof actual));
+    }
+    gm_sparse_destroy(&m);
+    puts("PASS: 164 SIMD structure encodings match native loads/stores, lanes, replication, wrap, post-index and fault atomicity");
+}
 static void native_atomic_comparison(void) {
     GMSparseMemory m = {0};
     assert(gm_sparse_init(&m, base, GM_PAGE_SIZE, GM_PAGE_SIZE) == GM_OK);
@@ -96,7 +143,7 @@ static void native_fixture_reference(void) {
     }
 }
 int main(void) {
-    scalar_and_vector(); native_fixture_reference(); native_atomic_comparison();
+    scalar_and_vector(); native_fixture_reference(); native_atomic_comparison(); native_structure_comparison();
     assert(guest_sparse_memory_probe(stdout));
     puts("PASS: memory-instruction semantics, failure atomicity and native fault/resume fixture");
 }

@@ -16,6 +16,75 @@ static uint64_t scalar_value(const unsigned char *bytes, unsigned size) {
     for (unsigned i = 0; i < size; ++i) value |= (uint64_t)bytes[i] << (i * 8);
     return value;
 }
+static GMMemoryStep structure_step(GMSparseMemory *memory, uint32_t i,
+                                   GMMemoryRegisters *r, GMResult *fault) {
+    unsigned rt=i&31,rn=(i>>5)&31,rm=(i>>16)&31,size=(i>>10)&3;
+    bool single=(i>>24)&1,post=(i>>23)&1,load=(i>>22)&1,q=(i>>30)&1;
+    unsigned element=1u<<size,registers=0,repeats=1,lane=0;
+    bool replicate=false;
+    if((i&0xbf000000)!=(single?0x0d000000u:0x0c000000u) || (!post && rm))
+        return GM_STEP_UNSUPPORTED;
+    if(single) {
+        unsigned op=(i>>13)&7,s=(i>>12)&1,scale=op>>1;
+        registers=((op&1)<<1)+((i>>21)&1)+1;
+        if(scale==3) {
+            if(!load || s)return GM_STEP_UNSUPPORTED;
+            replicate=true;
+        } else if(scale==0) { element=1;lane=(q<<3)|(s<<2)|size; }
+        else if(scale==1) {
+            if(size&1)return GM_STEP_UNSUPPORTED;
+            element=2;lane=(q<<2)|(s<<1)|(size>>1);
+        } else {
+            if((size&2) || ((size&1) && s))return GM_STEP_UNSUPPORTED;
+            element=(size&1)?8:4;lane=(size&1)?q:(q<<1)|s;
+        }
+    } else {
+        if(i&(1u<<21))return GM_STEP_UNSUPPORTED;
+        switch((i>>12)&15) {
+            case 0:registers=4;break;
+            case 2:registers=1;repeats=4;break;
+            case 4:registers=3;break;
+            case 6:registers=1;repeats=3;break;
+            case 7:registers=1;break;
+            case 8:registers=2;break;
+            case 10:registers=1;repeats=2;break;
+            default:return GM_STEP_UNSUPPORTED;
+        }
+        if(size==3 && !q && registers!=1)return GM_STEP_UNSUPPORTED;
+    }
+    unsigned vector_bytes=q?16:8,lanes=single?1:vector_bytes/element;
+    unsigned total=registers*repeats*lanes*element;
+    uint64_t address=get(r,rn,true);
+    unsigned char bytes[64]={0};
+    if(load) {
+        *fault=gm_sparse_read(memory,address,bytes,total);
+        if(*fault!=GM_OK)return GM_STEP_FAULT;
+        if(!single || replicate)
+            for(unsigned n=0;n<registers*repeats;n++)memset(r->vector[(rt+n)&31],0,16);
+    }
+    unsigned offset=0;
+    for(unsigned repeat=0;repeat<repeats;repeat++)for(unsigned e=0;e<lanes;e++)
+    for(unsigned reg=0;reg<registers;reg++) {
+        unsigned index=(rt+repeat*registers+reg)&31;
+        unsigned position=(single?lane:e)*element;
+        if(replicate) {
+            for(unsigned at=0;at<vector_bytes;at+=element)
+                memcpy(r->vector[index]+at,bytes+offset,element);
+        } else if(load)memcpy(r->vector[index]+position,bytes+offset,element);
+        else memcpy(bytes+offset,r->vector[index]+position,element);
+        offset+=element;
+    }
+    if(!load) {
+        *fault=gm_sparse_write(memory,address,bytes,total);
+        if(*fault!=GM_OK)return GM_STEP_FAULT;
+    }
+    if(post) {
+        uint64_t next=address+(rm==31?total:get(r,rm,false));
+        if(rn==31)r->sp=next;else r->x[rn]=next;
+    }
+    r->pc+=4;
+    return GM_STEP_OK;
+}
 static GMMemoryStep atomic_step(GMSparseMemory *m, uint32_t instruction,
                                 GMMemoryRegisters *r, GMResult *fault) {
     unsigned rt = instruction & 31, rn = (instruction >> 5) & 31;
@@ -65,6 +134,8 @@ GMMemoryStep gm_memory_step(GMSparseMemory *memory, uint32_t instruction,
     if (r->pc > UINT64_MAX - 4 || (r->pc & 3) || (rn == 31 && (r->sp & 15))) {
         *fault = GM_INVALID; return GM_STEP_FAULT;
     }
+    if((instruction&0xbe000000)==0x0c000000)
+        return structure_step(memory,instruction,r,fault);
     bool rcpc_load = (instruction & 0x3ffffc00) == 0x38bfc000;
     if (!rcpc_load && ((instruction & 0xbfa07c00) == 0x08207c00 ||
         (instruction & 0x3fa07c00) == 0x08a07c00 ||

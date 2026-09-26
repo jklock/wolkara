@@ -6,14 +6,13 @@ early so that the work on it is visible and others can build on it.
 What works: the loader handles this client's chained fixups, `__init_offsets`
 initializers, thread-local variables and the four libraries it ships in
 `Contents/Frameworks` (Bink 2 and GOG Galaxy); every one of its 717,321 fixups
-matches `dyld_info`. The iPad reaches all 6,540 initializers and `main`
-with the old experimental VM budget, then crashes after opening its first
-archive. A controlled simulator run now reproduces this: shortened VM pools
-were placed inside ranges already reported to the guest. Preventing that
-collision passes the archive stage in the simulator, but the iPad cannot
-place the separate ranges and reports out-of-memory during initialization.
-See [the investigation](../../docs/CYBERPUNK_VM.md) for the tested results.
-No gameplay is validated.
+matches `dyld_info`. The opt-in software-memory experiment completes all
+6,540 initializers, main, GOG initialization, all 32 archives, scripts and
+shader caches on the iPad. It reaches display setup; no rendered menu or
+gameplay is validated. A separate test configuration raises the engine
+watchdog timeout to 600 seconds because memory emulation slows startup.
+See [the investigation](../../docs/CYBERPUNK_VM.md) and
+[software-memory experiment](../../docs/SOFTWARE_MEMORY.md) for evidence and limits.
 
 You need your own copy from GOG, installed on a Mac with GOG Galaxy (version
 2.3.x, macOS arm64). Nothing from the game is included here.
@@ -60,3 +59,9 @@ when it cannot keep counted reservations outside earlier reported ranges.
 The simulator can place those ranges, but a shortened pool later runs out
 while loading the shader cache. `--metal-managed-storage` translates Managed
 storage requests but does not address this startup blocker.
+
+The Cyberpunk-only `--cyberpunk-software-vm` experiment preserves complete,
+distinct ranges with sparse backing when a large native reservation fails.
+It bypasses the old downsizing adapter and requires the Cyberpunk profile.
+This is still a diagnostic configuration; see the software-memory document
+before running it.
