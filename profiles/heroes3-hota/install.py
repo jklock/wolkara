@@ -33,6 +33,13 @@ EMULATOR_KEYS={r'HKLM\Software\Microsoft\Wow64\x86':'libwow64fex.dll',r'HKLM\Sof
 # automatic choice picks uploads empty frames under this runtime so far
 # (docs/WINDOWS.md), and the iPad has no OpenGL.
 HD_SETTINGS={'Update.CheckAtStart':'0','Graphics.RenderingMode':'2'}
+# What the iPad needs of the runtime, which it runs as one process with the
+# game (docs/WINDOWS.md): the loader and Unix side, the server as a library,
+# Wine's data, every 32-bit module, the few native modules a WoW64 process
+# loads, and the libraries the profile places. Import libraries and the rest
+# stay on the Mac.
+DEVICE_NATIVE_MODULES={'ntdll.dll','wow64.dll','wow64win.dll','wow64con.dll','win32u.dll','libwow64fex.dll'}
+DEVICE_LIBRARIES={'libfreetype.6.dylib','libpng16.16.dylib'}
 
 
 def sha256(path):
@@ -79,6 +86,27 @@ def hd_settings(game):
         if matches: lines[matches[0]]=entry
         else: lines.insert(0,entry)
     settings.write_bytes('\r\n'.join(lines).encode('latin-1'))
+
+
+def device_runtime(runtime,stage):
+    """A copy of the runtime with only what the iPad needs, linked, not copied, where possible."""
+    if stage.exists(): shutil.rmtree(stage)
+    def wanted(relative):
+        parts=relative.parts
+        if relative.suffix=='.a': return False
+        if parts[:1]==('share',): return True
+        if parts[:1]==('bin',): return relative.name=='wineserver.so'
+        if parts[:3]==('lib','wine','aarch64-unix') or parts[:3]==('lib','wine','i386-windows'): return True
+        if parts[:3]==('lib','wine','aarch64-windows'): return relative.name in DEVICE_NATIVE_MODULES
+        return len(parts)==2 and parts[0]=='lib' and relative.name in DEVICE_LIBRARIES
+    for path in sorted(runtime.rglob('*')):
+        relative=path.relative_to(runtime)
+        if path.is_dir() or not wanted(relative): continue
+        target=stage/relative
+        target.parent.mkdir(parents=True,exist_ok=True)
+        try: os.link(path,target)
+        except OSError: shutil.copy2(path,target)
+    return stage
 
 
 def wine(runtime,prefix,*command,check=True):
@@ -143,7 +171,9 @@ def main():
         subprocess.run(['xcrun','devicectl','device','copy','to','--device',args.device,
             '--domain-type','appDataContainer','--domain-identifier',BUNDLE_ID,
             '--source',str(path),'--destination',destination],check=True)
-    if not args.skip_runtime: transfer(runtime,f'Documents/{FOLDER}/Wine')
+    if not args.skip_runtime: transfer(device_runtime(runtime,stage/'device-runtime'),f'Documents/{FOLDER}/Wine')
+    # The server's directory is state of a run on this Mac.
+    shutil.rmtree(prefix/'.wineserver',ignore_errors=True)
     transfer(prefix,f'Documents/{FOLDER}/prefix')
     if code_hashes(installed)!=before: raise RuntimeError('game code changed while copying; run again')
     print('Copied the runtime and the prefix with the game into the iPad app container.')
