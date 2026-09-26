@@ -7,9 +7,13 @@ extern CFArrayRef TISCreateInputSourceList(CFDictionaryRef, Boolean);
 extern int32_t CopySymbolicHotKeys(CFArrayRef *);
 extern int32_t TISSelectInputSource(CFTypeRef);
 extern const CFStringRef kTISPropertyUnicodeKeyLayoutData, kTISPropertyInputSourceID;
+extern const CFStringRef kTISPropertyInputSourceType, kTISTypeKeyboardLayout;
 int main(void) { @autoreleasepool {
     CFTypeRef source = TISCopyCurrentKeyboardLayoutInputSource(); assert(source);
     CFDataRef data = TISGetInputSourceProperty(source,kTISPropertyUnicodeKeyLayoutData); assert(data);
+    // A keyboard layout, not an input method (Wine's Mac driver compares the type).
+    CFStringRef type = TISGetInputSourceProperty(source,kTISPropertyInputSourceType);
+    assert(type && CFEqual(type,kTISTypeKeyboardLayout));
     const void *layout = CFDataGetBytePtr(data);
     uint32_t state=0; unsigned long length=99; uint16_t out[4]={0};
     assert(UCKeyTranslate(layout,0,0,0,40,0,&state,4,&length,out)==0 && length==1 && out[0]=='a');
