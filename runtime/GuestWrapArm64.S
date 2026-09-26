@@ -19,12 +19,15 @@ _gw_slot_table:
 // 80, q0-q7 at 96.
 .p2align 2
 _gw_trampoline:
+    .cfi_startproc
     sub sp, sp, #224
+    .cfi_def_cfa_offset 224
     stp x0, x1, [sp, #0]
     stp x2, x3, [sp, #16]
     stp x4, x5, [sp, #32]
     stp x6, x7, [sp, #48]
     stp x8, x30, [sp, #64]
+    .cfi_offset w30, -152
     str x16, [sp, #80]
     stp q0, q1, [sp, #96]
     stp q2, q3, [sp, #128]
@@ -54,6 +57,9 @@ _gw_trampoline:
     ldp q0, q1, [sp, #96]
     ldp q2, q3, [sp, #128]
     ldr x30, [sp, #72]
+    .cfi_restore w30
     add sp, sp, #224
+    .cfi_def_cfa_offset 0
     ret
+    .cfi_endproc
 #endif

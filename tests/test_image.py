@@ -145,6 +145,21 @@ class ImageTests(unittest.TestCase):
                      offsets_fixture(size=3), offsets_fixture(pointers_too=True)):
             self.probe(data, False)
 
+    def test_unwind_section_metadata(self):
+        def image(name, count=1, size=32, kind=0, prot=5):
+            section = struct.pack('<16s16sQQIIIIIIII', name, b'__TEXT',
+                                  BASE + 0x2000, size, 0x2000, 2, 0, 0, kind, 0, 0, 0)
+            commands = (segment('__TEXT', BASE, PAGE, 0, PAGE, 7, prot, section * count) +
+                        struct.pack('<IIQQ', 0x80000028, 24, 0x1000, 0))
+            header = struct.pack('<IiiIIIII', 0xfeedfacf, 0x100000c, 0, 2, 2,
+                                 len(commands), 0, 0)
+            return (header + commands).ljust(PAGE, b'\0')
+        for name in (b'__unwind_info', b'__eh_frame'):
+            self.probe(image(name))
+            for arguments in ({'count': 2}, {'size': 0}, {'kind': 1}, {'prot': 4}):
+                self.probe(image(name, **arguments), False)
+        self.probe(image(b'__eh_frame', kind=0xb))  # Legacy coalesced DWARF.
+
     def test_bad_fat(self):
         data = fixture()
         for offset, size, align in [(PAGE, len(data) + 1, 14), (1, 32, 0), (PAGE, len(data), 64)]:
