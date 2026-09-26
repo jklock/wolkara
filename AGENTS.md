@@ -16,6 +16,7 @@ Requires Xcode, XcodeGen and Python 3. Personal settings (team, bundle ID, devic
 
 ```sh
 tools/test_emulation.sh     # sanitizer regression suite on the Mac
+tools/test_translation_sim.sh   # the UIKit-backed adapters' tests, run in the simulator
 tools/run.sh sim            # loader diagnostics in the simulator (TolkaraDiagnostics scheme)
 TOLKARA_MODE=local-signing tools/run.sh sim   # Local signing: first initializer of testguest (or GUEST_EXE) from an ad-hoc page container
 tools/install.sh            # build, sign and install the Tolkara app on the configured iPad
