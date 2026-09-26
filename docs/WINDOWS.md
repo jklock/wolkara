@@ -102,6 +102,100 @@ translated 32-bit mode, this profile cannot reach M0, and the milestones
 below apply to 64-bit Windows programs. The alternatives for this particular
 game are in "Working rules".
 
+### The downstream forks
+
+Decided 2026-09-26: Tolkara carries its own branches of Wine and FEX for
+arm64 Darwin, in this order: first the 64-bit path (relocate
+`KUSER_SHARED_DATA`, which also validates FEX's JIT on 16 KiB pages and
+without TSO with a 64-bit program), then the 32-bit window (a translated
+base in FEX's 32-bit JIT and a movable WoW64 address range in Wine).
+
+Both projects refuse code written with LLM tools (FEX's `CONTRIBUTING.md`:
+"No AI/ML/LLM/etc code contributions."; Wine's Clean Room Guidelines: "Don't
+use an LLM tool to generate code."). The changes on Tolkara's branches were
+written that way, so they are **downstream only and will not be submitted
+upstream**; each fork says so in its `TOLKARA-FORK.md`. They keep each
+project's coding style and one-change-per-commit convention so that they
+stay reviewable and rebaseable, not to prepare them for upstream. Should
+either project publish its own arm64 Darwin work, Tolkara moves to it.
+
+The Wine branch is `tolkara/darwin-arm64` on bylaws' `upstream-arm64ec`;
+`tools/build_windows_runtime.sh` builds whatever is checked out in
+`build/windows-runtime/src/wine`. Its first commits, and what each fixed:
+
+- `configure`: the arm64 loader keeps the 4 GB page zero. Configure's macOS
+  flags asked for a 4 KiB one, the linker obliged for `loader/wine`, and the
+  kernel killed every re-exec of it at exec time (the silent `SIGKILL` seen
+  at first).
+- `ntdll`: the address space starts at 4 GB on arm64 macOS; the
+  `KUSER_SHARED_DATA` page and the TEB block fall back to where the host can
+  put them; the PE side asks the Unix side for the page's address
+  (`unix_get_user_shared_data`) and other modules read it through
+  `__wine_get_user_shared_data()` instead of hardcoding `0x7ffe0000`
+  (`kernelbase`, `kernel32`, `ntoskrnl.exe`).
+
+Three more Darwin rules surfaced while bringing `wineboot` up, each measured
+with a small C program and each now handled on the Wine branch:
+
+- **No W+X memory, ever.** `mmap`/`mach_vm_map` with write and execute
+  together fail (`EPERM`) for anonymous and file mappings alike; only
+  `MAP_JIT` gives both, and then a thread has *either* write or execute
+  access, toggled with `pthread_jit_write_protect_np`, starting
+  write-protected. RW→RX `mprotect` is allowed. So Wine maps a PE image RW,
+  copies it in, and gives each section its final protection (`ntdll`
+  `map_image_view`). A JIT (FEX's code buffers) has to be `MAP_JIT` plus the
+  toggle, or write through a separate alias; that is the FEX side of the
+  work and the shape Tolkara's in-arena pool takes on the iPad.
+- **Protection faults arrive as `SIGBUS`, `si_code 1`,** the same code as
+  alignment faults; the ESR in the signal context tells them apart
+  (`DFSC 0x21` is alignment). Wine's arm64 `bus_handler` treated every
+  `SIGBUS` as `STATUS_DATATYPE_MISALIGNMENT`, so guard-page hits and access
+  violations were never handled; it now classifies by ESR.
+- **`x18` is not preserved.** It survives a fast syscall but is zeroed by
+  any context switch and by every return from a signal handler (the
+  handler's `ucontext` still shows it). Windows ARM64 keeps the TEB in
+  `x18`, so PE code and Wine's dispatchers cannot rely on it here.
+  `TPIDR_EL0` is user-writable but the kernel reuses it (CPU number), and
+  `TPIDRRO_EL0` is read-only and points at the thread's pthread TSD array.
+  The TEB therefore lives in TSD slot 767 (`0x17f8` from `TPIDRRO_EL0`, above
+  the keys `pthread_key_create` hands out from 258): `NtCurrentTeb()` in PE
+  code compiled for this host is `mrs`+`ldr` (`-D__WINE_TEB_TSD_OFFSET`),
+  the five PE assembly sites that read the PEB through `x18` use the same
+  sequence, and both dispatchers reload `x18` from the slot on entry from
+  PE code. Native ARM64 Windows *applications* would still break; x86
+  programs under FEX never touch `x18`, and FEX's own Windows code gets the
+  same `NtCurrentTeb()` treatment in its fork.
+
+A fourth rule closed the last gap for `wineboot`: **Apple's arm64 ABI packs
+stack arguments at their natural alignment** (a `ULONG` tenth argument sits
+four bytes into the ninth's slot), while the syscall dispatcher copies the
+PE caller's arguments as the Windows ABI lays them out, one 8-byte slot
+each. Every system call with more than eight arguments (25 of them) got a
+wrong tenth argument. On Darwin the syscall table now points at generated
+wrappers (`tools/make_darwin_syscalls`, `dlls/ntdll/unix/syscall_darwin.h`)
+whose stack parameters are all `ULONG_PTR`.
+
+**State of the Wine branch, 2026-09-26, 13 commits on `upstream-arm64ec`:**
+`wineboot -u` creates a complete prefix on this Mac in 73 s (826 files in
+`system32`, registry written, `explorer` on the Mac driver, no process left
+behind), and Wine's own `notepad.exe`, an ARM64EC program, runs with a
+window. That is the native half of M0 without any x86 code involved.
+Remaining noise: FreeType, GnuTLS and SDL2 are `dlopen`ed by bare soname and
+not found in the bundled runtime (configure should record `@rpath` sonames
+and the build script bundle them); no Vulkan (MoltenVK) yet.
+
+A 64-bit Windows test program of our own,
+[`testguest/windows/shared_data_probe.c`](../testguest/windows/shared_data_probe.c),
+exercises the relocated page through the API and reports what a direct read
+of `0x7ffe0000` does. Under FEX (`libarm64ecfex.dll` registered in the
+prefix) it currently recurses into a stack overflow: FEX's own Windows code
+and its JIT read the TEB through `x18` (five loads in `ARM64EC/Module.S`,
+two emitted in `MiscOps.cpp`, and mingw's `NtCurrentTeb()` inline for the
+C++), which is null on this host. The FEX branch `tolkara/darwin-arm64`
+adds `FEX_TEB_TSD_OFFSET` and reads the TEB from the TSD slot in all three
+places; whether the W^X rule bites next (FEX asked for no RWX memory before
+the recursion) is the next measurement.
+
 ## What Wine needs from its host, and what Tolkara has
 
 | Wine needs | Tolkara today | Work item |
