@@ -145,6 +145,9 @@ typedef NS_OPTIONS(NSUInteger, NSEventModifierFlags) {
 + (NSRect)frameRectForContentRect:(NSRect)rect styleMask:(NSUInteger)style;
 + (NSRect)contentRectForFrameRect:(NSRect)rect styleMask:(NSUInteger)style;
 - (void)makeKeyAndOrderFront:(id)sender;
+- (void)orderFront:(id)sender;
+- (void)makeKeyWindow;
+- (void)setIsVisible:(BOOL)visible;
 - (void)orderOut:(id)sender;
 - (BOOL)makeFirstResponder:(NSResponder *)r;
 - (void)sendEvent:(NSEvent *)e;
