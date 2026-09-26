@@ -47,6 +47,7 @@ static NativeCodeMemory local_quarantine;
 #include <stdatomic.h>
 #include <sys/stat.h>
 static atomic_bool initialization_attempted;
+static unsigned software_cpu_limit;
 #if TOLKARA_INTEGRATED_AUTH
 static atomic_bool use_local_authorization;
 #endif
@@ -1088,6 +1089,9 @@ static const char *guest_chip_name(void) {
 static int guest_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *newp, size_t newlen) {
     int result=sysctlbyname(name,oldp,oldlenp,newp,newlen);
     int code=errno;
+    if(!result && gsv_enabled() && oldlenp && !newp && !newlen &&
+       ng_limit_cpu_answer(name,oldp,*oldlenp,software_cpu_limit))
+        log_once("[software-vm] guest CPU topology query %s capped at %u\n",name,software_cpu_limit);
     if (result && name && !strcmp(name,"machdep.cpu.brand_string") && oldp && oldlenp && !newp) {
         const char *chip=guest_chip_name();
         size_t need=strlen(chip)+1;
@@ -1592,6 +1596,13 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
             LOG("[software-vm] prefer native pool=%llu MiB; other large reservations use software\n",native_mb);
         }
         LOG("[software-vm] Cyberpunk-only runtime emulation enabled, backing=%llu MiB; native mappings attempted first\n",megabytes);
+        const char *cpus=getenv("TOLKARA_SOFTWARE_VM_CPUS");
+        if(cpus && *cpus) {
+            unsigned long long limit=strtoull(cpus,&rest,10);
+            if(*rest || !limit || limit>64) { LOG("[software-vm] CPU limit must be 1..64\n"); goto done; }
+            software_cpu_limit=(unsigned)limit;
+            LOG("[software-vm] experimental guest CPU topology limit=%u\n",software_cpu_limit);
+        }
         if(trace_guest) schedule_memory_progress(1,0);
     }
     const char *budget_mb=getenv("TOLKARA_VM_BUDGET_MB");

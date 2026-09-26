@@ -160,3 +160,14 @@ backend benchmark improved from about 2.4M to 7.1–9.0M operations/sec on the M
 this is not yet a measured iPad game improvement. Focused signal/resume and
 page-local monitor tests and the full sanitizer suite pass. The next iPad run
 combines these changes with the longer watchdog timeout.
+
+`TOLKARA_SOFTWARE_VM_CPUS=1..64` is an optional comparison control for guest
+CPU-count `sysctlbyname` queries. It caps successful integer CPU counts without
+increasing them, and leaves other queries and the default launch unchanged.
+It does not set host thread affinity. This is intended to test whether fewer
+guest workers reduce fault overhead; it has not yet been tested in the game.
+A separate original assembly loop on the Mac, with distinct data per thread,
+measured aggregate fault/resume throughput of 448K/s with one thread, 432K/s
+with two, 341K/s with four and 176K/s with eight. The iPad's first worker samples
+with the lock changes remain close to the earlier baseline. The direct-backend
+benchmark improvement therefore does not establish a game improvement.

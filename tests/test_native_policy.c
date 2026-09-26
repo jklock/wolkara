@@ -3,6 +3,21 @@
 #include <stdio.h>
 
 int main(void) {
+    const char *queries[]={"hw.ncpu","hw.activecpu","hw.logicalcpu","hw.logicalcpu_max",
+        "hw.physicalcpu","hw.physicalcpu_max"};
+    for(unsigned i=0;i<sizeof queries/sizeof *queries;i++) {
+        struct { int count,guard; } result={10,12345};
+        assert(ng_limit_cpu_answer(queries[i],&result.count,sizeof(int),2));
+        assert(result.count==2 && result.guard==12345);
+        assert(!ng_limit_cpu_answer(queries[i],&result.count,sizeof(int),8) && result.count==2);
+    }
+    int count=10;
+    assert(!ng_limit_cpu_answer("hw.ncpu",&count,sizeof count,0) && count==10);
+    assert(!ng_limit_cpu_answer("hw.memsize",&count,sizeof count,2) && count==10);
+    assert(!ng_limit_cpu_answer("hw.ncpu",&count,sizeof count-1,2) && count==10);
+    assert(!ng_limit_cpu_answer("hw.ncpu",NULL,sizeof count,2));
+    assert(!ng_limit_cpu_answer(NULL,&count,sizeof count,2));
+    count=-1;assert(!ng_limit_cpu_answer("hw.ncpu",&count,sizeof count,2) && count==-1);
     // A build made for one executable never stubs that executable's imports.
     assert(!ng_may_stub(false, false, false));
     // A generic build does, and a carried library's imports are stubbed in any build.

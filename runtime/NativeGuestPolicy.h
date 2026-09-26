@@ -1,8 +1,23 @@
 #pragma once
-// Two small launch decisions of NativeGuest, kept apart so they can be tested
+// Small launch decisions of NativeGuest, kept apart so they can be tested
 // on the Mac without a device or a debugger.
 #include <stdbool.h>
 #include <stddef.h>
+#include <string.h>
+
+// Optional CPU topology limit for the software-memory performance experiment.
+// Apply only to a successful native integer result; never increase capacity.
+static inline bool ng_limit_cpu_answer(const char *name,void *answer,size_t size,unsigned limit) {
+    if(!limit || !name || !answer || size!=sizeof(int)) return false;
+    const char *queries[]={"hw.ncpu","hw.activecpu","hw.logicalcpu","hw.logicalcpu_max",
+        "hw.physicalcpu","hw.physicalcpu_max"};
+    bool selected=false;
+    for(size_t i=0;i<sizeof queries/sizeof *queries;i++) if(!strcmp(name,queries[i])) selected=true;
+    if(!selected)return false;
+    int count;memcpy(&count,answer,sizeof count);
+    if(count<=0 || (unsigned)count<=limit)return false;
+    count=(int)limit;memcpy(answer,&count,sizeof count);return true;
+}
 
 // An import nothing provides becomes a logged stub only where no build-time
 // analysis covered it: in a generic build (no library map), or for a carried
