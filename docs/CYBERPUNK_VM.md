@@ -75,6 +75,41 @@ for 112 GiB. Raising the budget variable cannot raise the task's maximum
 address. The earlier description of this as a reservation charge/quota was
 too strong: these measurements show the available address-space constraint.
 
+## Follow-up device probe
+
+A fresh, labelled standalone run on 2026-09-26 reproduced the constraint
+without loading any guest code. The installed probe build succeeded.
+
+| Probe | Result |
+| --- | --- |
+| First request, 16 GiB, retained | Success at `0x7000000000` |
+| Second request, 64 GiB, while retaining the first | ENOMEM |
+| Third request, 32 GiB, while retaining the first | Success at `0x7400000000` |
+| Nonoverwriting fixed 1 GiB scan from 4 to 512 GiB | Successful windows only from 448 to 512 GiB |
+| `mach_vm_range_create`, empty recipe | `KERN_NOT_SUPPORTED` (46) |
+
+The scan establishes availability at its 1 GiB granularity, not that every
+smaller address is occupied. The empty recipe creates no mappings. Apple's
+[XNU implementation](https://github.com/apple-oss-distributions/xnu/blob/main/osfmk/vm/vm_user.c)
+returns this status when the task does not use user VM ranges. The API is not
+an available route to additional space for this installed app.
+
+The provisioning profile grants both
+`com.apple.developer.kernel.extended-virtual-addressing` and
+`com.apple.developer.kernel.increased-memory-limit`. It does not grant
+`com.apple.kernel.large-file-virtual-addressing`. Public
+[XNU process setup](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_exec.c)
+distinguishes the last entitlement's larger address-space path from the
+ordinary extended-address-space path. This source is context, not proof that
+Apple grants the capability to third-party iPad apps, nor that the public
+kernel revision exactly matches this device.
+
+No supported pool-size option was found in the shipped `engine/config` and
+`r6/config` text files. Those files and the game executable were not changed.
+There is currently no verified configuration or entitlement available to this
+build that supplies the requested ranges. Full guest address translation would
+be a separate runtime architecture project, not a small mmap adapter change.
+
 ## Validation and next work
 
 The focused ASan/UBSan test mixes shortened 16 MiB pools with fully granted
