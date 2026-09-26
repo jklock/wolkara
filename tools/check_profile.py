@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 REQUIRED = ('id', 'name', 'workingDirectory', 'executable')
-OPTIONAL = ('notes', 'tested', 'caseAliases', 'runtime', 'arguments', 'environment', 'libraries')
+OPTIONAL = ('notes', 'tested', 'caseAliases', 'runtime', 'arguments', 'environment', 'libraries', 'codePool')
 ENVIRONMENT_NAME = re.compile(r'[A-Za-z_][A-Za-z0-9_]*')
 
 
@@ -56,6 +56,12 @@ def check(path):
         if 'runtime' not in profile: raise ValueError('libraries needs a runtime')
         if not isinstance(libraries, list) or len(libraries) > 64 or not all(relative(l) for l in libraries):
             raise ValueError('libraries must be a list of at most 64 paths inside the runtime')
+    if 'codePool' in profile:
+        # Prepared executable memory the runtime writes its own code into, in megabytes.
+        size = profile['codePool']
+        if 'runtime' not in profile: raise ValueError('codePool needs a runtime')
+        if not isinstance(size, int) or isinstance(size, bool) or not 1 <= size <= 1024:
+            raise ValueError('codePool must be a number of megabytes from 1 to 1024')
     check_command_line(profile)
     return profile
 

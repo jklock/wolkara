@@ -1,5 +1,5 @@
 #pragma once
-// Two small launch decisions of NativeGuest, kept apart so they can be tested
+// Small launch decisions of NativeGuest, kept apart so they can be tested
 // on the Mac without a device or a debugger.
 #include <stdbool.h>
 #include <stddef.h>
@@ -24,4 +24,28 @@ static inline NGReservedChoice ng_reserved_choice(bool external, bool reserved, 
     if (!reserved) return NG_RESERVED_NONE;
     if (!external) return NG_RESERVED_GIVE_BACK;
     return total <= reserved_size ? NG_RESERVED_TAKE : NG_RESERVED_REFUSE;
+}
+
+// A profile's environment names memory made at launch by a placeholder
+// (${CodePool}): value with each occurrence replaced. False when there is
+// none, or when the result does not fit in size (out is then empty).
+static inline bool ng_expand(const char *value, const char *placeholder, const char *replacement,
+                             char *out, size_t size) {
+    size_t used = 0, placeholder_length = 0, replacement_length = 0;
+    bool found = false;
+    while (placeholder[placeholder_length]) placeholder_length++;
+    while (replacement[replacement_length]) replacement_length++;
+    if (!size || !placeholder_length) return false;
+    for (const char *at = value; *at;) {
+        bool match = true;
+        for (size_t i = 0; i < placeholder_length && match; i++) match = at[i] == placeholder[i];
+        const char *piece = match ? replacement : at;
+        size_t length = match ? replacement_length : 1;
+        if (used + length >= size) { out[0] = 0; return false; }
+        for (size_t i = 0; i < length; i++) out[used++] = piece[i];
+        at += match ? placeholder_length : 1;
+        found |= match;
+    }
+    out[used] = 0;
+    return found;
 }

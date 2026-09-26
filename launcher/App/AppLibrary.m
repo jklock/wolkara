@@ -74,6 +74,12 @@ static BOOL valid_libraries(id libraries) {
     for (id library in libraries) if (!valid_relative(library,NO)) return NO;
     return YES;
 }
+// codePool, as tools/check_profile.py checks it: 1 to 1024 megabytes, only with a runtime.
+static BOOL valid_code_pool(id size) {
+    return [size isKindOfClass:NSNumber.class] && CFGetTypeID((__bridge CFTypeRef)size)!=CFBooleanGetTypeID() &&
+           [size doubleValue]==[size integerValue] &&
+           [size integerValue]>=1 && [size integerValue]<=1024;
+}
 static NSString *clean_name(id name) {
     if (![name isKindOfClass:NSString.class]) return nil;
     NSString *trimmed=[name stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
@@ -109,6 +115,7 @@ static NSString *clean_name(id name) {
 - (NSDictionary<NSString *, NSString *> *)environment { return self.launchProfile[@"environment"]?:@{}; }
 - (NSString *)runtime { return self.launchProfile[@"runtime"]; }
 - (NSArray<NSString *> *)libraries { return self.launchProfile[@"libraries"]?:@[]; }
+- (NSUInteger)codePool { return [self.launchProfile[@"codePool"] unsignedIntegerValue]; }
 - (NSDate *)added { return [NSDate dateWithTimeIntervalSince1970:[self.record[@"added"] doubleValue]]; }
 - (NSDate *)lastLaunched {
     NSNumber *value=self.record[@"lastLaunched"];
@@ -141,7 +148,8 @@ static NSString *clean_name(id name) {
         if ((profile[@"runtime"] && !valid_relative(profile[@"runtime"],NO)) ||
             (profile[@"arguments"] && !valid_arguments(profile[@"arguments"])) ||
             (profile[@"environment"] && !valid_environment(profile[@"environment"])) ||
-            (profile[@"libraries"] && (!profile[@"runtime"] || !valid_libraries(profile[@"libraries"])))) continue;
+            (profile[@"libraries"] && (!profile[@"runtime"] || !valid_libraries(profile[@"libraries"]))) ||
+            (profile[@"codePool"] && (!profile[@"runtime"] || !valid_code_pool(profile[@"codePool"])))) continue;
         [seen addObject:profile[@"id"]];
         [profiles addObject:profile];
     }

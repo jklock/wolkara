@@ -56,6 +56,15 @@ program under Wine, say) names that runtime instead of a macOS `.app`:
   64. They are loaded with the executable as if it carried them, with what
   they link, and the runtime's `dlopen` of one gets that copy; the whole
   runtime folder then counts as the application's folder. Only with `runtime`.
+- `codePool`: megabytes (1 to 1024) of prepared executable memory after the
+  images, for a runtime that writes its own code (an emulator's JIT, the
+  native modules it loads). `${CodePool}` in an `environment` value then
+  stands for it as `0x<start>-0x<end>@0x<alias>`: code runs from start to end
+  and is written through the writable alias, since iPadOS runs only memory
+  prepared for it and never again a page that was made writable. Preparing
+  memory takes time at every launch (about a minute for 64 MB with Developer
+  service), so ask for what the runtime needs. Only with `runtime`; Local
+  signing cannot provide it.
 
 Every profile in `profiles/` is built into the app. When the files a profile
 describes are present in Documents, the launcher adds that app to its library

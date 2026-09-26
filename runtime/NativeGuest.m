@@ -298,6 +298,29 @@ void ng_set_libraries(const char *root, const char *const *paths, size_t count) 
         launch_libraries[launch_library_count++]=strdup(paths[i]);
     }
 }
+// See ng_set_code_pool.
+static size_t code_pool_size;
+void ng_set_code_pool(size_t size) { code_pool_size=size; }
+// ${CodePool} in the environment's values, now that the pool exists.
+static void expand_code_pool(const char *executable, const char *writable, size_t size) {
+    char replacement[64], value[4096];
+    snprintf(replacement,sizeof replacement,"%#lx-%#lx@%#lx",(unsigned long)(uintptr_t)executable,
+             (unsigned long)((uintptr_t)executable+size),(unsigned long)(uintptr_t)writable);
+    extern char **environ;
+    // Names first: setenv may reallocate environ.
+    NSMutableArray<NSString *> *names=[NSMutableArray new];
+    for (char **entry=environ;*entry;entry++) if (strstr(*entry,"${CodePool}")) {
+        const char *equals=strchr(*entry,'=');
+        if (equals) [names addObject:[[NSString alloc] initWithBytes:*entry length:(NSUInteger)(equals-*entry) encoding:NSUTF8StringEncoding]];
+    }
+    for (NSString *name in names) {
+        const char *current=getenv(name.UTF8String);
+        if (current && ng_expand(current,"${CodePool}",replacement,value,sizeof value)) {
+            setenv(name.UTF8String,value,1);
+            LOG("[native] environment %s: code pool %s\n",name.UTF8String,replacement);
+        }
+    }
+}
 static NSArray<NSString *> *(*original_arguments)(id,SEL);
 static NSArray<NSString *> *guest_process_arguments(id receiver,SEL selector) {
     if(guest_arguments && inside(__builtin_return_address(0),1)) {
@@ -1153,6 +1176,13 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
         library_offset[i]=total;
         total+=(size_t)gi_extent(&carried.libraries[i].image,&library_low[i]);
     }
+    // A runtime's own code pool after the images (ng_set_code_pool).
+    size_t page_size=(size_t)getpagesize(), pool_offset=total, pool_size=0;
+    if (code_pool_size) {
+        pool_size=(code_pool_size+page_size-1)/page_size*page_size;
+        total+=pool_size;
+        LOG("[native] code pool of %zu bytes after the images\n",pool_size);
+    }
     // --jit-probe: one spare page after everything, for the arena stage.
     bool jit_probe=[NSProcessInfo.processInfo.arguments containsObject:@"--jit-probe"];
     size_t probe_offset=total;
@@ -1160,6 +1190,11 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
     bool arena_ready;
     bool signed_backend=atomic_load(&use_signed_image);
     // The signed container is captured from one executable's own pages.
+    // Nothing but the signed pages executes there: no code pool.
+    if (signed_backend && pool_size) {
+        LOG("[native] Local signing cannot provide a code pool, which this runtime needs; guest entry blocked\n");
+        goto done;
+    }
     if (signed_backend && carried.count) {
         LOG("[native] Local signing places only the application's own image; this one carries %zu librar%s of its own; guest entry blocked\n",
             carried.count,carried.count==1?"y":"ies");
@@ -1222,6 +1257,8 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
     for (size_t i=0;i<carried.count;i++)
         carried.libraries[i].slide=(uintptr_t)guest.arena.executable+library_offset[i]-library_low[i];
     LOG("[native] arena ready base=%p slide=%#llx\n",guest.arena.executable,(unsigned long long)guest.slide);
+    if (pool_size)
+        expand_code_pool((char *)guest.arena.executable+pool_offset,(char *)guest.arena.writable+pool_offset,pool_size);
     if (jit_probe) {
         // Diagnostic (docs/WINDOWS.md): now that the helper has prepared the
         // arena and detached, may this process execute memory it maps itself?
