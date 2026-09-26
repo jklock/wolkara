@@ -26,6 +26,13 @@ CODE_SUFFIXES={'.exe','.dll','.asi'}
 # FEX as the emulator for x86 (WoW64) and x86-64 (ARM64EC) code in this prefix,
 # the keys Wine's wow64 layer reads (docs/WINDOWS.md).
 EMULATOR_KEYS={r'HKLM\Software\Microsoft\Wow64\x86':'libwow64fex.dll',r'HKLM\Software\Microsoft\Wow64\amd64':'libarm64ecfex.dll'}
+# HD mod settings for the staged copy: its start-up update check offers to
+# replace the game's own libraries, which stay as GOG ships them here, and it
+# would start the updater as a second process, which the iPad cannot. The
+# renderer is pinned to mode 2, which draws through GDI: the OpenGL mode the
+# automatic choice picks uploads empty frames under this runtime so far
+# (docs/WINDOWS.md), and the iPad has no OpenGL.
+HD_SETTINGS={'Update.CheckAtStart':'0','Graphics.RenderingMode':'2'}
 
 
 def sha256(path):
@@ -56,6 +63,22 @@ def unpack(installer,game,language):
             else: shutil.move(str(item),str(target))
         shutil.rmtree(nested,ignore_errors=True)
     if not (game/EXECUTABLE).is_file(): sys.exit(f'{EXECUTABLE} not found after unpacking; is this the GOG HotA installer?')
+
+
+def hd_settings(game):
+    """Apply HD_SETTINGS to the HD mod's HotA settings, starting from its defaults on a fresh copy."""
+    folder=game/'_HD3_Data/Settings'
+    settings=folder/'hota.ini'
+    if not settings.is_file():
+        if not (folder/'#default#hota.ini').is_file(): return
+        shutil.copy2(folder/'#default#hota.ini',settings)
+    lines=settings.read_bytes().decode('latin-1').split('\r\n')
+    for key,value in HD_SETTINGS.items():
+        entry=f'<{key}> = {value}'
+        matches=[i for i,line in enumerate(lines) if line.startswith(f'<{key}>')]
+        if matches: lines[matches[0]]=entry
+        else: lines.insert(0,entry)
+    settings.write_bytes('\r\n'.join(lines).encode('latin-1'))
 
 
 def wine(runtime,prefix,*command,check=True):
@@ -109,6 +132,7 @@ def main():
     installed.parent.mkdir(parents=True,exist_ok=True)
     shutil.copytree(game,installed,symlinks=True)
     if code_hashes(installed)!=before or code_hashes(game)!=before: raise RuntimeError('game code changed while staging; run again')
+    hd_settings(installed)
     for name in [EXECUTABLE,'HotA.dll','_HD3_.dll']:
         if name in before: print(f'{name}: SHA-256 {before[name]}')
     print(f'Staged {len(before)} game executables and libraries unchanged into {installed}')

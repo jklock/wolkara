@@ -48,5 +48,25 @@ class ProfileTests(unittest.TestCase):
                        {'environment': {'A': 1}}, {'environment': {'A': 'y' * 4097}}, {'environment': {f'V{i}': '' for i in range(65)}}):
             with self.assertRaises(ValueError): check(self.write({**good, **change}))
 
+    def test_heroes3_hd_settings(self):
+        # The staged copy's HD mod settings: pinned keys replaced in place, CRLF kept, defaults used on a fresh copy.
+        sys.path.insert(0, str(ROOT / 'profiles' / 'heroes3-hota'))
+        import install
+        with tempfile.TemporaryDirectory() as directory:
+            game = Path(directory)
+            folder = game / '_HD3_Data' / 'Settings'
+            folder.mkdir(parents=True)
+            (folder / '#default#hota.ini').write_bytes(b'<Version> = 1\r\n<Update.CheckAtStart> = 1\r\n<Graphics.RenderingMode> = -1\r\n')
+            install.hd_settings(game)
+            lines = (folder / 'hota.ini').read_bytes().split(b'\r\n')
+            self.assertEqual(lines, [b'<Version> = 1', b'<Update.CheckAtStart> = 0', b'<Graphics.RenderingMode> = 2', b''])
+            (folder / 'hota.ini').write_bytes(b'<Version> = 2\r\n<Update.CheckAtStart> = 1\r\n')
+            install.hd_settings(game)
+            self.assertEqual((folder / 'hota.ini').read_bytes(),
+                             b'<Graphics.RenderingMode> = 2\r\n<Version> = 2\r\n<Update.CheckAtStart> = 0\r\n')
+            (folder / 'hota.ini').unlink(); (folder / '#default#hota.ini').unlink()
+            install.hd_settings(game)
+            self.assertFalse((folder / 'hota.ini').exists())
+
 
 if __name__ == '__main__': unittest.main()
