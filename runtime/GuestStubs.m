@@ -49,6 +49,8 @@ GSKind gs_kind(const char *symbol) {
     if ((name[0] == 'k' || name[0] == 'g') && isupper((unsigned char)name[1])) return GS_DATA;
     if (!strncmp(name, "NS", 2)) {
         if (!strcmp(name, "NSApp")) return GS_DATA;
+        if (!strcmp(name, "NSImageHintCTM") || !strcmp(name, "NSImageHintInterpolation") ||
+            !strcmp(name, "NSImageHintUserInterfaceLayoutDirection")) return GS_DATA;
         static const char *const constants[] = {"Key", "Notification", "Mode", "Name", "Type", "Number"};
         for (size_t i = 0; i < sizeof constants / sizeof *constants; i++)
             if (ends_with(name, constants[i])) return GS_DATA;

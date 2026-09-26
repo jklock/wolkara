@@ -12,7 +12,20 @@ extern uint32_t CGDisplayModeGetIOFlags(CGDisplayModeRef);
 extern CFStringRef CGDisplayModeCopyPixelEncoding(CGDisplayModeRef);
 extern void CGDisplayModeRelease(CGDisplayModeRef);
 extern bool CGDisplayModeIsUsableForDesktopGUI(CGDisplayModeRef);
+extern boolean_t CGDisplayIsMain(uint32_t);
+extern boolean_t CGDisplayIsBuiltin(uint32_t);
+extern boolean_t CGDisplayIsInMirrorSet(uint32_t);
+extern size_t CGDisplayPixelsWide(uint32_t);
+extern size_t CGDisplayPixelsHigh(uint32_t);
+CGDisplayModeRef CGDisplayCopyDisplayMode(uint32_t display) {
+    return display == 1 ? CFBridgingRetain(@{@"pixelWidth":@2752, @"pixelHeight":@2064}) : NULL;
+}
 int main(void) { @autoreleasepool {
+    assert(CGDisplayIsMain(1) && CGDisplayIsBuiltin(1));
+    assert(!CGDisplayIsMain(0) && !CGDisplayIsBuiltin(2));
+    assert(!CGDisplayIsInMirrorSet(1) && !CGDisplayIsInMirrorSet(0));
+    assert(CGDisplayPixelsWide(1) == 2752 && CGDisplayPixelsHigh(1) == 2064);
+    assert(CGDisplayPixelsWide(0) == 0 && CGDisplayPixelsHigh(2) == 0);
     NSDictionary *description=@{@"width":@1376,@"height":@1032,@"pixelWidth":@2752,@"pixelHeight":@2064,@"refresh":@120};
     CGDisplayModeRef mode=CFBridgingRetain(description);
     assert(CGDisplayModeIsUsableForDesktopGUI(mode));

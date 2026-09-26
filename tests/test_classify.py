@@ -51,6 +51,26 @@ def classify_run(directory, *images, translation=None, enabled=None, bundled=Fal
     return json.loads(mp.read_text()), json.loads(raw.read_text()), out.read_text(), printed.getvalue()
 
 
+class ImageHintTests(unittest.TestCase):
+    def test_chained_image_hints_are_data(self):
+        with tempfile.TemporaryDirectory() as directory:
+            d = pathlib.Path(directory)
+            source, exe = d / 'hints.m', d / 'hints'
+            source.write_text(
+                '#import <AppKit/AppKit.h>\n'
+                'int main(void) { @autoreleasepool {\n'
+                '    NSLog(@"%@ %@ %@", NSImageHintCTM, NSImageHintInterpolation,\n'
+                '          NSImageHintUserInterfaceLayoutDirection);\n'
+                '    return 0;\n'
+                '}}\n')
+            compile_macos(source, exe, '-framework', 'AppKit', '-Wl,-fixup_chains')
+            self.assertIsNone(classify.lazy_symbols(str(exe)))
+            _, raw, _, _ = classify_run(d, exe)
+            symbols = {entry[0]: entry[1] for entry in raw['translation']['AppKit']['symbols']}
+            for name in ('CTM', 'Interpolation', 'UserInterfaceLayoutDirection'):
+                self.assertEqual(symbols['_NSImageHint' + name], 'data')
+
+
 class CoalesceTests(unittest.TestCase):
     """dyld_info lists chained weak binds as coming from <weak-def-coalesce>: not a library."""
 

@@ -171,3 +171,16 @@ measured aggregate fault/resume throughput of 448K/s with one thread, 432K/s
 with two, 341K/s with four and 176K/s with eight. The iPad's first worker samples
 with the lock changes remain close to the earlier baseline. The direct-backend
 benchmark improvement therefore does not establish a game improvement.
+
+## Window-initialization checkpoint
+
+The 3600-second iPad run reached audio plug-in discovery and language selection,
+then crashed in CoreFoundation dictionary construction after 273,212,724 handled
+faults. The invalid key `0x394d4109b00000a8` exactly matched the first eight bytes
+of Tolkara's own generated `NSImageHintInterpolation` function stub. Apple's SDK
+declares this symbol as an NSString global. No game instructions were examined.
+The adapter now supplies typed image-hint string constants, and the build-time
+and runtime classifiers recognize all three hint names. Synthetic chained-fixup
+and dictionary tests cover the error. The display bridge also answers pixel
+width and the single integrated screen's mirror/built-in status. Physical-device
+validation is in progress with a two-CPU query cap and presentation timestamps.
