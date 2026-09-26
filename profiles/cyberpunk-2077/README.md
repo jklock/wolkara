@@ -10,7 +10,7 @@ matches `dyld_info`. The opt-in software-memory experiment completes all
 6,540 initializers, main, GOG initialization, all 32 archives, scripts and
 shader caches on the iPad. It reaches display setup; no rendered menu or
 gameplay is validated. A separate test configuration raises the engine
-watchdog timeout to 600 seconds because memory emulation slows startup.
+watchdog timeout to 3600 seconds on the iPad because memory emulation slows startup.
 See [the investigation](../../docs/CYBERPUNK_VM.md) and
 [software-memory experiment](../../docs/SOFTWARE_MEMORY.md) for evidence and limits.
 

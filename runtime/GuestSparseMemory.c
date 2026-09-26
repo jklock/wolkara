@@ -6,10 +6,11 @@
 
 enum { REGION_LIMIT = 256 };
 typedef struct { uint64_t start, end; unsigned prot, maxprot; } Region;
-typedef struct { uint64_t address; size_t backing; } Page;
+typedef struct { uint64_t address, generation; size_t backing; } Page;
+_Static_assert(ATOMIC_BOOL_LOCK_FREE==2,"Sparse memory requires a signal-safe atomic lock");
 typedef struct {
-    atomic_flag lock;
-    uint64_t base, end, generation;
+    atomic_bool lock;
+    uint64_t base, end, generation, mapping_generation;
     unsigned char *backing;
     size_t capacity, resident, next_backing, free_count, slot_count;
     size_t *free_backing;
@@ -19,10 +20,19 @@ typedef struct {
 } Space;
 
 static void lock(Space *s) {
-    while (atomic_flag_test_and_set_explicit(&s->lock, memory_order_acquire)) {}
+    for (;;) {
+        if(!atomic_exchange_explicit(&s->lock,true,memory_order_acquire)) return;
+        // Read while another thread owns the lock instead of repeatedly
+        // writing its cache line. This path also runs in the fault handler.
+        while(atomic_load_explicit(&s->lock,memory_order_relaxed)) {
+#if defined(__aarch64__)
+            __asm__ volatile("yield");
+#endif
+        }
+    }
 }
 static void unlock(Space *s) {
-    atomic_flag_clear_explicit(&s->lock, memory_order_release);
+    atomic_store_explicit(&s->lock,false,memory_order_release);
 }
 static bool aligned(uint64_t a, uint64_t n) {
     return n && !(a % GM_PAGE_SIZE) && !(n % GM_PAGE_SIZE) && n <= UINT64_MAX - a;
@@ -83,7 +93,7 @@ GMResult gm_sparse_init(GMSparseMemory *memory, uint64_t base, uint64_t size,
     if (slots > SIZE_MAX / sizeof(Page) || capacity > SIZE_MAX / sizeof(size_t)) return GM_NOMEM;
     Space *s = calloc(1, sizeof *s);
     if (!s) return GM_NOMEM;
-    atomic_flag_clear(&s->lock);
+    atomic_init(&s->lock,false);
     s->base = base; s->end = base + size;
     s->capacity = capacity; s->slot_count = slots;
     s->backing = mmap(NULL, backing_bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
@@ -170,7 +180,7 @@ static GMResult change(GMSparseMemory *memory, uint64_t a, uint64_t n,
     if (s->resident && op != PROTECT) discard_pages(s, a, end);
     memcpy(s->regions, next, count * sizeof *next);
     s->count = count;
-    ++s->generation;
+    ++s->mapping_generation;
     goto done;
 full:
     result = GM_NOMEM;
@@ -212,6 +222,7 @@ static GMResult access_locked(Space *s, uint64_t a, void *buffer, size_t n, bool
             if (page_slot(s, page, false) == SIZE_MAX && ++needed > s->capacity - s->resident) {
                 result = GM_NOMEM; goto done;
             }
+        ++s->generation;
     }
     unsigned char *bytes = buffer;
     while (n) {
@@ -224,15 +235,17 @@ static GMResult access_locked(Space *s, uint64_t a, void *buffer, size_t n, bool
             // The table is at most half full; preflight guaranteed capacity.
             size_t backing = s->free_count ? s->free_backing[--s->free_count] : s->next_backing++;
             memset(s->backing + backing * GM_PAGE_SIZE, 0, GM_PAGE_SIZE);
-            s->pages[slot] = (Page){page, backing};
+            s->pages[slot] = (Page){.address=page,.backing=backing};
             ++s->resident;
         }
-        if (write) memcpy(s->backing + s->pages[slot].backing * GM_PAGE_SIZE + offset, bytes, chunk);
+        if (write) {
+            memcpy(s->backing + s->pages[slot].backing * GM_PAGE_SIZE + offset, bytes, chunk);
+            s->pages[slot].generation=s->generation;
+        }
         else if (slot != SIZE_MAX) memcpy(bytes, s->backing + s->pages[slot].backing * GM_PAGE_SIZE + offset, chunk);
         else memset(bytes, 0, chunk);
         a += chunk; bytes += chunk; n -= chunk;
     }
-    if (write) ++s->generation;
 done:
     return result;
 }
@@ -253,7 +266,7 @@ GMResult gm_sparse_prepare(GMSparseMemory *memory, uint64_t a, size_t n, unsigne
         size_t slot = page_slot(s, page, true);
         size_t backing = s->free_count ? s->free_backing[--s->free_count] : s->next_backing++;
         memset(s->backing + backing * GM_PAGE_SIZE, 0, GM_PAGE_SIZE);
-        s->pages[slot] = (Page){page, backing};
+        s->pages[slot] = (Page){.address=page,.backing=backing};
         ++s->resident;
     }
 done:
@@ -277,13 +290,18 @@ GMResult gm_sparse_write(GMSparseMemory *m, uint64_t a, const void *b, size_t n)
 static bool atomic_size(uint64_t address, size_t size) {
     return size && size <= 16 && !(size & (size - 1)) && !(address % size);
 }
+static uint64_t page_generation(const Space *s,uint64_t address) {
+    size_t slot=page_slot(s,address-address%GM_PAGE_SIZE,false);
+    return slot==SIZE_MAX?0:s->pages[slot].generation;
+}
 GMResult gm_sparse_load_exclusive(GMSparseMemory *m, uint64_t a, void *b, size_t n,
                                   GMSparseExclusive *monitor) {
     Space *s = m ? m->implementation : NULL;
     if (!s || !monitor || !atomic_size(a, n)) return GM_INVALID;
     lock(s);
     GMResult result = access_locked(s, a, b, n, false);
-    if (result == GM_OK) *monitor = (GMSparseExclusive){a, s->generation, n, true};
+    if (result == GM_OK) *monitor = (GMSparseExclusive){
+        .address=a,.generation=page_generation(s,a),.mapping_generation=s->mapping_generation,.size=n,.valid=true};
     unlock(s);
     return result;
 }
@@ -293,7 +311,10 @@ GMResult gm_sparse_store_exclusive(GMSparseMemory *m, uint64_t a, const void *b,
     if (!s || !monitor || !stored || !b || !atomic_size(a, n)) return GM_INVALID;
     lock(s);
     GMResult result = GM_OK;
-    bool valid = monitor->valid && monitor->address == a && monitor->size == n && monitor->generation == s->generation;
+    // A write to an unrelated page must not make all other threads retry.
+    // Mapping changes still invalidate every monitor to cover recycling.
+    bool valid = monitor->valid && monitor->address == a && monitor->size == n &&
+        monitor->mapping_generation==s->mapping_generation && monitor->generation==page_generation(s,a);
     if (valid) result = access_locked(s, a, (void *)b, n, true);
     if (result == GM_OK) { *stored = valid; monitor->valid = false; }
     unlock(s);
