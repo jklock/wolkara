@@ -692,8 +692,15 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     // profile; nothing here changes the application). `${Documents}` in a
     // variable's value stands for the absolute Documents folder.
     NSString *documents=TKDocumentsPath(@"");
-    for (NSString *name in [app.environment.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
-        NSString *value=[app.environment[name] stringByReplacingOccurrencesOfString:@"${Documents}" withString:documents];
+    NSMutableDictionary<NSString *, NSString *> *environment=[app.environment mutableCopy];
+    for (NSString *argument in arguments) if ([argument hasPrefix:@"--guest-environment="]) {
+        // Development launches may set a variable over the profile's (NAME=value).
+        NSString *setting=[argument substringFromIndex:20];
+        NSUInteger equals=[setting rangeOfString:@"="].location;
+        if (equals!=NSNotFound && equals>0) environment[[setting substringToIndex:equals]]=[setting substringFromIndex:equals+1];
+    }
+    for (NSString *name in [environment.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
+        NSString *value=[environment[name] stringByReplacingOccurrencesOfString:@"${Documents}" withString:documents];
         setenv(name.UTF8String,value.UTF8String,1);
         fprintf(log,"[host] environment %s=%s\n",name.UTF8String,TKHomeDisplayPath(value,NSHomeDirectory()).UTF8String);
     }
