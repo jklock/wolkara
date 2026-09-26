@@ -563,6 +563,8 @@ build/emulation/test_event_monitors
 bash tools/test_legacy_crypto.sh
 "${CC[@]}" -Itranslation/Security translation/Security/Session.c tests/test_security_session.c -o build/emulation/test_security_session
 build/emulation/test_security_session
+"${CC[@]}" -Itranslation/CoreGraphics translation/CoreGraphics/Gamma.c tests/test_display_gamma.c -framework CoreGraphics -o build/emulation/test_display_gamma
+build/emulation/test_display_gamma
 
 xcrun clang -fobjc-arc -Wno-deprecated-declarations -framework Foundation -framework Security \
     tools/export_system_anchors.m -o build/emulation/export_system_anchors
