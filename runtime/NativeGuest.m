@@ -16,6 +16,7 @@ static NativeCodeMemory local_quarantine;
 #include "GuestStubs.h"
 #include "GuestTLS.h"
 #include "GuestWrap.h"
+#include "GuestUnwind.h"
 #include "GuestWait.h"
 #include "GuestWaitTrace.h"
 #include "SignedImage.h"
@@ -1717,6 +1718,16 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
         }
         gm_destroy(&library->image.memory);
     }
+    if (!ng_unwind_add(&guest.image, guest.slide)) {
+        LOG("[native] cannot register executable unwind metadata\n"); goto done;
+    }
+    for (size_t i = 0; i < carried.count; ++i) {
+        GuestLibrary *library = &carried.libraries[i];
+        if (!ng_unwind_add(&library->image, library->slide)) {
+            LOG("[native] cannot register library unwind metadata: %s\n", library->install_name); goto done;
+        }
+    }
+    LOG("[native] unwind metadata registered for executable and %zu libraries\n", carried.count);
     if(gsv_enabled() && !gsv_code_alias(guest.arena.executable,guest.arena.writable,guest.arena.size)) {
         LOG("[software-vm] cannot register the loader-owned instruction view\n"); goto done;
     }

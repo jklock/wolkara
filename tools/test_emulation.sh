@@ -504,6 +504,23 @@ xcrun clang -std=c11 -Wall -Wextra -Werror \
     runtime/GuestWrap.c runtime/GuestWrapArm64.S tests/test_guest_wrap.c \
     -o build/emulation/test_guest_wrap
 build/emulation/test_guest_wrap
+xcrun clang -std=c11 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined \
+    -Iruntime -c runtime/GuestWrap.c -o build/emulation/wrap_exception.o
+xcrun clang++ -std=c++17 -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined \
+    -Iruntime runtime/GuestWrapArm64.S tests/test_guest_wrap_exception.cpp \
+    build/emulation/wrap_exception.o -o build/emulation/test_guest_wrap_exception
+build/emulation/test_guest_wrap_exception
+xcrun clang++ -std=c++17 -O1 -g -Wall -Wextra -Werror -dynamiclib \
+    tests/unwind_fixture.cpp tests/unwind_fixture_arm64.S -o build/emulation/unwind_fixture.dylib
+for source in GuestUnwind GuestMemory GuestImage GuestFixups GuestWrap; do
+    xcrun clang -std=c11 -D_DARWIN_C_SOURCE -O1 -g -Wall -Wextra -Werror \
+        -fsanitize=address,undefined -Iruntime -c "runtime/$source.c" \
+        -o "build/emulation/unwind_$source.o"
+done
+xcrun clang++ -std=c++17 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined \
+    -Iruntime tests/test_guest_unwind.cpp runtime/GuestWrapArm64.S \
+    build/emulation/unwind_Guest{Unwind,Memory,Image,Fixups,Wrap}.o -o build/emulation/test_guest_unwind
+build/emulation/test_guest_unwind build/emulation/unwind_fixture.dylib
 python3 tests/test_publish.py
 python3 tests/test_arena_publish.py
 python3 tests/test_nib.py

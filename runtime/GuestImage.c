@@ -108,6 +108,17 @@ static bool load(FILE *f, GuestImage *image, uint32_t file_type, char *error, si
                     if (have_init || (section.size % (offsets ? 4 : 8))) BAD("unsupported initializer section layout");
                     have_init = true; init_offsets = offsets; init_address = section.addr; init_size = section.size;
                 }
+                bool compact = !strncmp(section.sectname, "__unwind_info", 16);
+                bool dwarf = !strncmp(section.sectname, "__eh_frame", 16);
+                if (compact || dwarf) {
+                    if (strncmp(s.segname, "__TEXT", 16) || !(s.initprot & GM_READ) ||
+                        (type != S_REGULAR && !(dwarf && type == S_COALESCED)) || !section.size)
+                        BAD("invalid unwind section");
+                    uint64_t *address = compact ? &image->unwind_address : &image->eh_frame_address;
+                    uint64_t *size = compact ? &image->unwind_size : &image->eh_frame_size;
+                    if (*size) BAD("duplicate unwind section");
+                    *address = section.addr; *size = section.size;
+                }
                 if (type == S_THREAD_LOCAL_REGULAR || type == S_THREAD_LOCAL_ZEROFILL) {
                     if (section.align > 20) BAD("unsupported TLS alignment");
                     size_t alignment = (size_t)1 << section.align;

@@ -14,6 +14,8 @@ protocols and formats. No code was copied or translated from these projects.
 - StikJIT integration notes (executable-region preparation protocol)
 - Apple HomeKit ADK (Apache-2.0), Pair Verify reference
 - Apple open-source objc4 headers, for the Objective-C image registration SPI
+- LLVM libunwind_ext.h (Apache-2.0 WITH LLVM-exception), for the Darwin dynamic
+  unwind-section lookup SPI declarations; registration code is original
 - GDB remote serial protocol and LLDB `debugserver` extension documentation
 - RFC 9293 (TCP), RFC 8200 (IPv6), RFC 7748 (X25519), RFC 5054 (SRP)
 

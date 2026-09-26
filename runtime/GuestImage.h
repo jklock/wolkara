@@ -21,6 +21,7 @@ typedef struct {
     uint32_t chained_offset, chained_size;   // LC_DYLD_CHAINED_FIXUPS payload
     unsigned char *exports;
     uint64_t header_address, initializer_address;
+    uint64_t unwind_address, unwind_size, eh_frame_address, eh_frame_size;
     uint64_t tls_address, tls_size, tls_descriptors, tls_descriptors_size, tls_initializer_count;
     size_t tls_alignment;
     char *dylibs[GI_MAX_DYLIBS];

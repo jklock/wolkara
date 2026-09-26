@@ -224,3 +224,22 @@ nonfixed 4 GiB reservations in software without shortening them. Default
 placement is unchanged. Kernel footprint, resident/virtual sizes and remaining
 physical-memory allowance are now logged to test whether host address-space
 pressure explains the failure. The exception alone does not prove that cause.
+
+
+The 4 GiB software-pool comparison survived the previous allocation-failure
+point and continued into `tweakdb.bin`, with repeated Metal presentation. The
+post-window quiet interval did not recur after the fullscreen lifecycle fix.
+At the end, the process had handled about 595M faults and reported a 6.65 GiB
+physical footprint with 9.35 GiB remaining. This supports address-space pressure
+as the earlier failure's cause but does not prove it in isolation.
+
+The next failure was an uncaught `gog::UnauthorizedAccessError` on the first
+`SetRichPresence` call. Two independent original C++ fixtures exposed missing
+exception support: the call logger lacked unwind metadata, and guest images'
+compact/DWARF unwind tables were not registered with libunwind. Either omission
+causes the corresponding fixture to abort; both fixes preserve catches,
+rethrows and destructors. The loader now registers the original table locations
+before entry using Darwin's dynamic unwind lookup SPI. No exception result is
+altered, and no game instruction is inspected or changed for this fix. Device
+validation is pending; the exception's presence alone does not prove that the
+game has a handler for this particular call.
