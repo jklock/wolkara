@@ -236,8 +236,9 @@ static void schedule_memory_progress(unsigned tick, uint64_t previous) {
             }
             vm_deallocate(mach_task_self(),(vm_address_t)threads,count*sizeof(thread_act_t));
         }
-        log_once("[software-vm] progress tick=%u faults=%llu delta=%llu backing_pages=%zu threads_running=%u waiting=%u other=%u\n",
-            tick,(unsigned long long)faults,(unsigned long long)(faults-previous),stats.resident_pages,running,waiting,other);
+        log_once("[software-vm] progress tick=%u faults=%llu delta=%llu backing_pages=%zu writes=%llu threads_running=%u waiting=%u other=%u\n",
+            tick,(unsigned long long)faults,(unsigned long long)(faults-previous),stats.resident_pages,
+            (unsigned long long)stats.write_operations,running,waiting,other);
         for(unsigned thread=1;thread<=GWT_THREAD_LIMIT;thread++) {
             GWWaitRecord wait;
             if(gwt_snapshot(thread,&wait))

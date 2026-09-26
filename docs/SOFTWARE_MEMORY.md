@@ -186,3 +186,15 @@ and runtime classifiers recognize all three hint names. Synthetic chained-fixup
 and dictionary tests cover the error. The display bridge also answers pixel
 width and the single integrated screen's mirror/built-in status. Physical-device
 validation is in progress with a two-CPU query cap and presentation timestamps.
+
+The image-hint fix passed the physical-device checkpoint: at 274.6 million
+handled accesses, Cyberpunk created its window at 1210×834 logical pixels.
+The invalid dictionary-key crash is cleared. Metal presentation and the game
+menu have not yet been observed. This run uses the first, sysctlbyname-only
+CPU cap; the additional numeric CPU-query adapters are built but not installed.
+
+Progress telemetry also exposes the sparse backend's existing successful-write
+counter. It counts nonempty writes and successful atomic updates; reads, failed
+compare-exchanges, rejected writes and mapping changes do not increment it.
+This adds no per-access work and does not inspect application data. Its purpose
+is to distinguish repeated read faults from workloads that keep writing data.
