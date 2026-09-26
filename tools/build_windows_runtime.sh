@@ -84,10 +84,14 @@ build_fex() {  # triple, output name
     # Wine's -D__WINE_TEB_TSD_OFFSET says (docs/WINDOWS.md, "x18").
     # FEX_GUEST_ADDRESS_WINDOW: a 32-bit guest's address space sits at a 4 GB
     # window instead of at identity (docs/WINDOWS.md, "The 32-bit window").
+    # 64 KiB sections, as Wine's own modules have: on 16 KiB host pages code
+    # and writable data then never share a page, which an iPad's code pool
+    # needs (docs/WINDOWS.md, "Executable memory on the iPad").
     PATH="$MINGW/bin:$PATH" cmake -G Ninja -S "$SRC/FEX" -B "$dir" \
         -DCMAKE_TOOLCHAIN_FILE="$SRC/FEX/Data/CMake/toolchain_mingw.cmake" -DMINGW_TRIPLE="$triple" \
         -DCMAKE_BUILD_TYPE=Release -DENABLE_LTO=False -DENABLE_JEMALLOC_GLIBC_ALLOC=False -DBUILD_TESTING=False -DTUNE_CPU=none \
-        -DFEX_TEB_TSD_OFFSET=0x17f8 -DFEX_GUEST_ADDRESS_WINDOW=ON
+        -DFEX_TEB_TSD_OFFSET=0x17f8 -DFEX_GUEST_ADDRESS_WINDOW=ON \
+        -DCMAKE_SHARED_LINKER_FLAGS="-Wl,--section-alignment=0x10000"
     PATH="$MINGW/bin:$PATH" cmake --build "$dir" -j "$JOBS"
     built="$(find "$dir" -name "$name" -type f | head -1)"
     [ -n "$built" ] || { echo "error: $name not produced; see $dir"; exit 1; }
@@ -138,6 +142,10 @@ rm -rf "$RUNTIME"
 (cd "$WINE_BUILD" && make install >"$OUT/wine-install.log" 2>&1)
 # The emulator modules go where Wine looks for aarch64 PE builtins.
 cp "$OUT/libarm64ecfex.dll" "$OUT/libwow64fex.dll" "$RUNTIME/lib/wine/aarch64-windows/"
+# PE modules carry their DWARF inside the loaded image, and on the iPad all
+# native code is loaded into prepared memory: install them without it. The
+# build trees keep it for symbolizing.
+find "$RUNTIME/lib/wine" -path '*-windows/*' -type f ! -name '*.a' -exec "$MINGW/bin/llvm-strip" --strip-debug {} +
 # The runtime must be self-contained on the iPad: Homebrew libraries the Unix
 # side links are copied beside it and their install names rewritten.
 step "Bundling Homebrew libraries the Unix side links"
