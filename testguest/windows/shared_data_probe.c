@@ -15,12 +15,20 @@
 #include <windows.h>
 #include <stdio.h>
 
+/* The read happens in a call: clang's __try covers calls, not a plain load
+ * that faults (that needs asynchronous exceptions, which the mingw target
+ * does not implement), so an inline read would sit outside the SEH scope. */
+static __attribute__((noinline)) unsigned int read_u32( const volatile unsigned int *address )
+{
+    return *address;
+}
+
 static int read_fixed_address(void)
 {
     __try
     {
-        volatile const unsigned int *tick = (const unsigned int *)0x7ffe0320;  /* TickCount.LowPart */
-        printf("direct read of 0x7ffe0000: ok, TickCount.LowPart=%u\n", *tick);
+        unsigned int tick = read_u32( (const unsigned int *)0x7ffe0320 );  /* TickCount.LowPart */
+        printf("direct read of 0x7ffe0000: ok, TickCount.LowPart=%u\n", tick);
         return 1;
     }
     __except (EXCEPTION_EXECUTE_HANDLER)
