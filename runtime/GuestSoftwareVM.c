@@ -19,7 +19,7 @@ static GMSparseMemory memory;
 static uint64_t base, span;
 static void *guard;
 static size_t force_threshold;
-static size_t native_pool_size;
+static size_t native_pool_size, forced_pool_size;
 static int log_fd = -1;
 static atomic_bool enabled;
 static atomic_uint_fast64_t fault_count;
@@ -41,6 +41,7 @@ static bool rounded(size_t size, uint64_t *result) {
 }
 bool gsv_enabled(void) { return atomic_load_explicit(&enabled, memory_order_acquire); }
 void gsv_prefer_native_pool(size_t size) { native_pool_size=size; }
+void gsv_force_pool(size_t size) { forced_pool_size=size; }
 bool gsv_address(const void *address) {
     uint64_t a = (uintptr_t)address;
     return gsv_enabled() && a >= base && a - base < span;
@@ -210,7 +211,7 @@ bool gsv_start(size_t backing_bytes, size_t force, int fd) {
         gm_sparse_destroy(&memory); if (guard != MAP_FAILED) munmap(guard, span);
         return false;
     }
-    log_fd = fd; force_threshold = force; native_pool_size=0; atomic_store(&fault_count, 0);
+    log_fd = fd; force_threshold = force; native_pool_size=forced_pool_size=0; atomic_store(&fault_count, 0);
     code_base=code_alias=code_size=0;atomic_store(&code_alias_enabled,false);
     atomic_store_explicit(&enabled, true, memory_order_release);
     report("[software-vm] base ", base); report("[software-vm] backing bytes ", backing_bytes);
@@ -231,7 +232,8 @@ void *gsv_map(void *address, size_t size, int prot, int flags, int fd, off_t off
                     !(flags & ~(MAP_ANON | MAP_PRIVATE | MAP_FIXED | MAP_NORESERVE)) &&
                     !(prot & ~(PROT_READ | PROT_WRITE)) && fd == -1 && offset == 0;
     bool force = eligible && !(flags & MAP_FIXED) &&
-                 ((force_threshold && size >= force_threshold) ||
+                 ((forced_pool_size && size == forced_pool_size) ||
+                  (force_threshold && size >= force_threshold) ||
                   (native_pool_size && size >= (64u<<20) && size != native_pool_size));
     if (!software_hint && !force) {
         void *result = mmap(address, size, prot, flags, fd, offset);

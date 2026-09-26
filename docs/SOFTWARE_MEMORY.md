@@ -206,4 +206,21 @@ now 4 KiB. A synthetic worker with an explicitly supplied, guarded 64 KiB stack
 reproduces SIGBUS with the old buffer and passes copy, overlapping copy, fill,
 and file/stdio bridges with the new one. The suite runs this case both with
 sanitizers and without them, because ASan enlarges pthread stacks. Device
-validation of this fix is pending.
+validation cleared this stack failure and reached Metal presentation.
+
+The expanded CPU-query experiment reached the first worker phase on the iPad.
+`sysconf(_SC_NPROCESSORS_ONLN)` now returns 2; startup creates eight fewer
+threads. That phase processes roughly 570K–630K faults/sec, compared with
+140K–170K in the prior run. These are approximate rates from ten-second
+samples. This is a startup improvement, not a frame-rate result.
+
+The small-stack fix reached at least 60 presented Metal frames on the iPad.
+Timing samples were 4.7–5.3 FPS, with a 14.6-second pause; this does not establish
+menu content or gameplay. The run then raised NSMallocException in a native
+Bluetooth-audio plug-in while allocating a Foundation object. Its last native
+4 GiB mapping ended just 1 GiB below the task address ceiling. The next comparison
+uses `TOLKARA_SOFTWARE_VM_FORCE_POOL_MB=4096` to put exact-size, anonymous,
+nonfixed 4 GiB reservations in software without shortening them. Default
+placement is unchanged. Kernel footprint, resident/virtual sizes and remaining
+physical-memory allowance are now logged to test whether host address-space
+pressure explains the failure. The exception alone does not prove that cause.

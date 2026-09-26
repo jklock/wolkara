@@ -160,6 +160,20 @@ int main(void) {
     assert(other!=MAP_FAILED && gsv_address(other));
     assert(!gsv_unmap(preferred,64u<<20) && !gsv_unmap(other,128u<<20));
     gsv_stop();
+    // Preserve host address space without shortening any guest reservation.
+    assert(gsv_start(32*GM_PAGE_SIZE,0,-1));
+    gsv_force_pool(64u<<20);
+    void *forced=gsv_map(NULL,64u<<20,3,MAP_ANON|MAP_PRIVATE,-1,0);
+    void *native_mapping=gsv_map(NULL,128u<<20,3,MAP_ANON|MAP_PRIVATE,-1,0);
+    assert(forced!=MAP_FAILED && gsv_address(forced));
+    assert(native_mapping!=MAP_FAILED && !gsv_address(native_mapping));
+    assert(gsv_map(native_mapping,64u<<20,3,MAP_ANON|MAP_PRIVATE|MAP_FIXED,-1,0)==native_mapping);
+    assert(!gsv_unmap(forced,64u<<20) && !gsv_unmap(native_mapping,128u<<20));
+    gsv_force_pool(0);
+    native_mapping=gsv_map(NULL,64u<<20,3,MAP_ANON|MAP_PRIVATE,-1,0);
+    assert(native_mapping!=MAP_FAILED && !gsv_address(native_mapping));
+    assert(!gsv_unmap(native_mapping,64u<<20));
+    gsv_stop();
     struct sigaction prior, action = {0};
     sigemptyset(&action.sa_mask); action.sa_handler = original_handler;
     assert(!sigaction(SIGSEGV, &action, &prior));

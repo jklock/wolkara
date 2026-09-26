@@ -13,6 +13,9 @@ bool gsv_address(const void *address);
 // Startup-only allocation comparison: prefer one exact large reservation size
 // for native placement and route other large reservations through software.
 void gsv_prefer_native_pool(size_t size);
+// Startup-only comparison: route this exact anonymous reservation size to
+// software, leaving other native-first decisions unchanged. Zero disables it.
+void gsv_force_pool(size_t size);
 // Register the loader-owned shared arena before guest entry. Both views remain
 // alive until gsv_stop. Fetches read current bytes; there is no instruction cache.
 bool gsv_code_alias(const void *executable, const void *readable, size_t size);

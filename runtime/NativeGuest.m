@@ -239,6 +239,12 @@ static void schedule_memory_progress(unsigned tick, uint64_t previous) {
         log_once("[software-vm] progress tick=%u faults=%llu delta=%llu backing_pages=%zu writes=%llu threads_running=%u waiting=%u other=%u\n",
             tick,(unsigned long long)faults,(unsigned long long)(faults-previous),stats.resident_pages,
             (unsigned long long)stats.write_operations,running,waiting,other);
+        task_vm_info_data_t vm={0};mach_msg_type_number_t vm_count=TASK_VM_INFO_COUNT;
+        if(task_info(mach_task_self(),TASK_VM_INFO,(task_info_t)&vm,&vm_count)==KERN_SUCCESS &&
+           vm_count>=TASK_VM_INFO_REV1_COUNT)
+            log_once("[software-vm] host memory tick=%u footprint=%llu resident=%llu virtual=%llu available=%zu\n",
+                tick,(unsigned long long)vm.phys_footprint,(unsigned long long)vm.resident_size,
+                (unsigned long long)vm.virtual_size,nc_available_memory());
         for(unsigned thread=1;thread<=GWT_THREAD_LIMIT;thread++) {
             GWWaitRecord wait;
             if(gwt_snapshot(thread,&wait))
@@ -1618,6 +1624,15 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
             }
             gsv_prefer_native_pool((size_t)native_mb<<20);
             LOG("[software-vm] prefer native pool=%llu MiB; other large reservations use software\n",native_mb);
+        }
+        const char *forced_pool=getenv("TOLKARA_SOFTWARE_VM_FORCE_POOL_MB");
+        if(forced_pool && *forced_pool) {
+            unsigned long long forced_mb=strtoull(forced_pool,&rest,10);
+            if(*rest || forced_mb<64 || forced_mb>(1ULL<<20)) {
+                LOG("[software-vm] invalid forced software pool size\n"); goto done;
+            }
+            gsv_force_pool((size_t)forced_mb<<20);
+            LOG("[software-vm] force exact pool=%llu MiB to software\n",forced_mb);
         }
         LOG("[software-vm] Cyberpunk-only runtime emulation enabled, backing=%llu MiB; native mappings attempted first\n",megabytes);
         const char *cpus=getenv("TOLKARA_SOFTWARE_VM_CPUS");
