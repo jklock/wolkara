@@ -492,6 +492,9 @@ static void *guest_mmap(void *address, size_t size, int prot, int flags, int fd,
     LOG("[native] mmap -> %p errno=%d\n",result,result==MAP_FAILED?errno:0); return result;
 }
 static void guest_jit_protect(int enabled) { LOG("[native] jit write protection=%d (separate RW/RX views)\n",enabled); }
+// compiler-rt's instruction cache flush, which iPadOS's libSystem does not
+// export: after code is written, before it runs.
+static void guest_clear_cache(char *start, char *end) { if (start && end>start) sys_icache_invalidate(start,(size_t)(end-start)); }
 static void guest_unexpected_lazy_bind(void) {
     LOG("[native] unexpected lazy binder call after eager binding\n"); __builtin_trap();
 }
@@ -612,7 +615,7 @@ static void *hook(const char *name) {
     HOOK("mmap",guest_mmap); HOOK("mprotect",guest_mprotect); HOOK("munmap",guest_munmap);
     if (gv_enabled(&vm_budget)) HOOK("madvise",guest_madvise);
     HOOK("memcpy",guest_memcpy); HOOK("memmove",guest_memmove); HOOK("memset",guest_memset);
-    HOOK("pthread_jit_write_protect_np",guest_jit_protect);
+    HOOK("pthread_jit_write_protect_np",guest_jit_protect); HOOK("__clear_cache",guest_clear_cache);
 #undef HOOK
     return NULL;
 }
