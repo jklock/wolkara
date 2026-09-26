@@ -1153,6 +1153,10 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
         library_offset[i]=total;
         total+=(size_t)gi_extent(&carried.libraries[i].image,&library_low[i]);
     }
+    // --jit-probe: one spare page after everything, for the arena stage.
+    bool jit_probe=[NSProcessInfo.processInfo.arguments containsObject:@"--jit-probe"];
+    size_t probe_offset=total;
+    if (jit_probe) total+=(size_t)getpagesize();
     bool arena_ready;
     bool signed_backend=atomic_load(&use_signed_image);
     // The signed container is captured from one executable's own pages.
@@ -1218,12 +1222,19 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
     for (size_t i=0;i<carried.count;i++)
         carried.libraries[i].slide=(uintptr_t)guest.arena.executable+library_offset[i]-library_low[i];
     LOG("[native] arena ready base=%p slide=%#llx\n",guest.arena.executable,(unsigned long long)guest.slide);
-    if ([NSProcessInfo.processInfo.arguments containsObject:@"--jit-probe"]) {
+    if (jit_probe) {
         // Diagnostic (docs/WINDOWS.md): now that the helper has prepared the
         // arena and detached, may this process execute memory it maps itself?
         // A runtime that generates code (an x86 emulator) needs that. Only our
         // own two-instruction sample runs; a kernel rejection may end the
         // process, so each stage is flushed first. Guest entry is skipped.
+        // The arena first: memory the helper prepared, as a code pool would use it.
+        size_t page=(size_t)getpagesize();
+        HPArenaResult arena=arena_execution_probe((char *)guest.arena.executable+probe_offset,
+                                                  (char *)guest.arena.writable+probe_offset,page,log);
+        LOG("[jit-probe] arena: alias=%s rewrite=%s direct=%s after-direct=%s direct_errno=%d rwx_errno=%d\n",
+            arena.alias_execute?"PASS":"FAIL",arena.alias_rewrite?"PASS":"FAIL",arena.direct_rewrite?"PASS":"FAIL",
+            arena.alias_after_direct?"PASS":"FAIL",arena.direct_errno,arena.rwx_errno);
         HPResult wx=host_execution_probe(HP_WRITE_THEN_EXECUTE,log);
         LOG("[jit-probe] write-then-execute: execute=%s rewrite=%s allocation_errno=%d protection_errno=%d\n",
             wx.executable?"PASS":"FAIL",wx.rewrite_executable?"PASS":"FAIL",wx.allocation_errno,wx.protection_errno);
