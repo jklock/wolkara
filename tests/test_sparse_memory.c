@@ -197,6 +197,42 @@ static void atomic_operations(void) {
     assert(gm_sparse_atomic(&m, base, 3, GM_ATOMIC_ADD, 1, &old) == GM_INVALID);
     gm_sparse_destroy(&m);
 }
+static void exclusive_page_isolation(void) {
+    GMSparseMemory m={0};
+    assert(gm_sparse_init(&m,base,3*PAGE,3*PAGE)==GM_OK);
+    assert(gm_sparse_map(&m,base,3*PAGE,3,3,false)==GM_OK);
+    GMSparseExclusive monitor={0};uint64_t value=0,desired=41;bool stored=false;
+    // First-write allocation on another page does not break this monitor.
+    assert(gm_sparse_load_exclusive(&m,base,&value,8,&monitor)==GM_OK && !value);
+    assert(gm_sparse_write(&m,base+PAGE,&desired,8)==GM_OK);
+    assert(gm_sparse_prepare(&m,base,8,GM_WRITE)==GM_OK);
+    assert(gm_sparse_store_exclusive(&m,base,&desired,8,&monitor,&stored)==GM_OK && stored);
+    for(unsigned i=0;i<1000;i++) {
+        assert(gm_sparse_load_exclusive(&m,base,&value,8,&monitor)==GM_OK);
+        uint64_t old;
+        assert(gm_sparse_atomic(&m,base+PAGE,8,GM_ATOMIC_ADD,1,&old)==GM_OK);
+        desired=value+1;
+        assert(gm_sparse_store_exclusive(&m,base,&desired,8,&monitor,&stored)==GM_OK && stored);
+    }
+    // Writes crossing into the monitored page invalidate it, even if the
+    // write starts in a different page. Failed writes do not invalidate it.
+    assert(gm_sparse_load_exclusive(&m,base+PAGE,&value,8,&monitor)==GM_OK);
+    uint64_t pair[2]={11,12};
+    assert(gm_sparse_write(&m,base+PAGE-8,pair,sizeof pair)==GM_OK);
+    assert(gm_sparse_store_exclusive(&m,base+PAGE,&desired,8,&monitor,&stored)==GM_OK && !stored);
+    assert(gm_sparse_load_exclusive(&m,base,&value,8,&monitor)==GM_OK);
+    assert(gm_sparse_write(&m,base+3*PAGE,&desired,8)!=GM_OK);
+    assert(gm_sparse_store_exclusive(&m,base,&desired,8,&monitor,&stored)==GM_OK && stored);
+    // Reusing the same virtual address/backing page must not revive a monitor.
+    assert(gm_sparse_load_exclusive(&m,base,&value,8,&monitor)==GM_OK);
+    assert(gm_sparse_unmap(&m,base,PAGE)==GM_OK);
+    assert(gm_sparse_map(&m,base,PAGE,3,3,false)==GM_OK);
+    assert(gm_sparse_store_exclusive(&m,base,&desired,8,&monitor,&stored)==GM_OK && !stored);
+    assert(gm_sparse_load_exclusive(&m,base,&value,8,&monitor)==GM_OK);
+    assert(gm_sparse_protect(&m,base,PAGE,GM_READ)==GM_OK);
+    assert(gm_sparse_store_exclusive(&m,base,&desired,8,&monitor,&stored)==GM_OK && !stored);
+    gm_sparse_destroy(&m);
+}
 static void *atomic_worker(void *raw) {
     Worker *w = raw;
     for (unsigned i = 0; i < 10000; ++i) {
@@ -255,6 +291,6 @@ static void malformed_and_limits(void) {
 }
 int main(void) {
     large_reservations(); exhaustion_and_recycling(); reference_comparison();
-    concurrent_pages(); atomic_operations(); concurrent_atomics(); malformed_and_limits();
+    concurrent_pages(); atomic_operations(); exclusive_page_isolation(); concurrent_atomics(); malformed_and_limits();
     puts("PASS: 112 GiB sparse reservations, independent reference comparison, atomic failures, recycling and concurrent pages");
 }

@@ -52,8 +52,10 @@ a 128-byte window, including supported register arithmetic, branches and scalar
 reads from software memory. A store-exclusive, other supported write or CLREX
 ends the sequence. No software monitor survives a
 return to native execution; an isolated store-exclusive fails. Unsupported
-sequences leave registers and backing data unchanged. A global write generation
-may conservatively cause extra exclusive-store failures under contention.
+sequences leave registers and backing data unchanged. Each backing page has a write generation. Writes on other pages do not
+invalidate a monitor; mapping changes invalidate all monitors to cover
+protection and backing-page reuse. Writes elsewhere on the same page may
+conservatively cause extra exclusive-store failures.
 See section 3.2.4 of Arm's
 [synchronization guide](https://documentation-service.arm.com/static/68c223238a337a2bc6645c0a?token=)
 for monitor clearing by CLREX and exception return.
@@ -115,17 +117,16 @@ archive loading. The matching iPad run keeps the 64 GiB pool native but reaches 
 faults and the same watchdog failure. The native-first default is retained.
 
 A separate `engine/config/platform/mac/tolkara-memory-test.ini` on both the
-simulator and iPad currently
-sets `[Engine/Watchdog] TimeoutSeconds = 600` to distinguish slow startup from
+simulator sets `[Engine/Watchdog] TimeoutSeconds = 600`; the iPad now sets
+`TimeoutSeconds = 3600` to distinguish slow startup from
 its next functional failure. No binary patch or third-party mod is installed.
 The INI experiment follows the setting described by the
 [watchdog configuration mod's author](https://www.nexusmods.com/cyberpunk2077/mods/16297).
-With this setting, both simulator and iPad finish scripts and load shader caches.
+With the 600-second setting, both simulator and iPad finish scripts and load shader caches.
 The simulator then reaches its known private-heap assertion. The iPad passes
 that heap operation and reached an unsupported SIMD structure instruction;
-implementing those forms clears that fault. The latest iPad process remains
-alive at display setup, with a worker querying memory capacity. Rendering is
-not validated. Remove the separate INI to restore the default timeout.
+implementing those forms clears that fault. Telemetry shows the iPad continues substantial computation after display
+setup, with about ten workers active. Rendering is not validated. Remove the separate INI to restore the default timeout.
 
 The SIMD structure decoder is compared against 164 original native assembly
 fixtures, with three input patterns and aligned/unaligned page-crossing cases.
@@ -146,5 +147,16 @@ page counts and kernel thread states every ten seconds for at most one hour.
 It also reports active imported mutex, condition, rwlock and semaphore wait
 boundaries. These diagnostics use runtime-owned counters and kernel metadata;
 they do not read application registers, stacks or memory. The display usability
-fix removed the stub call on the iPad, but startup still paused after a worker's
-memory-capacity query. The instrumented device test is investigating that pause.
+fix removed the stub call on the iPad. The apparently quiet phase after a
+worker's memory-capacity query is active computation: fault totals keep rising.
+The 600-second run reached about 219 million handled faults before the watchdog
+fired, with about 354 MiB of sparse backing. Single-threaded script loading ran
+at about 630,000 faults/sec; the following worker phase slowed to 140,000–170,000
+faults/sec in total.
+
+The sparse lock now waits with atomic reads and an ARM yield hint instead of
+repeated atomic writes to the lock's cache line. An original eight-thread
+backend benchmark improved from about 2.4M to 7.1–9.0M operations/sec on the Mac;
+this is not yet a measured iPad game improvement. Focused signal/resume and
+page-local monitor tests and the full sanitizer suite pass. The next iPad run
+combines these changes with the longer watchdog timeout.

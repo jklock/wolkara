@@ -12,7 +12,7 @@ typedef struct {
     size_t regions, resident_pages, capacity_pages;
 } GMSparseStats;
 typedef struct {
-    uint64_t address, generation;
+    uint64_t address, generation, mapping_generation;
     size_t size;
     bool valid;
 } GMSparseExclusive;
