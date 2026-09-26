@@ -1,4 +1,5 @@
 #import "AKSupport.h"
+#import "ImageHints.h"
 #import <CoreGraphics/CoreGraphics.h>
 // Converts cursor alpha to a bounded vector silhouette for native pointer motion.
 CGPathRef AKCreateCursorPath(CGImageRef image, CGSize size, CGPoint hotSpot) CF_RETURNS_RETAINED;

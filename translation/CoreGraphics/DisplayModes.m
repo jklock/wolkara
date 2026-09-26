@@ -14,3 +14,22 @@ void CGDisplayModeRelease(CGDisplayModeRef m) { if(m) CFRelease(m); }
 bool CGDisplayModeIsUsableForDesktopGUI(CGDisplayModeRef mode) {
     return mode && CGDisplayModeGetWidth(mode)>0 && CGDisplayModeGetHeight(mode)>0;
 }
+
+// Displays.m exposes one integrated UIKit screen as display 1.
+typedef uint32_t CGDirectDisplayID;
+extern CGDisplayModeRef CGDisplayCopyDisplayMode(CGDirectDisplayID display);
+boolean_t CGDisplayIsMain(CGDirectDisplayID display) { return display == 1; }
+boolean_t CGDisplayIsBuiltin(CGDirectDisplayID display) { return display == 1; }
+boolean_t CGDisplayIsInMirrorSet(CGDirectDisplayID display) { (void)display; return false; }
+size_t CGDisplayPixelsWide(CGDirectDisplayID display) {
+    CGDisplayModeRef mode = CGDisplayCopyDisplayMode(display);
+    size_t width = CGDisplayModeGetPixelWidth(mode);
+    CGDisplayModeRelease(mode);
+    return width;
+}
+size_t CGDisplayPixelsHigh(CGDirectDisplayID display) {
+    CGDisplayModeRef mode = CGDisplayCopyDisplayMode(display);
+    size_t height = CGDisplayModeGetPixelHeight(mode);
+    CGDisplayModeRelease(mode);
+    return height;
+}

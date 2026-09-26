@@ -18,8 +18,6 @@ CGError CGGetActiveDisplayList(uint32_t capacity,CGDirectDisplayID *displays,uin
     *count=displays ? (capacity ? 1 : 0) : 1; if(displays && capacity) displays[0]=1; return kCGErrorSuccess;
 }
 CGRect CGDisplayBounds(CGDirectDisplayID d) { return d==1 ? UIScreen.mainScreen.bounds : CGRectZero; }
-bool CGDisplayIsMain(CGDirectDisplayID d) { return d==1; }
-size_t CGDisplayPixelsHigh(CGDirectDisplayID d) { return d==1 ? UIScreen.mainScreen.bounds.size.height*UIScreen.mainScreen.nativeScale : 0; }
 CGDisplayModeRef CGDisplayCopyDisplayMode(CGDirectDisplayID d) { return d==1 ? CFBridgingRetain(mode()) : NULL; }
 CFArrayRef CGDisplayCopyAllDisplayModes(CGDirectDisplayID d,CFDictionaryRef options) { (void)options; return d==1 ? CFBridgingRetain(@[mode()]) : NULL; }
 uint32_t CGDisplayVendorNumber(CGDirectDisplayID d) { return d==1 ? 0x610 : 0; }

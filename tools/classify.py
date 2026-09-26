@@ -209,6 +209,8 @@ def main():
             if sym.startswith("_OBJC_CLASS_$_"): return "class"
             if sym.startswith("_OBJC_METACLASS_$_"): return "metaclass"
             if lazy is not None: return "func" if sym in lazy else "data"
+            if sym in {"_NSImageHintCTM", "_NSImageHintInterpolation",
+                       "_NSImageHintUserInterfaceLayoutDirection"}: return "data"
             return "data" if re.match(r"_(k[A-Z]|g[A-Z]|NS\w+(Key|Notification|Mode|Name|Type|Number)$|NSApp$)", sym) else "func"
 
         exe_libs = linked(exe)

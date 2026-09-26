@@ -18,6 +18,10 @@ int main(void) {
         assert(gs_kind("_kCGColorSpaceSRGB") == GS_DATA);
         assert(gs_kind("_NSApp") == GS_DATA);
         assert(gs_kind("_NSFontAttributeName") == GS_DATA);
+        assert(gs_kind("_NSImageHintCTM") == GS_DATA);
+        assert(gs_kind("_NSImageHintInterpolation") == GS_DATA);
+        assert(gs_kind("_NSImageHintUserInterfaceLayoutDirection") == GS_DATA);
+        assert(gs_kind_bound("_NSImageHintInterpolation", false, false) == GS_DATA);
         assert(gs_kind("_OBJC_CLASS_$_TKAbsentClass") == GS_CLASS);
         assert(gs_kind("_OBJC_METACLASS_$_TKAbsentClass") == GS_METACLASS);
         assert(gs_kind("_OBJC_IVAR_$_TKAbsentClass._field") == GS_DATA);
