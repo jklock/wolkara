@@ -162,10 +162,12 @@ page-local monitor tests and the full sanitizer suite pass. The next iPad run
 combines these changes with the longer watchdog timeout.
 
 `TOLKARA_SOFTWARE_VM_CPUS=1..64` is an optional comparison control for guest
-CPU-count `sysctlbyname` queries. It caps successful integer CPU counts without
+CPU-count `sysctlbyname`, numeric `sysctl`, and `sysconf` queries. It caps successful CPU counts without
 increasing them, and leaves other queries and the default launch unchanged.
 It does not set host thread affinity. This is intended to test whether fewer
-guest workers reduce fault overhead; it has not yet been tested in the game.
+guest workers reduce fault overhead. The first device test capped `hw.ncpu` at 2
+but still ran about ten workers at the original throughput; it covered only
+`sysctlbyname`. Numeric `sysctl` and `sysconf` coverage is built for the next run.
 A separate original assembly loop on the Mac, with distinct data per thread,
 measured aggregate fault/resume throughput of 448K/s with one thread, 432K/s
 with two, 341K/s with four and 176K/s with eight. The iPad's first worker samples
