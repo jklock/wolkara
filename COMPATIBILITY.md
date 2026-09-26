@@ -11,6 +11,15 @@ pull request; say what you tested, on what hardware, with which execution mode
 | World of Warcraft Forever (Classic beta, macOS arm64 client) | 1.60.1 | iPad Pro M5, iPadOS 27 | Local signing | Startup: the client's own unpacked code matched the signed page container byte for byte, and all 13,280 initializers ran into the original `main`, with no debugger, helper or tunnel. | Login and gameplay not yet validated, in this or any mode. Same capture limitation as Classic Era. | [`wow-forever`](profiles/wow-forever) |
 | Cyberpunk 2077 (GOG, macOS arm64) | 2.3.x (buildId 59052989568257053) | iPad Pro M5, iPadOS 27 | Developer service | Work in progress; no gameplay validated. The old experimental VM budget reaches all 6,540 initializers, main and GOG initialization. | The old budget produces overlapping reported pool ranges and a crash at the first archive; reproduced with the same budget in the simulator. Corrected placement passes all 32 archives in the simulator but fails earlier with ENOMEM on the iPad, whose large-mapping capacity is about 64 GiB. A standalone replay fails the 64 GiB request after retaining 16 GiB; the user VM range API returns KERN_NOT_SUPPORTED. Disabling the budget also fails before main after the 64 GiB allocation is refused. See [VM investigation](docs/CYBERPUNK_VM.md). | [`cyberpunk-2077`](profiles/cyberpunk-2077) |
 
+## Runtime diagnostics
+
+On 2026-09-26, `--sparse-memory-probe` passed on the iPad Pro M5 / iPadOS 27.
+Tolkara's own assembly used 112 GiB of software address ranges and completed
+18,600 scalar, SIMD, addressing and atomic fault/resume operations, using
+96 KiB of backing pages. This diagnostic does not run Cyberpunk. The remaining
+integration work and instruction limitations are in
+[Software-memory experiment](docs/SOFTWARE_MEMORY.md).
+
 An entry records what one person observed. It is not a promise that the
 application will keep working, and it says nothing about whether its publisher
 permits it: read "Online games and account risk" in the [README](README.md).
