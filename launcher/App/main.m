@@ -873,6 +873,14 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
         });
         return;
     }
+    if ([arguments containsObject:@"--sparse-memory-probe"]) {
+        self.status.text=@"Testing software address space with our own code…";
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
+            NSString *report=TKSparseMemoryProbeReport();
+            dispatch_async(dispatch_get_main_queue(),^{ self.status.text=report; });
+        });
+        return;
+    }
     if ([arguments containsObject:@"--cpu-probe"]) {
         self.status.text=@"Measuring execution through the signed runtime…";
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{

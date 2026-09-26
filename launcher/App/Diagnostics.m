@@ -6,6 +6,7 @@
 #import "MemoryProbe.h"
 #import "ShaderPauseProbe.h"
 #import "SignedCodeProbe.h"
+#import "SparseMemoryProbe.h"
 #import <UIKit/UIKit.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -63,6 +64,16 @@ NSString *TKCPUProbeReport(void) {
     NSString *report=[NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:NULL];
     fprintf(stderr,"%s",report.UTF8String?:"CPU probe log unavailable.");
     return [NSString stringWithFormat:@"CPU interpreter probe %@\n\n%@",ok?@"passed":@"failed",report?:@""];
+}
+
+NSString *TKSparseMemoryProbeReport(void) {
+    NSString *path=TKDocumentsPath(@"sparse-memory-probe.log");
+    FILE *log=fopen(path.fileSystemRepresentation,"w");
+    BOOL ok=log && guest_sparse_memory_probe(log);
+    if (log) fclose(log);
+    NSString *details=[NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:NULL];
+    return [NSString stringWithFormat:@"Software address-space fixture %@\n\n%@",
+        ok?@"passed":@"failed",details?:@"Log unavailable."];
 }
 
 NSString *TKLocalShaderProbeReport(void) {

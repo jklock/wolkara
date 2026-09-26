@@ -32,6 +32,8 @@ NSString *TKShaderPauseProbeReport(void);
 // its own address space; a fixed address already in use is reported, never
 // replaced. Writes Documents/vm-probe.txt.
 NSString *TKVMProbeReport(void);
+// Background queue. Only our signed scalar/SIMD fixture accesses software VAs.
+NSString *TKSparseMemoryProbeReport(void);
 // Main thread. Executes our own two-instruction sample; a code-signing
 // rejection can terminate the process. Launch arguments tag the report.
 NSString *TKExecutionProbeReport(HPMode mode, NSArray<NSString *> *arguments);

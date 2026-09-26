@@ -6,6 +6,10 @@ CC=(xcrun clang -std=c11 -D_DARWIN_C_SOURCE -Wall -Wextra -Werror -O1 -g
     -fsanitize=address,undefined -fno-omit-frame-pointer -Iruntime)
 "${CC[@]}" runtime/GuestMemory.c runtime/DarwinMemory.c runtime/MemoryProbe.c tests/test_memory.c -o build/emulation/test_memory
 build/emulation/test_memory
+"${CC[@]}" runtime/GuestMemory.c runtime/GuestSparseMemory.c tests/test_sparse_memory.c -o build/emulation/test_sparse_memory
+build/emulation/test_sparse_memory
+"${CC[@]}" runtime/GuestSparseMemory.c runtime/GuestMemoryInstruction.c runtime/SparseMemoryProbe.c runtime/SparseMemoryProbeProgram.S tests/MemoryInstructionReference.S tests/test_memory_instruction.c -o build/emulation/test_memory_instruction
+build/emulation/test_memory_instruction
 "${CC[@]}" runtime/GuestMemory.c runtime/GuestCPU.c runtime/CPUProbe.c runtime/CPUProbeProgram.S tests/test_cpu.c -o build/emulation/test_cpu
 build/emulation/test_cpu
 "${CC[@]}" -Iauthorization authorization/LocalRoute.c tests/test_local_route.c -o build/emulation/test_local_route

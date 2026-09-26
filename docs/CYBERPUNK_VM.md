@@ -155,6 +155,16 @@ succeed when run on the Mac. The equivalent sequence was already tested in
 the standalone iPad probe above. A larger provisionable address space or a
 publisher-supported reservation setting remains unverified.
 
+## Software-memory fixture
+
+A separate `--sparse-memory-probe` now demonstrates access to distinct
+16, 64 and 32 GiB software ranges using only Tolkara's own assembly. The expanded
+fixture passed on the iPad with 18,600 fault/resume operations, including scalar,
+SIMD and single-instruction atomics. See
+[Software-memory experiment](SOFTWARE_MEMORY.md) for details and limitations.
+It is not connected to the native guest mapping hooks, so the Cyberpunk result
+above remains unchanged.
+
 ## Validation and next work
 
 The follow-up `tools/test_emulation.sh` run also passed (exit 0, with existing
