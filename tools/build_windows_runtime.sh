@@ -82,10 +82,12 @@ build_fex() {  # triple, output name
     # for this step only (its ar/ranlib would otherwise shadow the host's).
     # FEX_TEB_TSD_OFFSET: the TEB lives in a pthread TSD slot on this host, as
     # Wine's -D__WINE_TEB_TSD_OFFSET says (docs/WINDOWS.md, "x18").
+    # FEX_GUEST_ADDRESS_WINDOW: a 32-bit guest's address space sits at a 4 GB
+    # window instead of at identity (docs/WINDOWS.md, "The 32-bit window").
     PATH="$MINGW/bin:$PATH" cmake -G Ninja -S "$SRC/FEX" -B "$dir" \
         -DCMAKE_TOOLCHAIN_FILE="$SRC/FEX/Data/CMake/toolchain_mingw.cmake" -DMINGW_TRIPLE="$triple" \
         -DCMAKE_BUILD_TYPE=Release -DENABLE_LTO=False -DENABLE_JEMALLOC_GLIBC_ALLOC=False -DBUILD_TESTING=False -DTUNE_CPU=none \
-        -DFEX_TEB_TSD_OFFSET=0x17f8
+        -DFEX_TEB_TSD_OFFSET=0x17f8 -DFEX_GUEST_ADDRESS_WINDOW=ON
     PATH="$MINGW/bin:$PATH" cmake --build "$dir" -j "$JOBS"
     built="$(find "$dir" -name "$name" -type f | head -1)"
     [ -n "$built" ] || { echo "error: $name not produced; see $dir"; exit 1; }

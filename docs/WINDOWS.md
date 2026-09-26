@@ -306,10 +306,42 @@ invalidation and image trackers. Windows' own 4 KiB page semantics for
 32-bit programs are already emulated by Wine's page tables on this 16 KiB
 host, and FEX's trackers work in 4 KiB guest pages.
 
-Order of work: the Wine side first, checked by a 64-bit process still
-running and a WoW64 process reaching the 32-bit `ntdll` (it fails at the
-first emulated instruction until FEX follows); then FEX; then a 32-bit
-hello program, then HotA under M0.
+**Result, 2026-09-26: 32-bit x86 programs run.** Wine's branch (four
+more commits: the window and its allocation rules in `ntdll`, the WoW64
+widening in `wow64`/`wow64win`, host addresses for the NLS tables the
+32-bit `ntdll` hands the 64-bit PEB, and symbolized fault traces) and FEX's
+(`FEX_GUEST_ADDRESS_WINDOW`, built into `libwow64fex.dll` only; the
+ARM64EC module's register set has no room and runs only 64-bit guests) get
+a WoW64 process from the 32-bit `ntdll` through `kernel32`, `user32`,
+`setupapi` and `rundll32`: the prefix's `syswow64` fake DLLs (833 files)
+were installed by the 32-bit `rundll32 setupapi,InstallHinfSection
+Wow64Install` running under FEX, a 32-bit hello program prints and returns
+its exit code, and
+[`testguest/windows/window32_probe.c`](../testguest/windows/window32_probe.c),
+a freestanding 32-bit program that needs no DLL, passes its twelve checks
+(loads, stores, a `strcmp` binary search, `rep movsb`/`stosb`, 64-bit
+arithmetic, deep calls, `push`/`pop`, `fs:` TEB reads, `lock xadd`).
+
+Things learned on the way, each now handled on the branches: the shared
+cache and a kernel reservation occupy nearly everything between 4 GB and
+448 GB, so Wine reserves the first TB of holes rather than 64 GB and the
+window sits at 448 GB; a 32-bit main image is never at its preferred base
+here, so `STATUS_IMAGE_NOT_AT_BASE` must count as success or every 32-bit
+program takes a detour through `start.exe`; the WoW64 thunks compared
+widened host addresses against the 32-bit user space limit (the first
+`NtQueryVirtualMemory` from the 32-bit loader failed on that, leaving its
+`ntdll` module entry with base 0); arguments that are values, not
+addresses (`NtContinueEx`'s alertable flag, APC parameters) must not be
+widened; and the 32-bit `ntdll` writes its NLS table pointers into the
+64-bit PEB, where `win32u` dereferences them. A prefix whose `syswow64` is
+empty (one created before the window worked) is repaired by `wineboot -u`
+run with `WINEBOOTSTRAPMODE=1`, which is what lets the 32-bit installer be
+found as a builtin without a fake file; a fresh prefix gets it at creation.
+
+Still open on this path: FEX's `MonoBackpatcherWrite` and the
+gather-without-base loads translate only the base register; a fault on a
+64-bit process's `0x7ffe0000` read stays as before; each block compile
+still costs the three signals of the JIT pool.
 
 ## What Wine needs from its host, and what Tolkara has
 
@@ -353,7 +385,10 @@ Ordered so that each layer is proven before the next depends on it.
   **Result, 2026-09-26, with the Wine and FEX branches.** The 64-bit half
   of M0 is reached: the prefix is created, ARM64EC programs run, and x86-64
   programs run under FEX with the JIT pool (see "State of the branches").
-  The game itself is 32-bit and still waits for the WoW64 work.
+  Later the same day the 32-bit half followed: 32-bit x86 programs run
+  through WoW64 and FEX with the address window (see "The 32-bit window").
+  Next is the game itself: `profiles/heroes3-hota/install.py` against the
+  GOG installer, then `HotA.exe` under this runtime.
 - **M1 — the device JIT measurement.** Launch the installed, enrolled app
   once with `xcrun devicectl device process launch --device "$DEVICE"
   "$TOLKARA_BUNDLE_ID" --local-game-startup --jit-probe` (any library app will
