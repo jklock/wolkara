@@ -29,6 +29,11 @@ typedef NS_ENUM(NSInteger, TKAppSource) {
 // use `${Documents}`). Empty for an application started on its own.
 @property(nonatomic, readonly, copy) NSArray<NSString *> *arguments;
 @property(nonatomic, readonly, copy) NSDictionary<NSString *, NSString *> *environment;
+// From the profile: the runtime's folder, relative to Documents, and the
+// libraries it opens by path, relative to that folder; placed with the
+// executable at start. Nil and empty for an application started on its own.
+@property(nonatomic, readonly, copy, nullable) NSString *runtime;
+@property(nonatomic, readonly, copy) NSArray<NSString *> *libraries;
 @property(nonatomic, readonly) NSDate *added;
 @property(nonatomic, readonly, nullable) NSDate *lastLaunched;
 @end

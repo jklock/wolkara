@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 REQUIRED = ('id', 'name', 'workingDirectory', 'executable')
-OPTIONAL = ('notes', 'tested', 'caseAliases', 'runtime', 'arguments', 'environment')
+OPTIONAL = ('notes', 'tested', 'caseAliases', 'runtime', 'arguments', 'environment', 'libraries')
 ENVIRONMENT_NAME = re.compile(r'[A-Za-z_][A-Za-z0-9_]*')
 
 
@@ -50,6 +50,12 @@ def check(path):
     for key in ('workingDirectory', 'executable', 'runtime'):
         if key in profile and not relative(profile[key]): raise ValueError(f'{key} must stay inside Documents')
     if 'caseAliases' in profile: check_case_aliases(profile['caseAliases'])
+    if 'libraries' in profile:
+        # A runtime's libraries it opens by path: placed with it, inside its folder.
+        libraries = profile['libraries']
+        if 'runtime' not in profile: raise ValueError('libraries needs a runtime')
+        if not isinstance(libraries, list) or len(libraries) > 64 or not all(relative(l) for l in libraries):
+            raise ValueError('libraries must be a list of at most 64 paths inside the runtime')
     check_command_line(profile)
     return profile
 

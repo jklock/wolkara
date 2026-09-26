@@ -67,6 +67,13 @@ static BOOL valid_environment(id environment) {
     }
     return YES;
 }
+// libraries, as tools/check_profile.py checks them: at most 64 paths inside
+// the runtime's folder, so only with a runtime.
+static BOOL valid_libraries(id libraries) {
+    if (![libraries isKindOfClass:NSArray.class] || [libraries count]>64) return NO;
+    for (id library in libraries) if (!valid_relative(library,NO)) return NO;
+    return YES;
+}
 static NSString *clean_name(id name) {
     if (![name isKindOfClass:NSString.class]) return nil;
     NSString *trimmed=[name stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
@@ -100,6 +107,8 @@ static NSString *clean_name(id name) {
 - (NSString *)profile { return self.record[@"profile"]; }
 - (NSArray<NSString *> *)arguments { return self.launchProfile[@"arguments"]?:@[]; }
 - (NSDictionary<NSString *, NSString *> *)environment { return self.launchProfile[@"environment"]?:@{}; }
+- (NSString *)runtime { return self.launchProfile[@"runtime"]; }
+- (NSArray<NSString *> *)libraries { return self.launchProfile[@"libraries"]?:@[]; }
 - (NSDate *)added { return [NSDate dateWithTimeIntervalSince1970:[self.record[@"added"] doubleValue]]; }
 - (NSDate *)lastLaunched {
     NSNumber *value=self.record[@"lastLaunched"];
@@ -131,7 +140,8 @@ static NSString *clean_name(id name) {
             !valid_case_aliases(profile[@"caseAliases"])) continue;
         if ((profile[@"runtime"] && !valid_relative(profile[@"runtime"],NO)) ||
             (profile[@"arguments"] && !valid_arguments(profile[@"arguments"])) ||
-            (profile[@"environment"] && !valid_environment(profile[@"environment"]))) continue;
+            (profile[@"environment"] && !valid_environment(profile[@"environment"])) ||
+            (profile[@"libraries"] && (!profile[@"runtime"] || !valid_libraries(profile[@"libraries"])))) continue;
         [seen addObject:profile[@"id"]];
         [profiles addObject:profile];
     }
