@@ -8,8 +8,9 @@ initializers, thread-local variables and the four libraries it ships in
 `Contents/Frameworks` (Bink 2 and GOG Galaxy); every one of its 717,321 fixups
 matches `dyld_info`. The opt-in software-memory experiment completes all
 6,540 initializers, main, GOG initialization, all 32 archives, scripts and
-shader caches on the iPad, and creates the game window. No rendered menu or
-gameplay is validated. A separate test configuration raises the engine
+shader caches on the iPad, creates the game window, and presents Metal frames.
+Menu content and gameplay are not validated; the latest run later fails a native
+Foundation allocation. A separate test configuration raises the engine
 watchdog timeout to 3600 seconds on the iPad because memory emulation slows startup.
 See [the investigation](../../docs/CYBERPUNK_VM.md) and
 [software-memory experiment](../../docs/SOFTWARE_MEMORY.md) for evidence and limits.
