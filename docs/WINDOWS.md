@@ -144,8 +144,8 @@ with a small C program and each now handled on the Wine branch:
   write-protected. RW→RX `mprotect` is allowed. So Wine maps a PE image RW,
   copies it in, and gives each section its final protection (`ntdll`
   `map_image_view`). A JIT (FEX's code buffers) has to be `MAP_JIT` plus the
-  toggle, or write through a separate alias; that is the FEX side of the
-  work and the shape Tolkara's in-arena pool takes on the iPad.
+  toggle; see "The JIT pool" below for what the kernel allows there and how
+  the Wine branch serves it.
 - **Protection faults arrive as `SIGBUS`, `si_code 1`,** the same code as
   alignment faults; the ESR in the signal context tells them apart
   (`DFSC 0x21` is alignment). Wine's arm64 `bus_handler` treated every
@@ -175,26 +175,76 @@ wrong tenth argument. On Darwin the syscall table now points at generated
 wrappers (`tools/make_darwin_syscalls`, `dlls/ntdll/unix/syscall_darwin.h`)
 whose stack parameters are all `ULONG_PTR`.
 
-**State of the Wine branch, 2026-09-26, 13 commits on `upstream-arm64ec`:**
-`wineboot -u` creates a complete prefix on this Mac in 73 s (826 files in
-`system32`, registry written, `explorer` on the Mac driver, no process left
-behind), and Wine's own `notepad.exe`, an ARM64EC program, runs with a
-window. That is the native half of M0 without any x86 code involved.
+### The JIT pool
+
+FEX asks Wine for its code buffers with `NtAllocateVirtualMemoryEx`,
+`PAGE_EXECUTE_READWRITE` and the `MEM_EXTENDED_PARAMETER_EC_CODE` attribute
+(so that the EC bitmap marks them as native code), then writes and runs
+them continuously and re-protects pieces (a guard page at the end of each
+buffer). What `MAP_JIT` memory allows on this kernel, each point measured
+with a small program on 2026-09-26:
+
+- A `MAP_JIT` mapping can only be placed where the kernel chooses:
+  `MAP_JIT|MAP_FIXED` is `EINVAL` even into a hole that was just
+  deallocated. A pool therefore has to be reserved once, up front.
+- Reserving it `PROT_NONE` is fine; every `mprotect` transition on its
+  pages is allowed *except leaving read-write-execute* (`EACCES`, also
+  through `mach_vm_protect`). Once a page has been RWX it stays RWX.
+- `madvise(MADV_FREE_REUSABLE)` works on the pages, `MADV_ZERO` does not
+  (`EPERM`); `mach_vm_map` with `VM_FLAGS_FIXED` over them fails, so Wine's
+  own address-space reservations cannot clobber the pool.
+- The write/execute switch is per thread, in user mode
+  (`pthread_jit_write_protect_np` is an `msr` on a commpage-provided value),
+  survives syscalls and context switches, and new threads start executable.
+- **A signal handler always runs with the pages executable, and after it
+  returns the thread is writable whenever it was writable before the signal
+  or the handler left it so.** A handler can switch a thread to writable;
+  it can never switch it back to executable.
+
+The Wine branch (`ntdll`, two commits) serves those requests from a pool
+reserved in `virtual_init` (4 GB by default; `WINEJITPOOL` gives the size in
+megabytes, or `start-end` names a region the host mapped already, which is
+how Tolkara will hand over arena memory on the iPad). Views get a
+`VPROT_JIT` flag and are placed by walking the view tree inside the pool;
+in an ARM64EC process only EC-code allocations qualify, because RWX memory
+that x86 code asks for is never executed natively. The pool is never
+unmapped: freed or decommitted pages are zeroed and advised away, and a
+protection change the kernel refuses is kept in Wine's page tables only.
+Outside the pool the executable bit is dropped from writable mappings as
+before. Faults do the switching: a write fault on a committed RWX pool page
+turns the thread writable inside the handler; an execute fault parks the
+full register state on the thread's stack and points the thread at a
+16-byte routine in `ntdll.so` that calls `pthread_jit_write_protect_np(1)`
+and traps, and the `SIGTRAP` handler restores the parked state. A block
+compile thus costs three signals; FEX switching explicitly (it has a
+Windows-to-Unix bridge, `FEXUnixLib`, and Wine can export a call) is the
+optimisation for later, with the fault path as the safety net.
+
+The FEX branch needed one more change for this to run: its dispatcher still
+read the TEB through `x18` in three emitted sequences (the EC bitmap check,
+the syscall-callback flag, the SRA spill path), which worked until the
+first return from a signal handler zeroed `x18` in the middle of the
+dispatcher; all TEB reads now go through one `LoadTEB` helper.
+
+**State of the branches, 2026-09-26 (Wine: 15 commits on
+`upstream-arm64ec`; FEX: 3 on main):** `wineboot -u` creates a complete
+prefix on this Mac in 73 s, Wine's own `notepad.exe` (ARM64EC) runs with a
+window, and **an x86-64 Windows program runs under FEX**: a hello program
+prints, loops 50 million iterations in 110 ms and exits with its return
+code, and
+[`testguest/windows/shared_data_probe.c`](../testguest/windows/shared_data_probe.c)
+reads the relocated `KUSER_SHARED_DATA` correctly through the API
+(`GetTickCount64`, `QueryPerformanceCounter` at 10 MHz,
+`GetSystemTimeAsFileTime`, a `Sleep(15)` measured as 25 ms). Its last step,
+a direct read of `0x7ffe0320` inside `__try`, is not caught: Wine delivers
+the access violation to the x86-64 program (`dispatch_exception` in the
+ARM64EC `ntdll` shows the x64 registers), the program's handler returns
+`ExceptionContinueSearch`, and the unhandled-exception path starts
+`winedbg`. Whether that is the mingw SEH runtime, Wine's x64 unwinder in
+the ARM64EC `ntdll`, or FEX's context is the next thing to find out.
 Remaining noise: FreeType, GnuTLS and SDL2 are `dlopen`ed by bare soname and
 not found in the bundled runtime (configure should record `@rpath` sonames
 and the build script bundle them); no Vulkan (MoltenVK) yet.
-
-A 64-bit Windows test program of our own,
-[`testguest/windows/shared_data_probe.c`](../testguest/windows/shared_data_probe.c),
-exercises the relocated page through the API and reports what a direct read
-of `0x7ffe0000` does. Under FEX (`libarm64ecfex.dll` registered in the
-prefix) it currently recurses into a stack overflow: FEX's own Windows code
-and its JIT read the TEB through `x18` (five loads in `ARM64EC/Module.S`,
-two emitted in `MiscOps.cpp`, and mingw's `NtCurrentTeb()` inline for the
-C++), which is null on this host. The FEX branch `tolkara/darwin-arm64`
-adds `FEX_TEB_TSD_OFFSET` and reads the TEB from the TSD slot in all three
-places; whether the W^X rule bites next (FEX asked for no RWX memory before
-the recursion) is the next measurement.
 
 ## What Wine needs from its host, and what Tolkara has
 
@@ -211,10 +261,11 @@ the recursion) is the next measurement.
 | Memory-model emulation | n/a | Apple silicon has no user-selectable TSO outside Rosetta; FEX falls back to explicit ordering, at a cost. Heroes III is a 1999 program; this should not matter. |
 
 Also upstream, not in Tolkara: Wine's own `virtual.c` has no `MAP_JIT` handling
-on macOS at all, so a RWX request from the PE side (`PAGE_EXECUTE_READWRITE`,
-which FEX uses for its code buffers) needs the same RW/RX treatment as W2
-inside Wine's Unix side, or a small patch to Wine. CrossOver's tree has this;
-upstream Wine 11 does not.
+on macOS at all (CrossOver's tree has some; upstream Wine 11 does not). The
+Wine branch adds it as "The JIT pool" above; on the iPad the same code takes
+its pool from the prepared arena through `WINEJITPOOL=start-end`, and
+whether the arena's pages honour the per-thread switch there is still to be
+measured (M1 ended before that stage).
 
 ## Milestones
 
@@ -233,6 +284,11 @@ Ordered so that each layer is proven before the next depends on it.
   Prefix creation fails: `wineboot` cannot map `KUSER_SHARED_DATA` at
   `0x7ffe0000`, see "The 4 GB floor". M0 is not reached and cannot be for a
   32-bit program with the current FEX.
+
+  **Result, 2026-09-26, with the Wine and FEX branches.** The 64-bit half
+  of M0 is reached: the prefix is created, ARM64EC programs run, and x86-64
+  programs run under FEX with the JIT pool (see "State of the branches").
+  The game itself is 32-bit and still waits for the WoW64 work.
 - **M1 — the device JIT measurement.** Launch the installed, enrolled app
   once with `xcrun devicectl device process launch --device "$DEVICE"
   "$TOLKARA_BUNDLE_ID" --local-game-startup --jit-probe` (any library app will

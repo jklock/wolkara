@@ -36,6 +36,7 @@ int main(void)
     FILETIME time;
     ULONGLONG tick = GetTickCount64();
 
+    setvbuf(stdout, NULL, _IONBF, 0);  /* every line reaches the log even if a later step crashes */
     printf("shared_data_probe: hello from x86-64 Windows code\n");
     printf("GetTickCount64: %llu ms\n", tick);
     QueryPerformanceFrequency(&frequency);
