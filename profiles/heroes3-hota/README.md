@@ -92,6 +92,12 @@ xcrun devicectl device process launch --device "$DEVICE" "$TOLKARA_BUNDLE_ID" --
 and read the `[jit-probe]` lines in `Documents/native-guest.log` (the process
 may be ended by the kernel on the last stage; the log is flushed before it).
 
+**Do not launch with `--case-insensitive-files`.** Wine already ignores case
+in file names. With the option, the runtime answers that `GAMES` exists when
+the folder is `games`, so Wine creates saves as `GAMES/AUTOSAVE.GM1`, which
+does not exist, and the game reports that it could not save. Started from its
+icon, or without the option, the game saves normally.
+
 **Policy.** The game's own files, including the HD mod and HotA libraries the
 GOG build ships, are copied unchanged and hash-verified. Wine and FEX are
 compatibility layers in the sense of the [README](../../README.md#policy);

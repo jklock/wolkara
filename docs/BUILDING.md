@@ -285,7 +285,9 @@ for apps started from the library:
   macOS, and the log names the folder. Files being created and Foundation's
   own file APIs are not covered, and each miss costs a directory listing. For
   a known case, prefer a profile's `caseAliases` (see
-  [profiles/README.md](../profiles/README.md)).
+  [profiles/README.md](../profiles/README.md)). Not for Wine, which ignores
+  case itself: with it, a folder spelled differently is found for a lookup
+  but not for a file created in it, so a Windows game cannot save there.
 - `--guest-arguments=<arguments>` and `--guest-environment=NAME=value` (with
   `--local-game-startup` or `--native-startup`): replace a profile's command
   line (tab-separated) or set one variable over its environment for this
