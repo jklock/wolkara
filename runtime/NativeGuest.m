@@ -49,8 +49,24 @@ static NativeCodeMemory local_quarantine;
 #include <stdarg.h>
 #include <stdatomic.h>
 #include <sys/stat.h>
+#include <mach/mach_time.h>
 static atomic_bool initialization_attempted;
 static unsigned software_cpu_limit;
+// ng_startup_step: a new step restarts its clock; counting within it does not.
+static os_unfair_lock startup_lock=OS_UNFAIR_LOCK_INIT;
+static NGStartupStep startup_step;
+static void startup_begin(const char *step, unsigned long long total) {
+    os_unfair_lock_lock(&startup_lock);
+    startup_step=(NGStartupStep){step,0,total,mach_absolute_time()};
+    os_unfair_lock_unlock(&startup_lock);
+}
+static void startup_count(unsigned long long done) {
+    os_unfair_lock_lock(&startup_lock); startup_step.done=done; os_unfair_lock_unlock(&startup_lock);
+}
+NGStartupStep ng_startup_step(void) {
+    os_unfair_lock_lock(&startup_lock); NGStartupStep step=startup_step; os_unfair_lock_unlock(&startup_lock);
+    return step;
+}
 #if TOLKARA_INTEGRATED_AUTH
 static atomic_bool use_local_authorization;
 #endif
@@ -1581,6 +1597,7 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
     }
     guest.log=log; guest.path=strdup(path);
     gs_log(log); gw_log(log);
+    startup_begin("loading the app's executable",0);
     NSMutableArray *process_arguments=[NSMutableArray arrayWithObject:@(path)];
     for (size_t i=0;i<launch_argument_count;i++) [process_arguments addObject:@(launch_arguments[i])];
     guest_arguments=process_arguments;
@@ -1678,6 +1695,7 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
         nc_destroy(&reserved_arena);
     }
     bool take_reserved=reserved==NG_RESERVED_TAKE;
+    startup_begin(signed_backend?"mapping the signed page container":"preparing execution memory",0);
     if (signed_backend)
         arena_ready=signed_image_prepare(guest.base+total,error,sizeof error);
 #if TOLKARA_INTEGRATED_AUTH
@@ -1729,6 +1747,7 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
         LOG("[jit-probe] done; guest entry skipped\n");
         goto done;
     }
+    startup_begin("linking the app with system libraries",0);
     {
         NSData *data=[NSData dataWithContentsOfFile:@(library_map)];
         NSDictionary *mapping=data?[NSJSONSerialization JSONObjectWithData:data options:0 error:NULL]:nil;
@@ -1931,21 +1950,26 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
         // dyld order: a library's initializers before the client's, and
         // before those of the carried libraries that link it.
         size_t order[GL_MAX_LIBRARIES], ordered=gl_initialization_order(&carried,order);
+        if (full_startup && ordered) startup_begin("starting the libraries the app carries",ordered);
         for (size_t n=0;full_startup && n<ordered;n++) {
             GuestLibrary *library=&carried.libraries[order[n]];
             LOG("[native] registering %s\n",library->install_name);
             if (!register_objc_image(library->path,(const struct mach_header *)(library->image.header_address+library->slide)) ||
                 !run_initializers(&library->image,library->slide,library->install_name,argc,argv,env,apple)) { ok=false; goto done; }
+            startup_count(n+1);
         }
         // Nothing to call where the image records no initializer.
+        startup_begin("running the app's startup code",full_startup?guest.image.initializer_count:1);
         if (guest.image.initializer_count) {
             ((void (*)(int,const char **,const char **,const char **))initializer)(argc,argv,env,apple);
             LOG("[native] first original initializer returned\n");
+            startup_count(1);
         }
         ok=true;
         if (signed_image.active && !signed_image.shadow)
             LOG("[signed-image] no rewritten range: every __TEXT page was signed before the initializer; no unpack verification or restore needed\n");
         if (signed_image.shadow) {
+            startup_begin("checking the unpacked code against the page container",0);
             // Determinism evidence: the regenerated range must equal the signed
             // container before its pages replace it. Any difference means the
             // container came from another capture: stop before running more code.
@@ -1980,9 +2004,11 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
                 if (!inside((void *)function,4) || (function&3)) { LOG("[native] invalid initializer %llu=%p\n",(unsigned long long)i,(void *)function); ok=false; goto done; }
                 LOG("[native] initializer %llu preferred=%#llx native=%p\n",(unsigned long long)i,(unsigned long long)(function-guest.slide),(void *)function);
                 ((void (*)(int,const char **,const char **,const char **))function)(argc,argv,env,apple);
+                startup_count(i+1);
             }
             LOG("[native] all %llu initializers returned; entering original main=%p\n",(unsigned long long)guest.image.initializer_count,(void *)(guest.image.entry+guest.slide));
             if([NSProcessInfo.processInfo.arguments containsObject:@"--sample-native"]) schedule_native_sample(mach_thread_self(),1);
+            startup_begin("the app is running its own startup",0);
             int result=((int (*)(int,const char **,const char **,const char **))(guest.image.entry+guest.slide))(argc,argv,env,apple);
             LOG("[native] original main returned %d\n",result);
             ok=(result==0);
