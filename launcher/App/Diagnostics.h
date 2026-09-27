@@ -21,6 +21,10 @@ NSString *TKLoaderCheck(NSString *_Nullable executable, NSString *_Nullable miss
 NSString *TKCPUProbeReport(void);
 // Background queue. Compiles our own shader fixtures in Documents/LocalShaderProbe.
 NSString *TKLocalShaderProbeReport(void);
+// Background queue. Loads every shader library the runtime captured in
+// Documents/ShaderRequests on this device's own Metal; reads them only.
+// A --probe-run-id= launch argument tags the report.
+NSString *TKCapturedShaderProbeReport(void);
 // Main thread. Maps our own signed pages; no debugger, JIT or app code.
 NSString *TKSignedCacheProbeReport(void);
 // Main thread, from a run-loop timer callout: pumps the run loop while waiting.

@@ -99,6 +99,8 @@ done
 build/emulation/test_native_memory
 "${CC[@]}" runtime/HostDiagnostics.c runtime/HostExecutionProbe.c runtime/NativeCodeMemory.c tests/test_host_diagnostics.c -o build/emulation/test_host_diagnostics
 build/emulation/test_host_diagnostics
+"${CC[@]}" runtime/HostExecutionProbe.c runtime/NativeCodeMemory.c tests/test_arena_probe.c -o build/emulation/test_arena_probe
+build/emulation/test_arena_probe
 "${CC[@]}" runtime/DebuggerArena.c runtime/HostDiagnostics.c runtime/HostExecutionProbe.c runtime/NativeCodeMemory.c tests/test_debugger_arena.c -o build/emulation/test_debugger_arena
 build/emulation/test_debugger_arena
 "${CC[@]}" tests/test_native_policy.c -o build/emulation/test_native_policy
@@ -536,13 +538,16 @@ import sys
 from pathlib import Path
 sys.path.insert(0,'tests')
 from test_metallib import library
+# A legacy macOS container (AIR 2.0) and a current one (AIR 2.7, macOS 15).
 data=bytearray(library());data[4:16]=bytes([1,128,2,0,2,0,0,0,0,0,0,0])
 Path('build/emulation/container-fixture.metallib').write_bytes(data)
+data=bytearray(library((2,7)));data[4:16]=bytes([1,128,2,0,8,0,0,0x81,15,0,0,0])
+Path('build/emulation/container-fixture-current.metallib').write_bytes(data)
 PYFIXTURE
 xcrun clang -fobjc-arc -Wall -Wextra -Werror -Wno-deprecated-declarations -g -fsanitize=address,undefined \
     -Itranslation/Metal -framework Foundation translation/Metal/LibraryContainer.m tests/test_library_container.m \
     -o build/emulation/test_library_container
-build/emulation/test_library_container build/emulation/container-fixture.metallib
+build/emulation/test_library_container build/emulation/container-fixture.metallib build/emulation/container-fixture-current.metallib
 xcrun clang -fobjc-arc -Wall -Wextra -Werror -Wno-deprecated-declarations -O1 -g -fsanitize=address,undefined \
     -Itranslation/Metal tests/test_storage_modes.m -o build/emulation/test_storage_modes
 build/emulation/test_storage_modes
@@ -591,6 +596,17 @@ xcrun clang -fobjc-arc -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined
 build/emulation/test_images
 
 xcrun clang -fobjc-arc -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined \
+    -Itranslation/AKSupport -Itranslation/AppKit -framework Foundation -framework CoreGraphics \
+    translation/AKSupport/AKSupport.m translation/AppKit/Images.m translation/AppKit/Drawing.m tests/test_drawing.m \
+    -o build/emulation/test_drawing
+build/emulation/test_drawing
+
+xcrun clang -fobjc-arc -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined \
+    -Itranslation/AKSupport -framework Foundation translation/AKSupport/AKSupport.m translation/CoreGraphics/Events.m \
+    tests/test_quartz_events.m -o build/emulation/test_quartz_events
+build/emulation/test_quartz_events
+
+xcrun clang -fobjc-arc -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined \
     -Itranslation/AKSupport -framework Foundation translation/AppKit/TextInput.m tests/test_text_input.m \
     -o build/emulation/test_text_input
 build/emulation/test_text_input
@@ -601,6 +617,10 @@ xcrun clang -fobjc-arc -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined
 build/emulation/test_event_monitors
 
 bash tools/test_legacy_crypto.sh
+"${CC[@]}" -Itranslation/Security translation/Security/Session.c tests/test_security_session.c -o build/emulation/test_security_session
+build/emulation/test_security_session
+"${CC[@]}" -Itranslation/CoreGraphics translation/CoreGraphics/Gamma.c tests/test_display_gamma.c -framework CoreGraphics -o build/emulation/test_display_gamma
+build/emulation/test_display_gamma
 
 xcrun clang -fobjc-arc -Wno-deprecated-declarations -framework Foundation -framework Security \
     tools/export_system_anchors.m -o build/emulation/export_system_anchors

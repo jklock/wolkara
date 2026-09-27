@@ -27,7 +27,7 @@ static void updateShaderPause(void) {
         label.font=[UIFont preferredFontForTextStyle:UIFontTextStyleTitle2];
         label.text=getenv("TOLKARA_LOCAL_SHADERS_ONLY")
             ? @"Local shader test paused\n\nThe iPad compiler could not accept this shader. Close the app to end this test."
-            : @"Game paused for an unsupported shader\n\nConnect to the Mac with the shader service running.\nThe game will resume when the translation is ready.";
+            : @"Game paused for a shader the iPad could not compile\n\nConnect the Mac with the shader service running (tools/serve_shader_translation.py).\nThe game will resume when the translation is ready.";
         [controller.view addSubview:label];
         [NSLayoutConstraint activateConstraints:@[
             [label.centerXAnchor constraintEqualToAnchor:controller.view.centerXAnchor],
@@ -100,20 +100,21 @@ static id<MTLLibrary> captureLibrary(id receiver,SEL selector,dispatch_data_t da
     NSString *name=[key stringByAppendingString:@".metallib"];
     NSString *cached=[[documents stringByAppendingPathComponent:@"TranslatedShaders"] stringByAppendingPathComponent:name];
     BOOL localOnly=getenv("TOLKARA_LOCAL_SHADERS_ONLY")!=NULL;
-    NSData *translated=localOnly?nil:translatedLibraryData(cached);
-    if(!translated) {
-        NSData *local=AKLocalMetalLibraryData(bytes);
-        if(local) {
-            dispatch_data_t input=dispatch_data_create(local.bytes,local.length,NULL,DISPATCH_DATA_DESTRUCTOR_DEFAULT);
-            NSError *localError=nil;
-            id<MTLLibrary> library=originalLibraryLoader(receiver,selector,input,&localError);
-            AKLog(@"On-device Metal library %@: %@%@",key,library?@"loaded":@"rejected",library?@"":[NSString stringWithFormat:@" error=%@",localError]);
-            if(library) {
-                [libraries setObject:library forKey:[key copy] cost:local.length];
-                if(error)*error=nil;return library;
-            }
+    // The iPad first: the desktop container rewrapped around its unchanged AIR,
+    // which the iPad's own Metal compiles. Only a library the iPad refuses falls
+    // back to a translation made on a Mac, and failing that to a wait for one.
+    NSData *local=AKLocalMetalLibraryData(bytes);
+    if(local) {
+        dispatch_data_t input=dispatch_data_create(local.bytes,local.length,NULL,DISPATCH_DATA_DESTRUCTOR_DEFAULT);
+        NSError *localError=nil;
+        id<MTLLibrary> library=originalLibraryLoader(receiver,selector,input,&localError);
+        AKLog(@"On-device Metal library %@: %@%@",key,library?@"loaded":@"rejected",library?@"":[NSString stringWithFormat:@" error=%@",localError]);
+        if(library) {
+            [libraries setObject:library forKey:[key copy] cost:local.length];
+            if(error)*error=nil;return library;
         }
-    }
+    } else AKLog(@"Metal library %@: container version %u is not rewrapped on the device",key,(unsigned)(length>8?((const uint8_t *)bytes.bytes)[8]:0));
+    NSData *translated=localOnly?nil:translatedLibraryData(cached);
     if(!translated && ([NSProcessInfo.processInfo.arguments containsObject:@"--translate-shaders"] || getenv("TOLKARA_WAIT_FOR_MISSING_SHADERS"))) {
         // Serialize misses so a single USB request file represents one job.
         // Cache hits and all draw/resource calls stay on the device.

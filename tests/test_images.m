@@ -37,8 +37,38 @@ int main(void) { @autoreleasepool {
     assert(!CGPathContainsPoint(silhouette,NULL,CGPointMake(15,14),false));
     assert(CGPathContainsPoint(silhouette,NULL,CGPointMake(2,2),false));
     CGPathRelease(silhouette);
+    // A small arrow in the corner of a large canvas keeps its own size: only
+    // what shows is bounded, not the canvas (Heroes III's HD mod: 128x128).
+    NSBitmapImageRep *canvas=[[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL pixelsWide:128 pixelsHigh:128 bitsPerSample:8 samplesPerPixel:4 hasAlpha:YES isPlanar:NO colorSpaceName:@"NSDeviceRGBColorSpace" bitmapFormat:0 bytesPerRow:512 bitsPerPixel:32];
+    for(int y=0;y<24;y++)for(int x=0;x<16;x++)canvas.bitmapData[(y*128+x)*4+3]=255;
+    silhouette=AKCreateCursorPath(canvas.CGImage,CGSizeMake(128,128),CGPointMake(1,1));
+    bounds=CGPathGetBoundingBox(silhouette);
+    assert(silhouette && bounds.size.width==16 && bounds.size.height==24 && bounds.origin.x==-1 && bounds.origin.y==-1);
+    CGPathRelease(silhouette);
+    // A large arrow is still kept within 32 points, hot spot scaled with it.
+    for(int y=0;y<128;y++)for(int x=0;x<64;x++)canvas.bitmapData[(y*128+x)*4+3]=255;
+    silhouette=AKCreateCursorPath(canvas.CGImage,CGSizeMake(128,128),CGPointMake(8,8));
+    bounds=CGPathGetBoundingBox(silhouette);
+    assert(silhouette && bounds.size.width==16 && bounds.size.height==32 && bounds.origin.x==-2 && bounds.origin.y==-2);
+    CGPathRelease(silhouette);
+    NSBitmapImageRep *clear=[[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL pixelsWide:4 pixelsHigh:4 bitsPerSample:8 samplesPerPixel:4 hasAlpha:YES isPlanar:NO colorSpaceName:@"NSDeviceRGBColorSpace" bitmapFormat:0 bytesPerRow:16 bitsPerPixel:32];
+    assert(!AKCreateCursorPath(clear.CGImage,CGSizeMake(4,4),CGPointZero));
     assert(!AKCreateCursorPath(NULL,image.size,CGPointZero));
     assert(!AKCreateCursorPath(ring.CGImage,CGSizeZero,CGPointZero));
     assert(!AKCursorIsHidden()); [NSCursor hide]; [NSCursor hide]; [NSCursor unhide]; assert(AKCursorIsHidden()); [NSCursor unhide]; [NSCursor unhide]; assert(!AKCursorIsHidden());
-    puts("bitmap storage, ownership, overflow, snapshot, cursor ABI and native silhouette: PASS");
+    // An image made from a CGImage, as Wine's Mac driver makes its cursors:
+    // the same pixels, its own size unless one is given, and an outline.
+    CGImageRef source=ring.CGImage; CGImageRetain(source);
+    NSBitmapImageRep *copied=[[NSBitmapImageRep alloc] initWithCGImage:source];
+    assert(copied && copied.pixelsWide==3 && copied.pixelsHigh==3 && copied.hasAlpha && copied.bytesPerRow==12);
+    assert(copied.bitmapData[4*4+3]==64 && copied.bitmapData[0*4+3]==255);
+    NSImage *wrapped=[[NSImage alloc] initWithCGImage:source size:CGSizeZero];
+    assert(wrapped && wrapped.size.width==3 && wrapped.size.height==3 && wrapped.representations.count==1);
+    assert([wrapped CGImageForProposedRect:NULL context:nil hints:nil]);
+    assert([[NSImage alloc] initWithCGImage:source size:CGSizeMake(32,32)].size.width==32);
+    silhouette=AKCreateCursorPath([wrapped CGImageForProposedRect:NULL context:nil hints:nil],CGSizeMake(96,96),CGPointMake(3,6));
+    assert(silhouette && CGPathContainsPoint(silhouette,NULL,CGPointMake(2,2),false)); CGPathRelease(silhouette);
+    assert(![[NSBitmapImageRep alloc] initWithCGImage:NULL] && ![[NSImage alloc] initWithCGImage:NULL size:CGSizeZero]);
+    CGImageRelease(source);
+    puts("bitmap storage, ownership, overflow, snapshot, cursor ABI, native silhouette and images from CGImage, cursors on large canvases: PASS");
 } }

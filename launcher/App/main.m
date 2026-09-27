@@ -408,6 +408,9 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
         [TKDiagnostic diagnosticWithTitle:@"Local shader compiler" detail:@"Compiles the shader fixtures staged in Documents/LocalShaderProbe." run:^(TKDiagnosticReport report) {
             dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{ report(TKLocalShaderProbeReport(),YES); });
         }],
+        [TKDiagnostic diagnosticWithTitle:@"Captured shaders" detail:@"Compiles every shader library a game left in Documents/ShaderRequests on this iPad." run:^(TKDiagnosticReport report) {
+            dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{ report(TKCapturedShaderProbeReport(),YES); });
+        }],
     ]]];
 #if TOLKARA_INTEGRATED_AUTH
     TKLocalAuthorization *authorization=self.localAuthorization;
@@ -711,6 +714,46 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     // A profile's caseAliases: folders the application names in another case
     // than its installer wrote them, which only macOS's file system ignores.
     for (NSString *line in [self.library linkCaseAliasesForApp:app]) fprintf(log,"[host] %s\n",line.UTF8String);
+    // A profile's command line for a compatibility runtime (data from the
+    // profile; nothing here changes the application). `${Documents}` in a
+    // variable's value stands for the absolute Documents folder.
+    NSString *documents=TKDocumentsPath(@"");
+    NSMutableDictionary<NSString *, NSString *> *environment=[app.environment mutableCopy];
+    for (NSString *argument in arguments) if ([argument hasPrefix:@"--guest-environment="]) {
+        // Development launches may set a variable over the profile's (NAME=value).
+        NSString *setting=[argument substringFromIndex:20];
+        NSUInteger equals=[setting rangeOfString:@"="].location;
+        if (equals!=NSNotFound && equals>0) environment[[setting substringToIndex:equals]]=[setting substringFromIndex:equals+1];
+    }
+    for (NSString *name in [environment.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
+        NSString *value=[environment[name] stringByReplacingOccurrencesOfString:@"${Documents}" withString:documents];
+        setenv(name.UTF8String,value.UTF8String,1);
+        fprintf(log,"[host] environment %s=%s\n",name.UTF8String,TKHomeDisplayPath(value,NSHomeDirectory()).UTF8String);
+    }
+    NSMutableArray<NSString *> *launchArguments=[app.arguments mutableCopy];
+    for (NSString *argument in arguments) if ([argument hasPrefix:@"--guest-arguments="]) {
+        // Development launches may replace the profile's arguments (tab-separated).
+        [launchArguments setArray:[[argument substringFromIndex:18] componentsSeparatedByString:@"\t"]];
+    }
+    const char *argv[64]; size_t argc=0;
+    for (NSString *argument in launchArguments) if (argc<64) { argv[argc++]=argument.UTF8String; fprintf(log,"[host] argument %s\n",argument.UTF8String); }
+    ng_set_arguments(argv,argc);
+    // A profile's runtime libraries (opened by path, not linked) are placed with it.
+    if (app.runtime) {
+        NSString *runtime=TKDocumentsPath(app.runtime);
+        NSMutableArray<NSString *> *paths=[NSMutableArray new];
+        const char *libraries[64]; size_t count=0;
+        for (NSString *library in app.libraries) if (count<64) {
+            [paths addObject:[runtime stringByAppendingPathComponent:library]];
+            libraries[count++]=paths.lastObject.fileSystemRepresentation;
+            fprintf(log,"[host] library %s\n",library.UTF8String);
+        }
+        ng_set_libraries(runtime.fileSystemRepresentation,libraries,count);
+        if (app.codePool) {
+            ng_set_code_pool((size_t)app.codePool<<20);
+            fprintf(log,"[host] code pool %lu MB\n",(unsigned long)app.codePool);
+        }
+    }
     // Local signing: the runtime validates the container against this
     // executable and refuses it after Developer service was selected.
     if (container) {
@@ -750,6 +793,14 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
         self.status.text=@"Testing the local shader compiler…";
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
             NSString *report=TKLocalShaderProbeReport();
+            dispatch_async(dispatch_get_main_queue(),^{self.status.text=report;});
+        });
+        return;
+    }
+    if([arguments containsObject:@"--captured-shader-probe"]) {
+        self.status.text=@"Compiling the captured shader libraries on this iPad…";
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
+            NSString *report=TKCapturedShaderProbeReport();
             dispatch_async(dispatch_get_main_queue(),^{self.status.text=report;});
         });
         return;

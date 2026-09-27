@@ -1,7 +1,8 @@
 #import "AKSupport.h"
 #import "ImageHints.h"
 #import <CoreGraphics/CoreGraphics.h>
-// Converts cursor alpha to a bounded vector silhouette for native pointer motion.
+// Converts cursor alpha to a vector silhouette for native pointer motion; what
+// shows of it is kept within 32 points.
 CGPathRef AKCreateCursorPath(CGImageRef image, CGSize size, CGPoint hotSpot) CF_RETURNS_RETAINED;
 @interface NSImageRep : AKStubObject
 @property CGSize size;
@@ -16,13 +17,18 @@ CGPathRef AKCreateCursorPath(CGImageRef image, CGSize size, CGPoint hotSpot) CF_
 @property(readonly) NSUInteger bitmapFormat;
 @property(readonly, getter=isPlanar) BOOL planar;
 @property(readonly) CGImageRef CGImage;
+- (instancetype)initWithCGImage:(CGImageRef)image;
 - (void)getBitmapDataPlanes:(unsigned char **)planes;
+// Shim-internal: the pixel layout as Core Graphics names it.
+@property(readonly) CGBitmapInfo ak_bitmapInfo;
 @end
+extern NSString *const NSImageNameApplicationIcon;
 @interface NSImage : AKStubObject
 @property CGSize size;
 @property(getter=isTemplate) BOOL template;
 @property(readonly) NSArray<NSImageRep *> *representations;
 - (instancetype)initWithSize:(CGSize)size;
+- (instancetype)initWithCGImage:(CGImageRef)image size:(CGSize)size;
 - (void)addRepresentation:(NSImageRep *)representation;
 - (CGImageRef)CGImageForProposedRect:(CGRect *)rect context:(id)context hints:(NSDictionary *)hints;
 @end

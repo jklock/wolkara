@@ -29,6 +29,43 @@ no patches, no settings for the application itself.
   in the same folder. Nothing outside the working directory is created or
   followed. The link stays in your copy of the files, visible in the Files app.
 
+An application that is itself run by a compatibility runtime (a Windows
+program under Wine, say) names that runtime instead of a macOS `.app`:
+
+```json
+{
+  "id": "example-windows",
+  "name": "Example (Windows)",
+  "workingDirectory": "Example/prefix/drive_c/Example",
+  "runtime": "Example/Wine",
+  "executable": "lib/wine/aarch64-unix/wine",
+  "arguments": ["Example.exe"],
+  "libraries": ["lib/wine/aarch64-unix/ntdll.so"],
+  "environment": { "WINEPREFIX": "${Documents}/Example/prefix" }
+}
+```
+
+- `runtime`: folder under Documents holding the runtime; `executable` is then
+  relative to it, and `workingDirectory` stays the application's own folder.
+- `arguments`: the runtime's command line after its executable, at most 64
+  strings. `environment`: variables set before it starts, at most 64;
+  `${Documents}` in a value stands for the absolute Documents folder.
+  Both are plain strings: no code, and nothing that changes the application.
+- `libraries`: the runtime's own libraries that it opens by path at run time
+  instead of linking them (Wine's Unix side), relative to `runtime`, at most
+  64. They are loaded with the executable as if it carried them, with what
+  they link, and the runtime's `dlopen` of one gets that copy; the whole
+  runtime folder then counts as the application's folder. Only with `runtime`.
+- `codePool`: megabytes (1 to 1024) of prepared executable memory after the
+  images, for a runtime that writes its own code (an emulator's JIT, the
+  native modules it loads). `${CodePool}` in an `environment` value then
+  stands for it as `0x<start>-0x<end>@0x<alias>`: code runs from start to end
+  and is written through the writable alias, since iPadOS runs only memory
+  prepared for it and never again a page that was made writable. Preparing
+  memory takes time at every launch (about a minute for 64 MB with Developer
+  service), so ask for what the runtime needs. Only with `runtime`; Local
+  signing cannot provide it.
+
 Every profile in `profiles/` is built into the app. When the files a profile
 describes are present in Documents, the launcher adds that app to its library
 under the profile's name. A profile outside this folder can be added with
