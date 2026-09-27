@@ -200,6 +200,10 @@ extern int NSApplicationMain(int argc, const char *argv[]);
 - (void)close;
 @end
 
+// Shim-internal: the modifier state after a modifier key goes down or up, and
+// reconciled with the modifiers UIKit reports (held keys are device bits).
+NSEventModifierFlags AKModifiersAfterKey(NSEventModifierFlags held, UIKeyboardHIDUsage usage, BOOL down);
+NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventModifierFlags reported);
 // Shim-internal
 @interface NSWindow (AKInternal)
 - (void)ak_hostBoundsChanged:(CGRect)bounds;

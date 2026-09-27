@@ -210,6 +210,35 @@ static NSEventModifierFlags AKMods(UIKeyModifierFlags f) {
     return m;
 }
 
+// A modifier key's flag and its device-dependent bit, left or right, as AppKit
+// reports them (Wine's Mac driver tells the keys apart by these bits).
+static const struct { UIKeyboardHIDUsage usage; NSEventModifierFlags flag, bit; } AKModifierKeys[] = {
+    {0xE0, NSEventModifierFlagControl, 0x0001}, {0xE4, NSEventModifierFlagControl, 0x2000},
+    {0xE1, NSEventModifierFlagShift, 0x0002}, {0xE5, NSEventModifierFlagShift, 0x0004},
+    {0xE2, NSEventModifierFlagOption, 0x0020}, {0xE6, NSEventModifierFlagOption, 0x0040},
+    {0xE3, NSEventModifierFlagCommand, 0x0008}, {0xE7, NSEventModifierFlagCommand, 0x0010},
+};
+static NSEventModifierFlags AKHeldFlags(NSEventModifierFlags held) {
+    NSEventModifierFlags flags = held & NSEventModifierFlagCapsLock;
+    for (size_t i = 0; i < sizeof AKModifierKeys / sizeof *AKModifierKeys; i++)
+        if (held & AKModifierKeys[i].bit) flags |= AKModifierKeys[i].flag | AKModifierKeys[i].bit;
+    return flags;
+}
+NSEventModifierFlags AKModifiersAfterKey(NSEventModifierFlags held, UIKeyboardHIDUsage usage, BOOL down) {
+    for (size_t i = 0; i < sizeof AKModifierKeys / sizeof *AKModifierKeys; i++)
+        if (AKModifierKeys[i].usage == usage) held = down ? held | AKModifierKeys[i].bit : held & ~AKModifierKeys[i].bit;
+    return AKHeldFlags(held);
+}
+NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventModifierFlags reported) {
+    held = (held & ~NSEventModifierFlagCapsLock) | (reported & NSEventModifierFlagCapsLock);
+    for (size_t i = 0; i < sizeof AKModifierKeys / sizeof *AKModifierKeys; i += 2) {
+        NSEventModifierFlags keys = AKModifierKeys[i].bit | AKModifierKeys[i + 1].bit;
+        if (!(reported & AKModifierKeys[i].flag)) held &= ~keys;
+        else if (!(held & keys)) held |= AKModifierKeys[i].bit;
+    }
+    return AKHeldFlags(held);
+}
+
 @interface AKHostView : UIView <UIPointerInteractionDelegate>
 @property (weak) NSWindow *nsWindow;
 @end
@@ -341,7 +370,7 @@ static NSEventModifierFlags AKMods(UIKeyModifierFlags f) {
     // location into the desktop bridge as well as the hover recognizer, whose
     // recognition can be deferred by the client's nested event loop.
     _pointerUpdates++;
-    _mods=AKMods(request.modifiers);
+    [self reconcileModifiers:AKMods(request.modifiers)];
     [self moveHoverTo:request.location inside:YES];
     return defaultRegion;
 }
@@ -368,6 +397,7 @@ static NSEventModifierFlags AKMods(UIKeyModifierFlags f) {
 static BOOL AKIsRight(UIEvent *ev) { return (ev.buttonMask & UIEventButtonMaskSecondary) != 0; }
 - (void)touchesBegan:(NSSet<UITouch *> *)t withEvent:(UIEvent *)ev {
     BOOL r = AKIsRight(ev);if(r?_pressedRight:_pressedLeft)return; _last = [t.anyObject locationInView:self];
+    [self reconcileModifiers:AKMods(ev.modifierFlags)];
     [self postMouse:r ? NSEventTypeRightMouseDown : NSEventTypeLeftMouseDown at:_last button:r];
 }
 - (void)touchesMoved:(NSSet<UITouch *> *)t withEvent:(UIEvent *)ev {
@@ -382,13 +412,30 @@ static BOOL AKIsRight(UIEvent *ev) { return (ev.buttonMask & UIEventButtonMaskSe
 }
 - (void)touchesCancelled:(NSSet<UITouch *> *)t withEvent:(UIEvent *)ev { [self touchesEnded:t withEvent:ev]; }
 
+// UIKit's modifiers at a key or pointer event: a modifier it no longer reports
+// is released, so the guest hears of that even when the key's own release was
+// reported with the modifier still set.
+- (void)reconcileModifiers:(NSEventModifierFlags)reported {
+    NSEventModifierFlags now = AKModifiersReconciled(_mods, reported);
+    if (now == _mods) return;
+    BOOL released = (_mods & ~now & ~NSEventModifierFlagCapsLock) != 0;
+    _mods = now;
+    if (!released) return;
+    NSEvent *e = [NSEvent new];
+    e.window = self.nsWindow; e.type = NSEventTypeFlagsChanged; e.modifierFlags = now;
+    e.timestamp = NSProcessInfo.processInfo.systemUptime;
+    [NSApp postEvent:e atStart:NO];
+}
 - (void)postKeys:(NSSet<UIPress *> *)presses down:(BOOL)down {
     for (UIPress *p in presses) {
         UIKey *k = p.key; if (!k) continue;
         NSEvent *e = [NSEvent new];
         e.window = self.nsWindow; e.keyCode = AKKeyCode(k.keyCode); e.timestamp = p.timestamp;
-        e.modifierFlags = _mods = AKMods(k.modifierFlags);
         BOOL isMod = k.keyCode >= 0xE0 && k.keyCode <= 0xE7;
+        // A modifier key's own press and release set and clear it; other keys carry UIKit's state.
+        if (isMod) _mods = AKModifiersAfterKey(_mods, k.keyCode, down);
+        else [self reconcileModifiers:AKMods(k.modifierFlags)];
+        e.modifierFlags = _mods;
         e.type = isMod || k.keyCode == 0x39 ? NSEventTypeFlagsChanged : down ? NSEventTypeKeyDown : NSEventTypeKeyUp;
         e.characters = k.characters; e.charactersIgnoringModifiers = k.charactersIgnoringModifiers;
         static unsigned loggedKeys; if(loggedKeys<8) { loggedKeys++; AKLog(@"keyboard event type=%lu",(unsigned long)e.type); }
