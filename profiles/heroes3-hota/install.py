@@ -89,13 +89,18 @@ def hd_settings(game):
 
 
 def device_copy(source,stage,wanted):
-    """The files of source that wanted() accepts, linked, not copied, where possible."""
+    """The files and folders of source that wanted() accepts, files linked, not copied,
+    where possible. Empty folders are kept: the game saves into its own games folder,
+    which it does not create."""
     if stage.exists(): shutil.rmtree(stage)
     stage.mkdir(parents=True)
     for path in sorted(source.rglob('*')):
         relative=path.relative_to(source)
-        if path.is_symlink() or path.is_dir() or not wanted(relative): continue
+        if path.is_symlink() or not wanted(relative): continue
         target=stage/relative
+        if path.is_dir():
+            target.mkdir(parents=True,exist_ok=True)
+            continue
         target.parent.mkdir(parents=True,exist_ok=True)
         try: os.link(path,target)
         except OSError: shutil.copy2(path,target)
