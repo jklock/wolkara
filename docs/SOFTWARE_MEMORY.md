@@ -243,3 +243,16 @@ before entry using Darwin's dynamic unwind lookup SPI. No exception result is
 altered, and no game instruction is inspected or changed for this fix. Device
 validation is pending; the exception's presence alone does not prove that the
 game has a handler for this particular call.
+
+
+On 2026-09-27, the optimized iPad build after merging main (`2c7a63e`)
+passed the previous rich-presence abort. At about 597M handled accesses,
+`SetRichPresence` logged its service error for a main-menu presence state,
+returned through the wrapper, and the game continued to open
+`r6/config/bumpersSettings.json`. No service result was suppressed or changed.
+This validates the combined unwind fix on the device; it does not isolate the
+two omissions from each other. Original fixtures cover them separately and
+also pass derived-class exceptions caught through a standard-library base
+across placed/host image boundaries, including cleanup and DWARF frames.
+The run presented at least 60 Metal frames, with early samples near 5 FPS and
+long loading gaps. Visual menu content and interactive gameplay remain unverified.

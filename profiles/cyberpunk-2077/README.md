@@ -9,9 +9,10 @@ initializers, thread-local variables and the four libraries it ships in
 matches `dyld_info`. The opt-in software-memory experiment completes all
 6,540 initializers, main, GOG initialization, all 32 archives, scripts and
 shader caches on the iPad, creates the game window, and presents Metal frames.
-Menu content and gameplay are not validated; the latest run passes the native
-allocation failure and later aborts on a GOG rich-presence exception. Exception
-unwinding fixes pass original fixtures and await device validation. A separate test configuration raises the engine
+Menu content and gameplay are not validated. The latest iPad run passes the native
+allocation failure and the former GOG rich-presence abort: with exception
+unwinding restored, that call reports its service error and returns. The game
+logs a main-menu presence state and continues loading. A separate test configuration raises the engine
 watchdog timeout to 3600 seconds on the iPad because memory emulation slows startup.
 See [the investigation](../../docs/CYBERPUNK_VM.md) and
 [software-memory experiment](../../docs/SOFTWARE_MEMORY.md) for evidence and limits.
