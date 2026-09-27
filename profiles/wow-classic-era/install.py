@@ -50,6 +50,10 @@ def main():
     shutil.copy2(source/executable,stage/executable)
     if sha256(stage/executable)!=before or sha256(source/executable)!=before:
         raise RuntimeError('original executable changed while staging')
+    # Files beside the executable, unchanged: the Classic beta keeps its ICU
+    # data there (icudt78l.dat) and reports an error at every start without it.
+    for item in sorted((source/executable).parent.iterdir()):
+        if item.is_file() and item.name!=executable.name: shutil.copy2(item,stage/executable.parent/item.name)
     for name in ['Logs','WTF','Cache']: (stage/'_classic_era_'/name).mkdir(exist_ok=True)
     configuration=source/'_classic_era_/WTF/Config.wtf'
     if configuration.is_file():
