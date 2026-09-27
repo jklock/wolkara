@@ -24,6 +24,9 @@ rm -f "$OUT/Guest/OriginalExecutable.bin" "$OUT/Guest/manifest.json"
 # absent.json: libraries a generic build presents as unavailable (translation/<Leaf>/absent).
 rm -f "$OUT/Guest/libraries.json" "$OUT/Guest/absent.json"
 rm -rf "$OUT/Guest/Nibs"
+# Adapters left by a build for other executables or other experimental adapters:
+# every one would be signed into the app, and a generic build opens ak<Leaf>.dylib by name.
+rm -f "$OUT/Frameworks"/ak*.dylib "$OUT/Frameworks/libAKSupport.dylib"
 MODULE="$ROOT/build/guest-module"
 rm -rf "$MODULE/Nibs"
 python3 "$ROOT/tools/package_guest.py" "$EXE" "$MODULE"
