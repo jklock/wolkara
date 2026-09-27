@@ -1,10 +1,12 @@
 #include "SparseMemoryProbe.h"
+#include <TargetConditionals.h>
 #include "GuestMemoryInstruction.h"
 #include <errno.h>
 #include <inttypes.h>
 #include <mach/mach.h>
 #include <signal.h>
 #include <stdatomic.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/sysctl.h>
@@ -69,6 +71,44 @@ static void native_pool_placement(FILE *log) {
                 first==MAP_FAILED?"failed":"ok",second==MAP_FAILED?"failed":"ok");
         if(second!=MAP_FAILED)munmap(second,order?bank_size:pool_size);
         if(first!=MAP_FAILED)munmap(first,order?pool_size:bank_size);
+    }
+    // Small allocator blocks may use a different VM range from large mmap
+    // reservations. Test placement before changing the software backing store.
+    // Allocate outside signal handlers and touch only our own first/last bytes.
+    const size_t block_size=16*1024;
+#if TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR
+    const size_t block_count=4096*mib/block_size;
+#else
+    // Host regression checks exercise this path without committing GiBs.
+    const size_t block_count=32*mib/block_size;
+#endif
+    void **blocks=calloc(block_count,sizeof *blocks);
+    if(blocks) {
+        for(unsigned order=0;order<2;order++) {
+            void *pool=MAP_FAILED;
+            if(order)pool=mmap(NULL,pool_size,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANON,-1,0);
+            size_t allocated=0, outside=0;
+            for(;allocated<block_count;allocated++) {
+                unsigned char *block=malloc(block_size);
+                if(!block)break;
+                blocks[allocated]=block;
+                block[0]=0x35;block[block_size-1]=0x79;
+                if((uintptr_t)block<UINT64_C(0x7000000000))outside++;
+            }
+            if(!order)pool=mmap(NULL,pool_size,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANON,-1,0);
+            bool intact=true;
+            for(size_t i=0;i<allocated;i++) {
+                unsigned char *block=blocks[i];
+                if(block[0]!=0x35 || block[block_size-1]!=0x79)intact=false;
+                free(block);blocks[i]=NULL;
+            }
+            fprintf(log,"Small-block placement order=%s bank=%zu MiB below-large-window=%zu MiB native64=%s contents=%s\n",
+                    order?"pool-first":"bank-first",allocated*block_size/mib,outside*block_size/mib,
+                    pool==MAP_FAILED?"failed":"ok",intact?"ok":"FAILED");
+            if(pool!=MAP_FAILED)munmap(pool,pool_size);
+            fflush(log);
+        }
+        free(blocks);
     }
     if(arena!=MAP_FAILED)munmap(arena,233*mib);
     fflush(log);

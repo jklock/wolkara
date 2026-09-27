@@ -391,7 +391,7 @@ static BOOL AKIsRight(UIEvent *ev) { return (ev.buttonMask & UIEventButtonMaskSe
         BOOL isMod = k.keyCode >= 0xE0 && k.keyCode <= 0xE7;
         e.type = isMod || k.keyCode == 0x39 ? NSEventTypeFlagsChanged : down ? NSEventTypeKeyDown : NSEventTypeKeyUp;
         e.characters = k.characters; e.charactersIgnoringModifiers = k.charactersIgnoringModifiers;
-        static unsigned loggedKeys; if(loggedKeys<8) { loggedKeys++; AKLog(@"keyboard event type=%lu",(unsigned long)e.type); }
+        static unsigned loggedKeys; if(loggedKeys<8) { loggedKeys++; AKLog(@"keyboard event type=%lu keyCode=%u",(unsigned long)e.type,e.keyCode); }
         [NSApp postEvent:e atStart:NO];
     }
 }
@@ -736,9 +736,10 @@ static void logLayer(CALayer *layer,unsigned depth) {
             if (mask & (1ULL << e.type)) {
                 if (dq) {
                     [_queue removeObjectAtIndex:i]; _currentEvent=e;
-                    if(e.type==NSEventTypeKeyUp) {
+                    if(e.type==NSEventTypeKeyDown || e.type==NSEventTypeKeyUp) {
                         double age=NSProcessInfo.processInfo.systemUptime-e.timestamp;
-                        if(age>.05) AKLog(@"key release queue age_ms=%.1f pending=%lu",age*1000,(unsigned long)_queue.count);
+                        static unsigned loggedDelivery;
+                        if(loggedDelivery<16) { loggedDelivery++; AKLog(@"keyboard dequeued type=%lu keyCode=%u age_ms=%.1f pending=%lu",(unsigned long)e.type,e.keyCode,age*1000,(unsigned long)_queue.count); }
                     }
                 }
                 return e;

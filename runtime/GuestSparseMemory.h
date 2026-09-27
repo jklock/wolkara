@@ -25,6 +25,10 @@ typedef enum {
 
 GMResult gm_sparse_init(GMSparseMemory *memory, uint64_t base, uint64_t size,
                         size_t backing_bytes);
+// Preallocate page-sized allocator blocks instead of one large mmap. Both
+// backends allocate everything before signal handling and zero pages on use.
+GMResult gm_sparse_init_blocks(GMSparseMemory *memory, uint64_t base, uint64_t size,
+                               size_t backing_bytes);
 void gm_sparse_destroy(GMSparseMemory *memory);
 GMResult gm_sparse_find_free(GMSparseMemory *memory, uint64_t size, uint64_t *address);
 GMResult gm_sparse_map(GMSparseMemory *memory, uint64_t address, uint64_t size,

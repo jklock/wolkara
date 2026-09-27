@@ -132,11 +132,13 @@ static void sequence_failures(void) {
     assert(gm_sparse_read(&memory,base,&value,8)==GM_OK && value==original);
     gm_sparse_destroy(&memory);
 }
-int main(void) {
+int main(int argc, char **argv) {
+    assert(argc==1 || (argc==2 && !strcmp(argv[1],"--small-blocks")));
+    bool (*start)(size_t,size_t,int)=argc==2?gsv_start_blocks:gsv_start;
     sequence_failures();
     // The registered view supplies current words, never a stale instruction
     // cache. Bounds and invalidation fall back to a checked kernel read.
-    assert(gsv_start(32*GM_PAGE_SIZE,1,-1));
+    assert(start(32*GM_PAGE_SIZE,1,-1));
     uint32_t code_words[2]={0xd503201f,0xd65f03c0},fetched=0;
     const uintptr_t synthetic_pc=0x1000;
     assert(!gsv_code_alias((void *)synthetic_pc,code_words,3));
@@ -152,16 +154,24 @@ int main(void) {
     gsv_forget_code_alias((void *)(synthetic_pc-4),8);
     assert(!gsv_fetch_instruction(synthetic_pc,&fetched));
     gsv_stop();
-    assert(gsv_start(32*GM_PAGE_SIZE,0,-1));
+    assert(start(32*GM_PAGE_SIZE,0,-1));
     gsv_prefer_native_pool(64u<<20);
-    void *preferred=gsv_map(NULL,64u<<20,3,MAP_ANON|MAP_PRIVATE,-1,0);
+    // Replacing a pending reservation releases it. Read-only protection is
+    // applied before handing the exact request to the caller.
+    gsv_prefer_native_pool(128u<<20);
+    gsv_prefer_native_pool(64u<<20);
+    void *preferred=gsv_map(NULL,64u<<20,PROT_READ,MAP_ANON|MAP_PRIVATE,-1,0);
+    assert(preferred!=MAP_FAILED && *(const unsigned char *)preferred==0);
+    assert(!gsv_protect(preferred,64u<<20,PROT_READ|PROT_WRITE));
+    ((unsigned char *)preferred)[(64u<<20)-1]=0x71;
+    assert(((unsigned char *)preferred)[(64u<<20)-1]==0x71);
     void *other=gsv_map(NULL,128u<<20,3,MAP_ANON|MAP_PRIVATE,-1,0);
     assert(preferred!=MAP_FAILED && !gsv_address(preferred));
     assert(other!=MAP_FAILED && gsv_address(other));
     assert(!gsv_unmap(preferred,64u<<20) && !gsv_unmap(other,128u<<20));
     gsv_stop();
     // Preserve host address space without shortening any guest reservation.
-    assert(gsv_start(32*GM_PAGE_SIZE,0,-1));
+    assert(start(32*GM_PAGE_SIZE,0,-1));
     gsv_force_pool(64u<<20);
     void *forced=gsv_map(NULL,64u<<20,3,MAP_ANON|MAP_PRIVATE,-1,0);
     void *native_mapping=gsv_map(NULL,128u<<20,3,MAP_ANON|MAP_PRIVATE,-1,0);
@@ -177,7 +187,7 @@ int main(void) {
     struct sigaction prior, action = {0};
     sigemptyset(&action.sa_mask); action.sa_handler = original_handler;
     assert(!sigaction(SIGSEGV, &action, &prior));
-    assert(gsv_start(32 * GM_PAGE_SIZE, 1, STDERR_FILENO));
+    assert(start(32 * GM_PAGE_SIZE, 1, STDERR_FILENO));
     assert(gsv_enabled());
     const size_t gib = (size_t)1 << 30;
     void *ranges[3]; size_t lengths[] = {16 * gib, 64 * gib, 32 * gib};
@@ -193,12 +203,14 @@ int main(void) {
     }
     for (unsigned i = 0; i < 6; ++i) assert(!pthread_join(threads[i], NULL));
     assert(gsv_fault_count() == 6000 && gsv_stats().resident_pages == 6);
+    assert(gsv_fetch_stats().alias_fetches==0 && gsv_fetch_stats().checked_fetches>=6000);
     assert(gsv_code_alias((void *)gm_sparse_probe_program,(void *)gm_sparse_probe_program,
                          (uintptr_t)gm_sparse_probe_program_end-(uintptr_t)gm_sparse_probe_program));
     uint64_t native[16] = {0}, expected[16] = {0}, actual[16] = {0};
     gm_sparse_address_probe(native, 98765, expected);
     assert(gsv_fill(ranges[0], 0, sizeof native) == GM_OK);
     gm_sparse_address_probe(ranges[0], 98765, actual);
+    assert(gsv_fetch_stats().alias_fetches>0);
     assert(!memcmp(actual, expected, sizeof actual));
     assert(gsv_copy(actual, ranges[0], sizeof actual) == GM_OK && !memcmp(actual, native, sizeof actual));
     const uint64_t candidates[] = {0, 1, UINT64_MAX, UINT64_C(0x8000000000000000)};

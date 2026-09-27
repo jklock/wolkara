@@ -17,6 +17,7 @@ build/emulation/test_memory_instruction
 "${CC[@]}" -fno-sanitize=address,undefined runtime/GuestMemory.c runtime/GuestCPU.c runtime/GuestSparseMemory.c runtime/GuestMemoryInstruction.c runtime/GuestExclusive.c runtime/GuestSoftwareVM.c runtime/SparseMemoryProbeProgram.S tests/test_software_vm.c -o build/emulation/test_software_vm_small_stack
 build/emulation/test_software_vm_small_stack
 build/emulation/test_software_vm
+build/emulation/test_software_vm --small-blocks
 "${CC[@]}" runtime/GuestMemory.c runtime/GuestCPU.c runtime/CPUProbe.c runtime/CPUProbeProgram.S tests/test_cpu.c -o build/emulation/test_cpu
 build/emulation/test_cpu
 "${CC[@]}" -Iauthorization authorization/LocalRoute.c tests/test_local_route.c -o build/emulation/test_local_route

@@ -27,6 +27,34 @@
 }
 @end
 
+// Original keyboard fixture exercises UIKit-to-AppKit translation without
+// synthesizing input for an imported application.
+@interface FixtureKey : NSObject
+@property UIKeyboardHIDUsage keyCode;
+@property UIKeyModifierFlags modifierFlags;
+@property(copy) NSString *characters, *charactersIgnoringModifiers;
+@end
+@implementation FixtureKey
+@end
+@interface FixturePress : NSObject
+@property FixtureKey *key;
+@property NSTimeInterval timestamp;
+@end
+@implementation FixturePress
+@end
+@interface NSObject (FixtureHostInput)
+- (void)postKeys:(NSSet *)presses down:(BOOL)down;
+@end
+@interface FixtureKeyResponder : NSResponder
+@property unsigned downs, ups;
+@property unsigned short lastCode;
+@end
+@implementation FixtureKeyResponder
+- (BOOL)acceptsFirstResponder { return YES; }
+- (void)keyDown:(NSEvent *)event { self.downs++;self.lastCode=event.keyCode; }
+- (void)keyUp:(NSEvent *)event { self.ups++;self.lastCode=event.keyCode; }
+@end
+
 static void run_main_queue(void) { CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.05, false); }
 
 int main(void) { @autoreleasepool {
@@ -92,6 +120,26 @@ int main(void) { @autoreleasepool {
     NSEvent *scroll = [NSEvent new]; scroll.type = NSEventTypeScrollWheel; scroll.deltaY = 2.6;
     AKQuartzEvent *wheel = (__bridge AKQuartzEvent *)scroll.CGEvent;
     assert(wheel.type == 22 && [wheel integerValueField:11] == 3 && [wheel integerValueField:88] == 0);
+
+    FixtureKey *space=[FixtureKey new];space.keyCode=UIKeyboardHIDUsageKeyboardSpacebar;
+    space.characters=space.charactersIgnoringModifiers=@" ";
+    FixturePress *press=[FixturePress new];press.key=space;
+    press.timestamp=NSProcessInfo.processInfo.systemUptime;
+    id host=[NSClassFromString(@"AKHostView") new];
+    [host setValue:window forKey:@"nsWindow"];
+    FixtureKeyResponder *responder=[FixtureKeyResponder new];
+    assert([window makeFirstResponder:responder]);
+    NSApplication *app=[NSApplication sharedApplication];
+    [host postKeys:[NSSet setWithObject:press] down:YES];
+    [host postKeys:[NSSet setWithObject:press] down:NO];
+    for(unsigned i=0;i<2;i++) {
+        NSEvent *key=[app nextEventMatchingMask:(1ULL<<NSEventTypeKeyDown)|(1ULL<<NSEventTypeKeyUp)
+                                    untilDate:NSDate.distantPast inMode:NSDefaultRunLoopMode dequeue:YES];
+        assert(key && key.type==(i?NSEventTypeKeyUp:NSEventTypeKeyDown) && key.keyCode==49);
+        assert([key.characters isEqualToString:@" "] && key.timestamp==press.timestamp && key.window==window);
+        [app sendEvent:key];
+    }
+    assert(responder.downs==1 && responder.ups==1 && responder.lastCode==49);
 
     // Windows are numbered once each; with none on screen, none is found.
     assert(window.windowNumber > 0 && other.windowNumber != window.windowNumber && panel.windowNumber != other.windowNumber);

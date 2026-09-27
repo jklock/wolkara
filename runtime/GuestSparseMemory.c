@@ -12,6 +12,7 @@ typedef struct {
     atomic_bool lock;
     uint64_t base, end, generation, mapping_generation;
     unsigned char *backing;
+    unsigned char **blocks;
     size_t capacity, resident, next_backing, free_count, slot_count;
     size_t *free_backing;
     Page *pages;
@@ -80,8 +81,17 @@ static bool append(Region *regions, size_t *count, Region r) {
     return true;
 }
 
-GMResult gm_sparse_init(GMSparseMemory *memory, uint64_t base, uint64_t size,
-                        size_t backing_bytes) {
+static unsigned char *backing_page(Space *s, size_t index) {
+    return s->blocks ? s->blocks[index] : s->backing + index * GM_PAGE_SIZE;
+}
+static void release_backing(Space *s) {
+    if(s->blocks) {
+        for(size_t i=0;i<s->capacity;i++)free(s->blocks[i]);
+        free(s->blocks);
+    } else if(s->backing && s->backing!=MAP_FAILED) munmap(s->backing,s->capacity*GM_PAGE_SIZE);
+}
+static GMResult initialize(GMSparseMemory *memory, uint64_t base, uint64_t size,
+                           size_t backing_bytes, bool small_blocks) {
     if (!memory || memory->implementation || !base || !aligned(base, size) ||
         !backing_bytes || backing_bytes % GM_PAGE_SIZE) return GM_INVALID;
     size_t capacity = backing_bytes / GM_PAGE_SIZE, slots = 16;
@@ -90,27 +100,45 @@ GMResult gm_sparse_init(GMSparseMemory *memory, uint64_t base, uint64_t size,
         if (slots > SIZE_MAX / 2) return GM_NOMEM;
         slots *= 2;
     }
-    if (slots > SIZE_MAX / sizeof(Page) || capacity > SIZE_MAX / sizeof(size_t)) return GM_NOMEM;
+    if (slots > SIZE_MAX / sizeof(Page) || capacity > SIZE_MAX / sizeof(size_t) ||
+        capacity > SIZE_MAX / sizeof(unsigned char *)) return GM_NOMEM;
     Space *s = calloc(1, sizeof *s);
     if (!s) return GM_NOMEM;
     atomic_init(&s->lock,false);
     s->base = base; s->end = base + size;
     s->capacity = capacity; s->slot_count = slots;
-    s->backing = mmap(NULL, backing_bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    bool backing_ok=true;
+    if(small_blocks) {
+        s->blocks=calloc(capacity,sizeof *s->blocks);
+        backing_ok=s->blocks!=NULL;
+        for(size_t i=0;backing_ok && i<capacity;i++) {
+            s->blocks[i]=malloc(GM_PAGE_SIZE);
+            backing_ok=s->blocks[i]!=NULL;
+        }
+    } else {
+        s->backing=mmap(NULL,backing_bytes,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANON,-1,0);
+        backing_ok=s->backing!=MAP_FAILED;
+    }
     s->pages = calloc(slots, sizeof *s->pages);
     s->free_backing = calloc(capacity, sizeof *s->free_backing);
-    if (s->backing == MAP_FAILED || !s->pages || !s->free_backing) {
-        if (s->backing != MAP_FAILED) munmap(s->backing, backing_bytes);
+    if (!backing_ok || !s->pages || !s->free_backing) {
+        release_backing(s);
         free(s->pages); free(s->free_backing); free(s);
         return GM_NOMEM;
     }
     memory->implementation = s;
     return GM_OK;
 }
+GMResult gm_sparse_init(GMSparseMemory *memory, uint64_t base, uint64_t size, size_t backing_bytes) {
+    return initialize(memory,base,size,backing_bytes,false);
+}
+GMResult gm_sparse_init_blocks(GMSparseMemory *memory, uint64_t base, uint64_t size, size_t backing_bytes) {
+    return initialize(memory,base,size,backing_bytes,true);
+}
 void gm_sparse_destroy(GMSparseMemory *memory) {
     if (!memory || !memory->implementation) return;
     Space *s = memory->implementation;
-    munmap(s->backing, s->capacity * GM_PAGE_SIZE);
+    release_backing(s);
     free(s->pages); free(s->free_backing); free(s);
     memory->implementation = NULL;
 }
@@ -234,15 +262,15 @@ static GMResult access_locked(Space *s, uint64_t a, void *buffer, size_t n, bool
             slot = page_slot(s, page, true);
             // The table is at most half full; preflight guaranteed capacity.
             size_t backing = s->free_count ? s->free_backing[--s->free_count] : s->next_backing++;
-            memset(s->backing + backing * GM_PAGE_SIZE, 0, GM_PAGE_SIZE);
+            memset(backing_page(s,backing), 0, GM_PAGE_SIZE);
             s->pages[slot] = (Page){.address=page,.backing=backing};
             ++s->resident;
         }
         if (write) {
-            memcpy(s->backing + s->pages[slot].backing * GM_PAGE_SIZE + offset, bytes, chunk);
+            memcpy(backing_page(s,s->pages[slot].backing) + offset, bytes, chunk);
             s->pages[slot].generation=s->generation;
         }
-        else if (slot != SIZE_MAX) memcpy(bytes, s->backing + s->pages[slot].backing * GM_PAGE_SIZE + offset, chunk);
+        else if (slot != SIZE_MAX) memcpy(bytes, backing_page(s,s->pages[slot].backing) + offset, chunk);
         else memset(bytes, 0, chunk);
         a += chunk; bytes += chunk; n -= chunk;
     }
@@ -265,7 +293,7 @@ GMResult gm_sparse_prepare(GMSparseMemory *memory, uint64_t a, size_t n, unsigne
         if (page_slot(s, page, false) != SIZE_MAX) continue;
         size_t slot = page_slot(s, page, true);
         size_t backing = s->free_count ? s->free_backing[--s->free_count] : s->next_backing++;
-        memset(s->backing + backing * GM_PAGE_SIZE, 0, GM_PAGE_SIZE);
+        memset(backing_page(s,backing), 0, GM_PAGE_SIZE);
         s->pages[slot] = (Page){.address=page,.backing=backing};
         ++s->resident;
     }
