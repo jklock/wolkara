@@ -8,6 +8,20 @@
 @interface AKStubObject : NSObject
 @end
 void AKLog(NSString *fmt, ...) NS_FORMAT_FUNCTION(1, 2);
+#include <CoreGraphics/CGGeometry.h>
+// A Quartz event: what the AppKit adapter's -[NSEvent CGEvent] hands out and
+// the Core Graphics adapter's CGEvent functions read and change. The location
+// is in global display coordinates (top-left origin, points), the timestamp
+// in nanoseconds; fields are kept by their CGEventField number.
+@interface AKQuartzEvent : NSObject
+@property uint32_t type;
+@property CGPoint location;
+@property uint64_t timestamp, flags;
+- (int64_t)integerValueField:(uint32_t)field;
+- (double)doubleValueField:(uint32_t)field;
+- (void)setIntegerValueField:(uint32_t)field value:(int64_t)value;
+- (void)setDoubleValueField:(uint32_t)field value:(double)value;
+@end
 #endif
 // Called by generated C stubs on first use.
 void AKStubHit(const char *symbol, void *caller);

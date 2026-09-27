@@ -557,6 +557,11 @@ xcrun clang -fobjc-arc -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined
 build/emulation/test_drawing
 
 xcrun clang -fobjc-arc -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined \
+    -Itranslation/AKSupport -framework Foundation translation/AKSupport/AKSupport.m translation/CoreGraphics/Events.m \
+    tests/test_quartz_events.m -o build/emulation/test_quartz_events
+build/emulation/test_quartz_events
+
+xcrun clang -fobjc-arc -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined \
     -Itranslation/AKSupport -framework Foundation translation/AppKit/TextInput.m tests/test_text_input.m \
     -o build/emulation/test_text_input
 build/emulation/test_text_input
