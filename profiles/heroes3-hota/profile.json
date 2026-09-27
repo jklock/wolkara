@@ -17,7 +17,8 @@
     "WINEPREFIX": "${Documents}/Heroes 3 HotA/prefix",
     "WINESINGLEPROCESS": "1",
     "WINEJITPOOL": "${CodePool}",
+    "FEX_MAXCODEBUFFERSIZE": "24",
     "WINEDEBUG": "err+all,fixme-all"
   },
-  "notes": "A Windows (x86) game run by an arm64 macOS Wine with FEX inside it. Not yet started on a device: the runtime work is listed in docs/WINDOWS.md. Build the runtime with tools/build_windows_runtime.sh, then profiles/heroes3-hota/install.py copies your own GOG installation. See profiles/heroes3-hota/README.md."
+  "notes": "A Windows (x86) game run by an arm64 macOS Wine with FEX inside it, in one process with a 96 MB code pool; FEX's code buffers are capped at 24 MB so that the pool holds them (docs/WINDOWS.md). Build the runtime with tools/build_windows_runtime.sh, then profiles/heroes3-hota/install.py copies your own GOG installation. See profiles/heroes3-hota/README.md."
 }

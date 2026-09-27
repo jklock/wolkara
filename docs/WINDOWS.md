@@ -503,6 +503,14 @@ events and window numbers, sound an AudioUnit adapter and the session's
 route as CoreAudio's output device, saves the game's empty `games` folder
 on the iPad, and the keyboard has Option as Alt and Command ignored.
 
+FEX grows its code buffer by doubling up to 128 MB, and each new buffer has
+to fit in the code pool beside the one being replaced (and any a thread that
+has not run since still holds). A game with eight players hung on the iPad
+when its AI turns filled a 64 MB buffer and the next one did not fit in the
+96 MB pool; the FEX branch caps the buffer (`FEX_MAXCODEBUFFERSIZE`, in MB),
+and the profile sets 24, so that three buffers and the native modules fit.
+A full buffer at the cap is replaced by a new one of the same size.
+
 Still open: a double click is not recognised on the iPad (it is on the Mac),
 modifier tracking after Alt and a click awaits a test on the device, the
 light grey margins around the game when the HD mod letterboxes it, GnuTLS
