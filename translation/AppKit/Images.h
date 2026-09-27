@@ -1,6 +1,7 @@
 #import "AKSupport.h"
 #import <CoreGraphics/CoreGraphics.h>
-// Converts cursor alpha to a bounded vector silhouette for native pointer motion.
+// Converts cursor alpha to a vector silhouette for native pointer motion; what
+// shows of it is kept within 32 points.
 CGPathRef AKCreateCursorPath(CGImageRef image, CGSize size, CGPoint hotSpot) CF_RETURNS_RETAINED;
 @interface NSImageRep : AKStubObject
 @property CGSize size;

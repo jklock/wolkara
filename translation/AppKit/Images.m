@@ -4,25 +4,35 @@
 CGPathRef AKCreateCursorPath(CGImageRef image, CGSize size, CGPoint hotSpot) {
     if(!image || !isfinite(size.width) || !isfinite(size.height) || size.width<=0 || size.height<=0 || !isfinite(hotSpot.x) || !isfinite(hotSpot.y))return NULL;
     // Keep conversion bounded even for malformed or oversized guest images.
-    size_t width=MIN(CGImageGetWidth(image),64),height=MIN(CGImageGetHeight(image),64);
+    enum { SAMPLES=128 };
+    size_t width=MIN(CGImageGetWidth(image),SAMPLES),height=MIN(CGImageGetHeight(image),SAMPLES);
     if(!width || !height)return NULL;
-    uint8_t alpha[64*64]={0};
+    uint8_t alpha[SAMPLES*SAMPLES]={0};
     CGContextRef context=CGBitmapContextCreate(alpha,width,height,8,width,NULL,(CGBitmapInfo)kCGImageAlphaOnly);
     if(!context)return NULL;
     CGContextDrawImage(context,CGRectMake(0,0,width,height),image);
     CGContextRelease(context);
-    CGFloat scale=MIN(1.0,32.0/MAX(size.width,size.height));
+    // What shows of the cursor, which may be a corner of a larger canvas (the
+    // HD mod of Heroes III draws its arrow into 128x128 images), is what the
+    // system pointer's size is kept to.
+    size_t left=width,right=0,top=height,bottom=0;
+    for(size_t y=0;y<height;y++) for(size_t x=0;x<width;x++) if(alpha[y*width+x]>=128) {
+        left=MIN(left,x);right=MAX(right,x+1);top=MIN(top,y);bottom=MAX(bottom,y+1);
+    }
+    if(right<=left)return NULL;
+    CGFloat shown=MAX((right-left)*size.width/width,(bottom-top)*size.height/height);
+    CGFloat scale=MIN(1.0,32.0/shown);
     CGFloat dx=size.width*scale/width,dy=size.height*scale/height;
     CGMutablePathRef runs=CGPathCreateMutable();
-    for(size_t y=0;y<height;y++) {
-        for(size_t x=0;x<width;) {
+    for(size_t y=top;y<bottom;y++) {
+        for(size_t x=left;x<right;) {
             if(alpha[y*width+x]<128) { x++;continue; }
-            size_t start=x;while(x<width && alpha[y*width+x]>=128)x++;
+            size_t start=x;while(x<right && alpha[y*width+x]>=128)x++;
             CGPathAddRect(runs,NULL,CGRectMake(start*dx-hotSpot.x*scale,y*dy-hotSpot.y*scale,(x-start)*dx,dy));
         }
     }
     // Merge adjacent scanlines so the system sees outlines, not pixel strips.
-    CGPathRef path=CGPathIsEmpty(runs)?NULL:CGPathCreateCopyByNormalizing(runs,false);
+    CGPathRef path=CGPathCreateCopyByNormalizing(runs,false);
     CGPathRelease(runs);return path;
 }
 @implementation NSImageRep
