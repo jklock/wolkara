@@ -151,6 +151,19 @@ NSString *TKVMProbeReport(void) {
         if (p!=MAP_FAILED) munmap(p,singles[i]*GB);
     }
     [report appendFormat:@"cumulative 4 GB reservations: %llu GB\n",TKReserveUntilRefused(4*GB,PROT_READ|PROT_WRITE,40)/GB];
+    // Dense chart: where will the kernel take a fixed 1 GiB mapping at all?
+    [report appendString:@"fixed 1 GB scan, 4..512 GiB, mappable windows:"];
+    uint64_t windowStart=0; BOOL inWindow=NO;
+    for (uint64_t base=0x100000000ULL; base<0x8000000000ULL; base+=0x40000000ULL) {
+        vm_address_t address=(vm_address_t)base;
+        kern_return_t kr=vm_allocate(mach_task_self(),&address,(vm_size_t)0x40000000ULL,VM_FLAGS_FIXED);
+        BOOL ok=kr==KERN_SUCCESS;
+        if (ok) vm_deallocate(mach_task_self(),address,(vm_size_t)0x40000000ULL);
+        if (ok && !inWindow) { inWindow=YES; windowStart=base; }
+        if (!ok && inWindow) { inWindow=NO; [report appendFormat:@" %#llx-%#llx",(unsigned long long)windowStart,(unsigned long long)base]; }
+    }
+    if (inWindow) [report appendFormat:@" %#llx-end",(unsigned long long)windowStart];
+    [report appendString:@"\n"];
     [report appendFormat:@"cumulative 4 GB PROT_NONE reservations: %llu GB\n",TKReserveUntilRefused(4*GB,PROT_NONE,40)/GB];
     void *p=mmap(NULL,112*GB,PROT_NONE,MAP_PRIVATE|MAP_ANON,-1,0);
     [report appendFormat:@"single 112 GB PROT_NONE: %@\n",p==MAP_FAILED?@"fails":@"ok"];
