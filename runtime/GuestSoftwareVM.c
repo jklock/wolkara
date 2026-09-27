@@ -24,6 +24,7 @@ static _Atomic(void *) pending_native_pool;
 static int log_fd = -1;
 static atomic_bool enabled;
 static atomic_uint_fast64_t fault_count, alias_fetches, checked_fetches;
+static atomic_uint io_reports;
 static uintptr_t code_base, code_alias;
 static size_t code_size;
 static atomic_bool code_alias_enabled;
@@ -228,6 +229,7 @@ static bool start(size_t backing_bytes, size_t force, int fd, bool small_blocks)
         return false;
     }
     log_fd = fd; force_threshold = force; native_pool_size=forced_pool_size=0; atomic_store(&fault_count, 0);
+    atomic_store(&io_reports,0);
     atomic_store(&pending_native_pool,NULL);
     atomic_store(&alias_fetches,0);atomic_store(&checked_fetches,0);
     code_base=code_alias=code_size=0;atomic_store(&code_alias_enabled,false);
@@ -455,20 +457,34 @@ GMResult gsv_fill(void *destination, int value, size_t size) {
     }
     return GM_OK;
 }
+static ssize_t io_result(int fd, size_t size, ssize_t result, bool software) {
+    int saved=errno;
+    if(result<0 || atomic_fetch_add_explicit(&io_reports,1,memory_order_relaxed)<16) {
+        report("[software-vm] file I/O fd ",(uint64_t)fd);
+        report("[software-vm] file I/O requested bytes ",size);
+        report("[software-vm] file I/O software buffer ",software);
+        report("[software-vm] file I/O result ",(uint64_t)result);
+        if(result<0)report("[software-vm] file I/O errno ",(uint64_t)saved);
+    }
+    errno=saved;return result;
+}
 static ssize_t file_io(int fd, void *buffer, size_t size, off_t offset, bool positional, bool writing) {
-    if (!gsv_address(buffer)) return writing ? (positional ? pwrite(fd, buffer, size, offset) : write(fd, buffer, size)) :
-                                                            (positional ? pread(fd, buffer, size, offset) : read(fd, buffer, size));
-    if (size > INT_MAX) { errno = EINVAL; return -1; }
+    if (!gsv_address(buffer)) {
+        ssize_t result=writing ? (positional ? pwrite(fd,buffer,size,offset) : write(fd,buffer,size)) :
+                                 (positional ? pread(fd,buffer,size,offset) : read(fd,buffer,size));
+        return io_result(fd,size,result,false);
+    }
+    if (size > INT_MAX) { errno = EINVAL; return io_result(fd,size,-1,true); }
     // Preserve a single syscall's size, file-offset atomicity, short-read and
     // EINTR behavior. Large buffers use temporary ordinary host memory.
     GMResult result = prepare(buffer, size, writing ? GM_READ : GM_WRITE);
-    if (result != GM_OK) { errno = EFAULT; return -1; }
+    if (result != GM_OK) { errno = EFAULT; return io_result(fd,size,-1,true); }
     unsigned char stack[BOUNCE_SIZE];
     void *bounce = size > sizeof stack ? malloc(size) : stack;
-    if (!bounce) { errno = ENOMEM; return -1; }
+    if (!bounce) { errno = ENOMEM; return io_result(fd,size,-1,true); }
     if (writing && gm_sparse_read(&memory, (uintptr_t)buffer, bounce, size) != GM_OK) {
         if (bounce != stack) free(bounce);
-        errno = EFAULT; return -1;
+        errno = EFAULT; return io_result(fd,size,-1,true);
     }
     ssize_t done = writing ? (positional ? pwrite(fd, bounce, size, offset) : write(fd, bounce, size)) :
                             (positional ? pread(fd, bounce, size, offset) : read(fd, bounce, size));
@@ -478,7 +494,7 @@ static ssize_t file_io(int fd, void *buffer, size_t size, off_t offset, bool pos
     int saved_errno = errno;
     if (bounce != stack) free(bounce);
     errno = saved_errno;
-    return done;
+    return io_result(fd,size,done,true);
 }
 ssize_t gsv_read(int fd, void *b, size_t n) { return file_io(fd, b, n, 0, false, false); }
 ssize_t gsv_pread(int fd, void *b, size_t n, off_t o) { return file_io(fd, b, n, o, true, false); }

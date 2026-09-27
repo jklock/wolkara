@@ -290,8 +290,10 @@ used that window. The first 4 GiB game comparison likewise fell back to software
 for all three large pools. Its first 87 million emulated accesses fetched more
 than 99.9% of instructions from the loader alias, so checked kernel instruction
 reads were not the main cost in that interval. With 1 GiB backing and early reservation, the subsequent iPad game launch
-successfully received the full native 64 GiB mapping. Frame timing and sustained
-backing use still need validation; this establishes placement, not playability.
+successfully received the full native 64 GiB mapping. The launch then ended with SIGTRAP on `redIOWorker0` while opening the first
+archive, before its first ten-second progress sample. The main thread was
+waiting on a condition variable. This establishes placement only; it has not
+improved the playable state, and the I/O failure hypothesis needs API tracing.
 
 Trace progress now reports aggregate instruction-fetch counts for the loader's
 readable alias and the checked kernel fallback. It records no instruction

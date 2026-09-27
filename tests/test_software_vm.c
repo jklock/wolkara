@@ -1,6 +1,7 @@
 #include "GuestSoftwareVM.h"
 #include "GuestExclusive.h"
 #include <assert.h>
+#include <limits.h>
 #include <errno.h>
 #include <pthread.h>
 #include <stdlib.h>
@@ -310,6 +311,11 @@ int main(int argc, char **argv) {
     assert(gsv_fill((char *)ranges[1]+GM_PAGE_SIZE-1,'x',1)==GM_OK);
     assert(gsv_unmap((char *)ranges[1]+GM_PAGE_SIZE,GM_PAGE_SIZE)==0);
     errno=0; assert(!gsv_string((char *)ranges[1]+GM_PAGE_SIZE-1,path,sizeof path) && errno==EFAULT);
+    // Tracing preserves native and bridged error results and errno.
+    errno=0;assert(gsv_read(-1,path,1)==-1 && errno==EBADF);
+    errno=0;assert(gsv_read(-1,ranges[0],1)==-1 && errno==EBADF);
+    errno=0;assert(gsv_write(-1,ranges[0],1)==-1 && errno==EBADF);
+    errno=0;assert(gsv_read(-1,ranges[0],(size_t)INT_MAX+1)==-1 && errno==EINVAL);
     int pipefd[2]; assert(!pipe(pipefd));
     assert(write(pipefd[1],"abc",3)==3);
     assert(gsv_read(pipefd[0],ranges[1],64)==3);
