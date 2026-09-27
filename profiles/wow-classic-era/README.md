@@ -31,9 +31,8 @@ game as usual.
 
 **Execution mode.** The execution modes are described in the
 [README](../../README.md#three-ways-to-run-code); choose one. This client has been
-played with Developer service. With Local signing, an earlier build started it
-as far as its original `main`; the current build has not yet been re-run on a
-device, and login and gameplay are not yet validated. This client unpacks its
+played with Developer service, and with Local signing it logs in and plays
+(2026-09-27) with no debugger, helper or tunnel. This client unpacks its
 own code at launch, so its page container must be built from a capture of its
 final code pages, which Tolkara cannot produce yet.
 

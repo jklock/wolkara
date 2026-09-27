@@ -28,15 +28,22 @@ or assets.
 Tested on an iPad Pro (M5) with iPadOS 27. The first application validated end
 to end, with Developer service, is World of Warcraft Classic (Classic Era macOS
 client): login, world entry, movement, combat, quests, audio and intro
-cinematics work, at up to 120 FPS on reduced resolution. See
+cinematics work, at up to 120 FPS on reduced resolution. With Local signing,
+both WoW Classic clients (Classic Era and the Forever beta) log in and play,
+with no debugger, helper or tunnel. Through a compatibility runtime, Wine with
+FEX, the Windows game Heroes of Might and Magic III: Horn of the Abyss plays
+with Developer service ([docs/WINDOWS.md](docs/WINDOWS.md)). See
 [COMPATIBILITY.md](COMPATIBILITY.md) for details and known problems. Other
 applications will need more API coverage; reports and patches are welcome.
 
 Notable limits today: with Developer service, preparing executable memory takes
-roughly 80 seconds per launch, and switching apps during startup can interrupt
-it. With Local signing, an earlier build reached the application's original
-`main` on a device; the current build has not been re-run there yet, and login
-and gameplay are not validated. External JIT has not been run on a device yet.
+time at every launch, about 3 MB per second (33 seconds for Heroes III), and
+switching apps during startup can interrupt it. With Local signing, the page
+container of an application that unpacks its own code, as both WoW clients do,
+must be built from a capture of its final code pages, which Tolkara cannot
+produce on its own yet; a program whose code is generated while it runs, such
+as a Windows game under FEX, cannot use Local signing at all. External JIT has
+not been run on a device yet.
 Helper processes that an app launches separately
 (for example a voice-chat helper) are not supported.
 
@@ -51,7 +58,7 @@ on first launch, and **Execution mode…** in the app changes it later.
 | | Developer service | Local signing | External JIT |
 | --- | --- | --- | --- |
 | What it does | Tolkara's bundled packet-tunnel extension reaches the iPad's own developer service, which prepares executable memory and detaches before any application code runs. Tolkara then copies the original code in. | The application's final code pages are put into a small library, a *page container*, signed with your own developer identity. iPadOS validates it when Tolkara loads it, and Tolkara maps those validated pages into place. | You sideload Tolkara (for example with SideStore) and open it with JIT enabled, by your sideloading tool or a JIT enabler such as StikDebug. The enabler's debugger prepares executable memory and is asked to detach. Tolkara does not run application code while any debugger is attached, then copies the original code in. |
-| What it requires | Developer Mode, a one-time enrolment from a Mac (`tools/enroll.sh`), and permission for Tolkara's own VPN-style tunnel. About 80 seconds of preparation per launch. | Developer Mode and your developer identity. For now the container is built and signed on a Mac (`tools/build_signed_container.py`) and copied to the iPad. For an application that rewrites its own code at launch, this needs a capture of its final code pages, which Tolkara cannot produce yet. | Developer Mode, a sideloading tool and a JIT enabler. A free Apple ID can sign the app, but free signing drops the increased-memory-limit and extended-virtual-addressing capabilities, so large applications may not fit. Not yet run on a device. |
+| What it requires | Developer Mode, a one-time enrolment from a Mac (`tools/enroll.sh`), and permission for Tolkara's own VPN-style tunnel. Preparation at every launch, about 3 MB per second (33 seconds for Heroes III). | Developer Mode and your developer identity. For now the container is built and signed on a Mac (`tools/build_signed_container.py`) and copied to the iPad. For an application that rewrites its own code at launch, this needs a capture of its final code pages, which Tolkara cannot produce yet. | Developer Mode, a sideloading tool and a JIT enabler. A free Apple ID can sign the app, but free signing drops the increased-memory-limit and extended-virtual-addressing capabilities, so large applications may not fit. Not yet run on a device. |
 | Which build | The Tolkara app (`tools/install.sh`). | Either build. | The TolkaraDiagnostics app, unsigned (`tools/package_ipa.sh`). |
 | What it does with the application's code | Runs the original code unchanged. Nothing of the application is ever signed. | Leaves the executable unchanged, but keeps a derived copy of its final code pages on your iPad (and in your build folder), signed under your identity. Tolkara refuses to start if the container does not match the executable or what the application's own startup code produces. | Runs the original code unchanged. Nothing of the application is ever signed. |
 
