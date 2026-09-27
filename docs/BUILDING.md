@@ -223,7 +223,7 @@ profile: see [profiles/README.md](../profiles/README.md).
 
 Open Tolkara on the iPad, choose the execution mode if it asks, and tap the
 app in the library. With Developer service, keep Tolkara in the foreground
-while it prepares memory (currently about 80 seconds). One app can start per
+while it prepares memory (about 3 MB per second: 33 seconds for Heroes III). One app can start per
 session: to start another, open Tolkara again. When an app closes cleanly,
 Tolkara ends itself after a short note, so the next tap on its icon opens the
 library ready to start another app.

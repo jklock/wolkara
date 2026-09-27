@@ -125,6 +125,12 @@ project's coding style and one-change-per-commit convention so that they
 stay reviewable and rebaseable, not to prepare them for upstream. Should
 either project publish its own arm64 Darwin work, Tolkara moves to it.
 
+Both branches are published, as `tolkara/darwin-arm64` in
+[tolkara/wine](https://github.com/tolkara/wine) and
+[tolkara/FEX](https://github.com/tolkara/FEX);
+[profiles/heroes3-hota/README.md](../profiles/heroes3-hota/README.md) says
+how to build the runtime from them.
+
 The Wine branch is `tolkara/darwin-arm64` on bylaws' `upstream-arm64ec`;
 `tools/build_windows_runtime.sh` builds whatever is checked out in
 `build/windows-runtime/src/wine`. Its first commits, and what each fixed:

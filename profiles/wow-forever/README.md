@@ -31,9 +31,10 @@ game as usual.
 
 **Execution mode.** The execution modes are described in the
 [README](../../README.md#three-ways-to-run-code); choose one. With Local signing,
-the client's startup has run on an iPad Pro M5: the unpacked code matched the
-signed page container byte for byte and all 13,280 initializers ran into the
-original `main`. Login and gameplay are not yet validated, in any mode.
+the client logs in and plays on an iPad Pro M5 (2026-09-27), with no debugger,
+helper or tunnel: the unpacked code matched the signed page container byte for
+byte and all 13,280 initializers ran into the original `main`. It has not yet
+been validated with Developer service.
 Like the Era client, this client unpacks its own code at launch, so its Local
 signing page container must be built from a capture of its final code pages —
 producing such a capture in the app is not wired yet (see
