@@ -256,3 +256,10 @@ also pass derived-class exceptions caught through a standard-library base
 across placed/host image boundaries, including cleanup and DWARF frames.
 The run presented at least 60 Metal frames, with early samples near 5 FPS and
 long loading gaps. Visual menu content and interactive gameplay remain unverified.
+
+A direct system screenshot later confirmed the opening cinematic on the iPad,
+including its Space-to-continue prompt and subtitles. The capture used the
+CoreDevice screen-capture service, without a debugger, GPU readback injection,
+or game input. The screenshot stays in ignored local logs. More than 1,200
+Metal shader-library loads succeeded with no rejection logged in this run.
+Further menu interaction and gameplay validation require a manual keypress.

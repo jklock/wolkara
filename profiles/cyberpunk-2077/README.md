@@ -1,14 +1,15 @@
 # Cyberpunk 2077
 
-**Status: work in progress. It does not run yet.** This profile is published
-early so that the work on it is visible and others can build on it.
+**Status: experimental startup and opening cinematic; gameplay unverified.**
+Startup is very slow with software memory emulation.
 
 What works: the loader handles this client's chained fixups, `__init_offsets`
 initializers, thread-local variables and the four libraries it ships in
 `Contents/Frameworks` (Bink 2 and GOG Galaxy); every one of its 717,321 fixups
 matches `dyld_info`. The opt-in software-memory experiment completes all
 6,540 initializers, main, GOG initialization, all 32 archives, scripts and
-shader caches on the iPad, creates the game window, and presents Metal frames.
+shader caches on the iPad, creates the game window, and visibly renders the
+opening cinematic with a Space-to-continue prompt.
 Menu content and gameplay are not validated. The latest iPad run passes the native
 allocation failure and the former GOG rich-presence abort: with exception
 unwinding restored, that call reports its service error and returns. The game
