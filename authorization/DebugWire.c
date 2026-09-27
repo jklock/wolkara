@@ -43,7 +43,8 @@ DWEvent dw_feed(DWParser *p,uint8_t b) {
         case CHECK_LOW: {
             int digit=hex(b);if(digit<0)return fail(p,DW_MALFORMED);
             p->state=SEEK;
-            if((p->expected|(unsigned)digit)!=p->sum)return fail(p,DW_BAD_CHECKSUM);
+            uint8_t sum=(uint8_t)(p->expected|(unsigned)digit);
+            if(sum!=p->sum && !(p->zero_checksum && !sum))return fail(p,DW_BAD_CHECKSUM);
             return p->notification?DW_NOTIFICATION:DW_PACKET;
         }
     }

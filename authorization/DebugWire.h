@@ -12,6 +12,8 @@ typedef struct {
     size_t capacity,length;
     uint8_t state,sum,expected;
     bool notification;
+    // In no-ack mode debugserver sends #00 instead of the checksum.
+    bool zero_checksum;
 } DWParser;
 void dw_init(DWParser *parser,void *buffer,size_t capacity);
 DWEvent dw_feed(DWParser *parser,uint8_t byte);

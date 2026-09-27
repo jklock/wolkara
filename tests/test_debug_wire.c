@@ -14,6 +14,12 @@ int main(void) {
     assert(receive(&p,"$OK#9a",6)==DW_PACKET && p.length==2 && !memcmp(buffer,"OK",2));
     assert(receive(&p,"$OK#9b",6)==DW_BAD_CHECKSUM && p.length==0);
     assert(receive(&p,"$#00",4)==DW_PACKET && p.length==0);
+    // A zero checksum only where no-ack mode allows it; other wrong sums never.
+    assert(receive(&p,"$OK#00",6)==DW_BAD_CHECKSUM);
+    p.zero_checksum=true;
+    assert(receive(&p,"$OK#00",6)==DW_PACKET && p.length==2 && receive(&p,"$OK#9a",6)==DW_PACKET);
+    assert(receive(&p,"$OK#9b",6)==DW_BAD_CHECKSUM);
+    p.zero_checksum=false;
     for(unsigned i=0;i<256;i++)input[i]=(uint8_t)i;
     size_t n=dw_encode(input,sizeof input,encoded,sizeof encoded);assert(n==264);
     assert(receive(&p,encoded,n)==DW_PACKET && p.length==256 && !memcmp(buffer,input,256));
@@ -35,6 +41,6 @@ int main(void) {
     dw_init(&p,buffer,sizeof buffer);
     uint32_t state=42;
     for(unsigned i=0;i<200000;i++) {state=state*1664525u+1013904223u;(void)dw_feed(&p,(uint8_t)(state>>24));assert(p.length<=p.capacity);}
-    puts("PASS: bounded debugger wire framing, checksum, binary escaping, RLE, notifications and stream recovery");
+    puts("PASS: bounded debugger wire framing, checksum (zero in no-ack mode), binary escaping, RLE, notifications and stream recovery");
     return 0;
 }

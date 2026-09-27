@@ -17,7 +17,8 @@ def main():
     rsp=load('rsp_fixture','tests/test_debug_arena_peer.py')
     evidence=[]
     service='--service' in sys.argv
-    regions=(0x200000,) if service else rsp.REGIONS
+    # As tools/probe_debug_over_tunnel.swift and probe_arena_service.swift ask: one page each.
+    regions=(0x200000,) if service else (0x200000,0x400000)
     modes=('valid','wrong-challenge','missing-detach-reply')+(('service-expiry',) if service else ())
     for mode in modes:
         with socket.socket() as s: s.bind(('127.0.0.1',0)); port=s.getsockname()[1]
@@ -72,19 +73,20 @@ def main():
                     return rsp.command(b+take(2))
                 def respond(text):
                     nonlocal peer
-                    data=b'+'+rsp.frame(text)
+                    data=(b'' if noack else b'+')+rsp.frame(text)
                     for i in range(0,len(data),1301):
                         chunk=data[i:i+1301]; send(chunk,24); peer+=len(chunk)
                         # On detach the client is entitled to close immediately
                         # after reading its OK, so no final ACK is required here.
                         if i+len(chunk)<len(data):
                             while receive()!=peer: pass
-                preflight={base:0 for base in regions}; wrote=0; finished=False
+                preflight={base:0 for base in regions}; wrote=0; finished=False; noack=False
                 for _ in range(100):
                     text=read_command()
                     if mode=='service-expiry':
                         assert text=='qSupported'; finished=True; break
                     if text=='qSupported': answer='PacketSize=8000'
+                    elif text=='QStartNoAckMode': answer='OK'
                     elif text=='QSetDetachOnError:1': answer='OK'
                     elif text=='vAttach;4d2': answer='T13thread:7;'
                     elif text=='qProcessInfo': answer='pid:4d2;effective-uid:1f5;cputype:100000c;ptrsize:8;endian:little;'
@@ -98,19 +100,21 @@ def main():
                             base=next(b for b in regions if b<=address<b+16384)
                             assert address+count<=base+16384
                             if wrote==0: preflight[base]+=count
+                            else: assert count==1
                             answer='00'*count
                     elif text.startswith('M'):
                         header,data=text[1:].split(':');address,count=(int(v,16) for v in header.split(','))
                         assert all(n==16384 for n in preflight.values())
-                        assert any(b<=address and address+count<=b+16384 for b in regions) and data=='00'*count
-                        wrote+=count;answer='OK'
+                        assert address in regions and count==1 and data=='00'
+                        wrote+=1;answer='OK'
                     elif text=='D':
                         finished=True
-                        assert wrote==(0 if mode=='wrong-challenge' else 16384*len(regions))
+                        assert wrote==(0 if mode=='wrong-challenge' else len(regions))
                         if mode=='missing-detach-reply': break
                         answer='OK'
                     else: raise AssertionError(text)
                     respond(answer)
+                    if text=='QStartNoAckMode': noack=True
                     if finished: break
                 assert finished
                 stdout,stderr=client.communicate(timeout=15)
