@@ -18,10 +18,10 @@ os.environ.pop('TOLKARA_EXPERIMENTAL_ADAPTERS', None)
 
 
 def written():
-    # Hand-written frameworks with sources, as build_shims.py counts them.
+    # Hand-written frameworks with sources or only linker flags, as build_shims.py counts them.
     for leaf in sorted(classify.adapter_leaves() - classify.translation_leaves('absent')):
         directory = ROOT / 'translation' / leaf
-        if leaf != 'AKSupport' and any(source.suffix in ('.c', '.m') for source in directory.iterdir()):
+        if leaf != 'AKSupport' and any(source.suffix in ('.c', '.m') or source.name == 'ldflags' for source in directory.iterdir()):
             yield leaf
 
 
@@ -62,6 +62,11 @@ class GenericBuildTests(unittest.TestCase):
 
     def test_nothing_presented_as_absent(self):
         self.assertFalse((OUT / 'Guest/absent.json').exists())
+
+    def test_audio_unit_is_the_audio_toolbox_adapter(self):
+        # iOS has no AudioUnit library; its adapter re-exports the AudioToolbox one.
+        load = subprocess.run(['otool', '-l', str(OUT / 'Frameworks/akAudioUnit.dylib')], capture_output=True, text=True, check=True).stdout
+        self.assertIn('@rpath/akAudioToolbox.dylib', load.split('LC_REEXPORT_DYLIB', 1)[-1])
 
     def test_experimental_adapters_left_out(self):
         self.assertFalse((OUT / 'Frameworks/akGameController.dylib').exists())
