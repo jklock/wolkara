@@ -26,6 +26,10 @@ CODE_SUFFIXES={'.exe','.dll','.asi'}
 # FEX as the emulator for x86 (WoW64) and x86-64 (ARM64EC) code in this prefix,
 # the keys Wine's wow64 layer reads (docs/WINDOWS.md).
 EMULATOR_KEYS={r'HKLM\Software\Microsoft\Wow64\x86':'libwow64fex.dll',r'HKLM\Software\Microsoft\Wow64\amd64':'libarm64ecfex.dll'}
+# The keyboard as on an iPad's: Option is Alt, and Command sends nothing,
+# Control being there already (Wine's Mac driver; the Command options come
+# with Tolkara's Wine branch).
+MAC_DRIVER_SETTINGS={'LeftOptionIsAlt':'y','RightOptionIsAlt':'y','LeftCommandIsIgnored':'y','RightCommandIsIgnored':'y'}
 # HD mod settings for the staged copy: its start-up update check offers to
 # replace the game's own libraries, which stay as GOG ships them here, and it
 # would start the updater as a second process, which the iPad cannot. The
@@ -131,13 +135,23 @@ def wine(runtime,prefix,*command,check=True):
     return subprocess.run([str(runtime/'bin/wine'),*command],env=environment,check=check)
 
 
+def registry_commands():
+    """The reg.exe command lines that give a prefix its settings."""
+    return ([['reg','add',key,'/ve','/d',value,'/f'] for key,value in EMULATOR_KEYS.items()]+
+            [['reg','add',r'HKCU\Software\Wine\Mac Driver','/v',name,'/d',value,'/f'] for name,value in MAC_DRIVER_SETTINGS.items()])
+
+
 def create_prefix(runtime,prefix):
     if prefix.exists(): shutil.rmtree(prefix)
     prefix.parent.mkdir(parents=True,exist_ok=True)
     wine(runtime,prefix,'wineboot','-u')
-    for key,value in EMULATOR_KEYS.items(): wine(runtime,prefix,'reg','add',key,'/ve','/d',value,'/f')
-    subprocess.run([str(runtime/'bin/wineserver'),'-w'],env={**os.environ,'WINEPREFIX':str(prefix)},check=False)
     if not (prefix/'drive_c/windows/system32').is_dir(): sys.exit('the Wine prefix was not created; does the runtime start on this Mac?')
+
+
+def prefix_settings(runtime,prefix):
+    """Settings for a new or a kept prefix."""
+    for command in registry_commands(): wine(runtime,prefix,*command)
+    subprocess.run([str(runtime/'bin/wineserver'),'-w'],env={**os.environ,'WINEPREFIX':str(prefix)},check=False)
 
 
 def main():
@@ -172,6 +186,7 @@ def main():
     before=code_hashes(game)
     prefix=stage/'prefix'
     if not (args.keep_prefix and (prefix/'drive_c').is_dir()): create_prefix(runtime,prefix.resolve())
+    prefix_settings(runtime,prefix.resolve())
     installed=prefix/'drive_c'/GAME
     if installed.exists(): shutil.rmtree(installed)
     installed.parent.mkdir(parents=True,exist_ok=True)
