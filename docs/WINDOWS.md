@@ -6,8 +6,8 @@
 > profile [`heroes3-hota`](../profiles/heroes3-hota). Each section says
 > what is proven, where (Mac, simulator or iPad), and what is not.
 >
-> **Status, 2026-09-27: the HotA main menu shows on the iPad (M4 below,
-> "On the iPad").** Sound and input on the device are still to be checked.
+> **Status, 2026-09-27: Heroes III with HotA plays on the iPad (M4 below,
+> "On the iPad"),** with sound, mouse and keyboard.
 > M0 was reached on the Mac the day before. A
 > native arm64 Darwin process has no address space below 4 GB, and Wine's
 > 32-bit side needs it ("The 4 GB floor" below). Tolkara's own branches of
@@ -493,11 +493,20 @@ build's absolute data path), and `smackw32.dll`'s code became
 non-executable to FEX after its relocation failed to make the page writable
 again. Both are fixed on the Wine branch.
 
-Still open on the device: sound (`winecoreaudio` loads and no error is
-reported, not yet heard), touch, mouse and keyboard input, the light grey
-margins above and below the game (the window background Wine fills a new
-surface with; the HD mod letterboxes its 16:9 frame), GnuTLS (not in the
-device runtime; the game does not need it for the menu), and performance.
+Later that morning the game itself ran on the iPad: a scenario started and
+played with sound, mouse and keyboard, after fixes on both branches and in
+the adapters. Wine now tells FEX when a program turns data execution
+prevention off, and FEX leaves a block on a write to translated code only
+when the write reaches that block's own bytes (it re-ran a `pop` to memory
+in the HD mod's hook bridges). Clicks needed Quartz events on AppKit's
+events and window numbers, sound an AudioUnit adapter and the session's
+route as CoreAudio's output device, saves the game's empty `games` folder
+on the iPad, and the keyboard has Option as Alt and Command ignored.
+
+Still open: a double click is not recognised on the iPad (it is on the Mac),
+modifier tracking after Alt and a click awaits a test on the device, the
+light grey margins around the game when the HD mod letterboxes it, GnuTLS
+(not in the device runtime), and performance.
 
 ## What Wine needs from its host, and what Tolkara has
 

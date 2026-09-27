@@ -144,5 +144,27 @@ int main(void) { @autoreleasepool {
     // Windows are numbered once each; with none on screen, none is found.
     assert(window.windowNumber > 0 && other.windowNumber != window.windowNumber && panel.windowNumber != other.windowNumber);
     assert([NSWindow windowNumbersWithOptions:0].count == 0 && [NSWindow windowNumberAtPoint:CGPointMake(1, 1) belowWindowWithWindowNumber:0] == 0);
-    puts("display pass, frame rects, panels, tracking areas, layer placement, contents scale, window ordering, Quartz events and window numbers: PASS");
+    // Modifier keys: a key's press and release set and clear it, left and right
+    // apart (device bits); the flag stays while either side is held.
+    const NSEventModifierFlags LeftOption = 0x20, RightOption = 0x40, LeftCommand = 0x08, LeftShift = 0x02;
+    NSEventModifierFlags held = AKModifiersAfterKey(0, 0xE2, YES);
+    assert(held == (NSEventModifierFlagOption | LeftOption));
+    held = AKModifiersAfterKey(held, 0xE6, YES);
+    assert(held == (NSEventModifierFlagOption | LeftOption | RightOption));
+    held = AKModifiersAfterKey(held, 0xE2, NO);
+    assert(held == (NSEventModifierFlagOption | RightOption));
+    held = AKModifiersAfterKey(held, 0xE6, NO);
+    assert(held == 0);
+    // Whatever the release event reports, the key's own release clears it.
+    held = AKModifiersAfterKey(AKModifiersAfterKey(0, 0xE2, YES), 0xE2, NO);
+    assert(held == 0 && AKModifiersAfterKey(0, 0x04, YES) == 0);
+    // Other events reconcile with UIKit: what it no longer reports is released;
+    // what it reports with no key held is the left key; Caps Lock is its own.
+    held = AKModifiersAfterKey(AKModifiersAfterKey(0, 0xE2, YES), 0xE3, YES);
+    assert(AKModifiersReconciled(held, NSEventModifierFlagCommand) == (NSEventModifierFlagCommand | LeftCommand));
+    assert(AKModifiersReconciled(0, NSEventModifierFlagShift | NSEventModifierFlagCapsLock) ==
+           (NSEventModifierFlagShift | LeftShift | NSEventModifierFlagCapsLock));
+    assert(AKModifiersReconciled(held, 0) == 0);
+    assert(AKModifiersReconciled(AKModifiersAfterKey(0, 0xE6, YES), NSEventModifierFlagOption) == (NSEventModifierFlagOption | RightOption));
+    puts("display pass, frame rects, panels, tracking areas, layer placement, contents scale, window ordering, Quartz events, window numbers and modifier keys: PASS");
 } }

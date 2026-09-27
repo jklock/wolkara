@@ -78,6 +78,16 @@ class ProfileTests(unittest.TestCase):
             install.hd_settings(game)
             self.assertFalse((folder / 'hota.ini').exists())
 
+    def test_heroes3_prefix_settings(self):
+        # FEX for x86 and x86-64, and the iPad keyboard: Option is Alt, Command sends nothing.
+        sys.path.insert(0, str(ROOT / 'profiles' / 'heroes3-hota'))
+        import install
+        commands = install.registry_commands()
+        self.assertIn(['reg', 'add', r'HKLM\Software\Microsoft\Wow64\x86', '/ve', '/d', 'libwow64fex.dll', '/f'], commands)
+        mac = {c[4]: c[6] for c in commands if c[2] == r'HKCU\Software\Wine\Mac Driver'}
+        self.assertEqual(mac, {'LeftOptionIsAlt': 'y', 'RightOptionIsAlt': 'y', 'LeftCommandIsIgnored': 'y', 'RightCommandIsIgnored': 'y'})
+        self.assertTrue(all(c[:2] == ['reg', 'add'] and c[-1] == '/f' for c in commands))
+
     def test_heroes3_device_runtime(self):
         # The iPad gets the runtime's Unix side, data, 32-bit modules, the server library, the
         # native modules a WoW64 process loads and the placed libraries: nothing else.
