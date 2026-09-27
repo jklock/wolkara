@@ -56,6 +56,9 @@ typedef NS_OPTIONS(NSUInteger, NSEventModifierFlags) {
 @property (copy) NSString *characters, *charactersIgnoringModifiers;
 @property BOOL isARepeat;
 @property NSInteger buttonNumber, clickCount;
+// Its Quartz event (a CGEventRef): the location in global display coordinates.
+- (CFTypeRef)CGEvent;
++ (NSPoint)mouseLocation;
 @end
 
 // A region of a view whose mouse movement its owner follows. The iPad's
@@ -111,6 +114,10 @@ typedef NS_OPTIONS(NSUInteger, NSEventModifierFlags) {
 
 @interface NSWindow : NSResponder
 - (instancetype)initWithContentRect:(NSRect)r styleMask:(NSUInteger)m backing:(NSUInteger)b defer:(BOOL)d;
+// Unique for the process; visible windows are numbered front to back.
+@property (readonly) NSInteger windowNumber;
++ (NSArray<NSNumber *> *)windowNumbersWithOptions:(NSUInteger)options;
++ (NSInteger)windowNumberAtPoint:(NSPoint)point belowWindowWithWindowNumber:(NSInteger)windowNumber;
 @property (nonatomic, strong) NSView *contentView;
 @property (copy) NSString *title;
 @property BOOL acceptsMouseMovedEvents;
@@ -157,6 +164,7 @@ typedef NS_OPTIONS(NSUInteger, NSEventModifierFlags) {
 @interface NSApplication : NSResponder
 @property (nonatomic,readonly) NSEvent *currentEvent;
 + (NSApplication *)sharedApplication;
+- (NSWindow *)windowWithWindowNumber:(NSInteger)number;
 @property (weak) id delegate;
 @property NSUInteger presentationOptions;
 @property (strong) id mainMenu, servicesMenu, windowsMenu, helpMenu;

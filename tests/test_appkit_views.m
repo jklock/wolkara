@@ -79,5 +79,22 @@ int main(void) { @autoreleasepool {
     OrderingWindow *ordering = [[OrderingWindow alloc] initWithContentRect:rect styleMask:0 backing:2 defer:NO];
     [ordering makeKeyAndOrderFront:nil];
     assert(ordering.deepest == 1);
-    puts("display pass, frame rects, panels, tracking areas, layer placement, contents scale and window ordering: PASS");
+    // An event's Quartz location is in global display coordinates, top-left
+    // origin, which is where Wine's Mac driver takes clicks from.
+    NSEvent *click = [NSEvent new];
+    click.type = NSEventTypeLeftMouseDown; click.window = window; click.locationInWindow = CGPointMake(10, 20);
+    click.clickCount = 2; click.buttonNumber = 1; click.timestamp = 1.5; click.modifierFlags = NSEventModifierFlagShift;
+    AKQuartzEvent *quartz = (__bridge AKQuartzEvent *)click.CGEvent;
+    CGFloat height = NSScreen.screens.firstObject.frame.size.height;
+    assert(quartz && (__bridge AKQuartzEvent *)click.CGEvent == quartz && quartz.type == 1);
+    assert(quartz.location.x == 10 && quartz.location.y == height - 20 && quartz.timestamp == 1500000000);
+    assert([quartz integerValueField:1] == 2 && [quartz integerValueField:3] == 1 && quartz.flags == NSEventModifierFlagShift);
+    NSEvent *scroll = [NSEvent new]; scroll.type = NSEventTypeScrollWheel; scroll.deltaY = 2.6;
+    AKQuartzEvent *wheel = (__bridge AKQuartzEvent *)scroll.CGEvent;
+    assert(wheel.type == 22 && [wheel integerValueField:11] == 3 && [wheel integerValueField:88] == 0);
+
+    // Windows are numbered once each; with none on screen, none is found.
+    assert(window.windowNumber > 0 && other.windowNumber != window.windowNumber && panel.windowNumber != other.windowNumber);
+    assert([NSWindow windowNumbersWithOptions:0].count == 0 && [NSWindow windowNumberAtPoint:CGPointMake(1, 1) belowWindowWithWindowNumber:0] == 0);
+    puts("display pass, frame rects, panels, tracking areas, layer placement, contents scale, window ordering, Quartz events and window numbers: PASS");
 } }
