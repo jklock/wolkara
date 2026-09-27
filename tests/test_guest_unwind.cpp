@@ -7,6 +7,7 @@ extern "C" {
 #include <cstdio>
 #include <cstring>
 #include <dlfcn.h>
+#include <stdexcept>
 #include <sys/mman.h>
 
 static bool resolve(const char *name, int, bool weak, bool, uint64_t *value, void *) {
@@ -14,6 +15,7 @@ static bool resolve(const char *name, int, bool weak, bool, uint64_t *value, voi
     return *value || weak;
 }
 static void host_throw() { throw 79; }
+static void host_throw_class() { throw std::runtime_error("host exception"); }
 int main(int argc, char **argv) {
     assert(argc == 2);
     GuestImage image{};
@@ -61,10 +63,24 @@ int main(int argc, char **argv) {
     try { dwarf(host_throw); }
     catch (int value) { assert(value == 79); handled = true; }
     assert(handled);
+    assert(gi_export(&image, "_fixture_throw_class", &target, error, sizeof error) == GI_EXPORT_FOUND);
+    auto thrown_class = reinterpret_cast<void (*)(int *)>(
+        gw_wrap("fixture_throw_class", reinterpret_cast<void *>(target.address + slide)));
+    handled = false;
+    try { thrown_class(&cleaned); }
+    catch (const std::exception &failure) {
+        assert(!std::strcmp(failure.what(), "placed exception"));
+        assert(dynamic_cast<const std::runtime_error *>(&failure));
+        handled = true;
+    }
+    assert(handled && cleaned == 4);
+    assert(gi_export(&image, "_fixture_catch_host", &target, error, sizeof error) == GI_EXPORT_FOUND);
+    auto caught_host = reinterpret_cast<bool (*)(void (*)(), int *)>(target.address + slide);
+    assert(caught_host(host_throw_class, &cleaned) && cleaned == 5);
     assert(ng_unwind_reset());
     assert(ng_unwind_reset());
     assert(!munmap(mapping, size));
     gi_destroy(&image);
     gw_reset();
-    puts("placed-image C++ exceptions: compact unwind, catches, cleanup and wrapper pass");
+    puts("placed-image C++ exceptions: compact/DWARF unwind, class/base catches, cleanup and wrapper pass");
 }
