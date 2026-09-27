@@ -8,6 +8,11 @@ final class DebugProtocolWire {
     private let storage = UnsafeMutablePointer<UInt8>.allocate(capacity:capacity)
     private var parser = DWParser()
     init() { dw_init(&parser,storage,Self.capacity) }
+    // In no-ack mode debugserver sends #00 instead of the checksum.
+    var acceptsZeroChecksum: Bool {
+        get { parser.zero_checksum }
+        set { parser.zero_checksum = newValue }
+    }
     deinit { storage.deallocate() }
     func feed(_ byte: UInt8) throws -> Event? {
         switch dw_feed(&parser,byte) {

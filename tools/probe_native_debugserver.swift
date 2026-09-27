@@ -5,9 +5,9 @@ import Network
         guard CommandLine.arguments.count == 2, let port = UInt16(CommandLine.arguments[1]),
               let line = readLine(), let data = line.data(using:.utf8),
               let fields = try JSONSerialization.jsonObject(with:data) as? [String:NSNumber],
-              let pid = fields["pid"], let uid = fields["uid"], let address = fields["address"], let challenge = fields["challengeAddress"] else { exit(64) }
+              let pid = fields["pid"], let uid = fields["uid"], let address = fields["address"], let size = fields["size"], let challenge = fields["challengeAddress"] else { exit(64) }
         let request = try DebugArenaRequest(pid:pid.uint32Value,helperPID:UInt32(getpid()),uid:uid.uint32Value,
-            challengeAddress:challenge.uint64Value,challenge:Data(1...32),regions:[.init(address:address.uint64Value,size:16384)])
+            challengeAddress:challenge.uint64Value,challenge:Data(1...32),regions:[.init(address:address.uint64Value,size:size.uint64Value)])
         let session = DebugArenaSession(request:request), queue = DispatchQueue(label:"native-debugserver-fixture")
         let connection = NWConnection(host:"127.0.0.1",port:NWEndpoint.Port(rawValue:port)!,using:.tcp)
         let done = DispatchSemaphore(value:0), timer = DispatchSource.makeTimerSource(queue:queue)
@@ -21,7 +21,7 @@ import Network
                     completed = true; timer.cancel(); connection.cancel()
                     switch outcome {
                     case .success: result = 0; print("PASS: Apple macOS debugserver prepared our zero arena and confirmed detachment; no code executed")
-                    case .failure(let error): print("Native debugserver fixture failed: \(error.reason), detachConfirmed=\(error.detachConfirmed)")
+                    case .failure(let error): print("Native debugserver fixture failed: \(error.reason), detachConfirmed=\(error.detachConfirmed); \(session.diagnosticProgress)")
                     }
                     done.signal(); return
                 }

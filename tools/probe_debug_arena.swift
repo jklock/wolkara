@@ -2,7 +2,7 @@ import Foundation
 @main struct Probe {
     static func main() throws {
         let request = try DebugArenaRequest(pid:1234,helperPID:4321,uid:501,challengeAddress:0x100000,
-            challenge:Data(1...32),regions:[.init(address:0x200000,size:16384),.init(address:0x400000,size:16384)])
+            challenge:Data(1...32),regions:[.init(address:0x200000,size:130*16384),.init(address:0x1000000,size:16384)])
         let session = DebugArenaSession(request:request)
         func output(_ events: [DebugArenaSession.Event]) throws {
             let values: [[String:Any]] = events.map { event in

@@ -137,9 +137,10 @@ Tolkara does it alone. The app embeds a packet-tunnel extension that gives the
 app a route to the iPad's own developer service. Over that route it implements
 Apple's RemotePairing handshake, the CoreDevice tunnel, RemoteXPC service
 discovery and the debugserver wire protocol, all written for this project. It
-asks the service to prepare one zero-filled region, verifies the result, and
-confirms the debugger has detached **before any application code is copied in
-or run**. If any step is uncertain, entry is blocked and the app asks to be
+asks the service to prepare one zero-filled region: once every byte reads back
+as zero, it writes one zero byte into each 16 KiB page (a debugger write
+prepares the whole page it lands in) and reads it back. It then confirms the
+debugger has detached **before any application code is copied in or run**. If any step is uncertain, entry is blocked and the app asks to be
 restarted.
 
 Pairing keys are created once by `tools/enroll.sh` and kept in a device-only

@@ -297,19 +297,24 @@ PID/UID, a per-launch 32-byte memory challenge, and up to four non-overlapping
 challenge overlap and invalid ranges. The host request producer and mapping
 lifetime/IPC gate are not connected to the native loader yet.
 
-`DebugArenaSession` negotiates packet bounds, requires QSetDetachOnError:1 before
+`DebugArenaSession` negotiates packet bounds, switches acknowledgements off
+(QStartNoAckMode; debugserver then sends `#00` in place of checksums, and the
+encrypted tunnel already guarantees delivery), requires QSetDetachOnError:1 before
 attaching, validates exact PID/effective UID/ARM64/little-endian/64-bit pointers,
 and reads the challenge from target memory. Every mapping must be anonymous RX;
-every byte of every arena must be zero before the first write. It writes only
-zeros, verifies every chunk, rechecks the process and challenge, then requires a
-successful D reply. EOF, connection loss or timeout is never a success receipt.
+every byte of every arena must read back as zero, four reads per batch, before
+the first write. A debugger write prepares the whole 16 KiB page it lands in (as
+StikJIT's region preparation relies on), so it then writes one zero byte into
+each page and reads it back, 128 pages per batch. It writes only zeros, rechecks
+the process and challenge, then requires a successful D reply. A failed reply
+inside a batch is followed by the rest of that batch's replies, then the detach. EOF, connection loss or timeout is never a success receipt.
 No guest bytes, registers, breakpoints or arbitrary writes are supported.
 
 Semantic failures while stopped attempt a confirmed detach. Uncertain transport
 failures close the connection and report detachConfirmed=false; the configured
 detach-on-error policy is not itself proof of detachment. Protocol deadlines,
-bounded checksum/NACK retries and unsolicited/trailing-reply rejection preserve
-failure. No process memory or console output is logged. `DebugArenaClient` owns
+bounded checksum/NACK retries before no-ack mode and unsolicited/trailing-reply
+rejection preserve failure. No process memory or console output is logged. `DebugArenaClient` owns
 the managed stream/timer and closes it exactly once on terminal completion.
 
 ASan request tests: build/debug-request-unit-tests.log. Independent Python RSP
@@ -326,6 +331,12 @@ Builds build/debug-arena-{sim,device}-build.log pass; runtime and extension
 signatures verify for both. The only warning is unused AppIntents metadata.
 The signed app still excludes the original guest executable. Neither build was
 installed; the physical prototype and previous simulator installation are intact.
+
+Batched preparation (September 27, iPad Pro M5, iPadOS 27): Heroes III's
+109,854,720-byte arena was prepared and detached in 33.0 s, against 104.0 s when
+every byte was written and read back one command at a time, and the game's
+translated code ran from it. Apple's macOS debugserver prepares the 130-page
+fixture of `tools/test_native_debugserver.py` the same way.
 
 The required lifetime and IPC gate is now implemented below. The original
 boolean publisher remains the Mac-assisted path.
