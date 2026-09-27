@@ -263,3 +263,36 @@ CoreDevice screen-capture service, without a debugger, GPU readback injection,
 or game input. The screenshot stays in ignored local logs. More than 1,200
 Metal shader-library loads succeeded with no rejection logged in this run.
 Further menu interaction and gameplay validation require a manual keypress.
+
+## Small-block backing comparison
+
+`TOLKARA_SOFTWARE_VM_SMALL_BLOCKS=1` preallocates the bounded backing capacity
+as individual 16 KiB allocator blocks instead of one contiguous mmap. All blocks
+and metadata are allocated before the signal handlers are installed. Pages are
+zeroed before first use or reuse; accesses, atomics and recycling share the same
+implementation and tests for both layouts. The default remains contiguous.
+
+The standalone iPad probe on 2026-09-27 held a native 64 GiB reservation alongside
+1 GiB of small blocks, in either allocation order, and verified their contents.
+The same probe could not hold the native reservation alongside a contiguous
+1 GiB or 4 GiB bank. This establishes an allocation-placement option; game
+performance still requires a separate comparison. The experimental combination
+uses `TOLKARA_SOFTWARE_VM_NATIVE_POOL_MB=65536`, routing other large reservations
+through software while attempting the full 64 GiB reservation natively. The
+preferred pool is reserved before guest initializers and is handed out only for
+an exact eligible anonymous request, after applying its requested protections.
+An unused pending reservation is released at shutdown or when changing the
+preference.
+
+The larger 4 GiB small-block probe failed to retain the native pool: only about
+1.6 GiB of its blocks stayed below the large-mapping window, and the remainder
+used that window. The first 4 GiB game comparison likewise fell back to software
+for all three large pools. Its first 87 million emulated accesses fetched more
+than 99.9% of instructions from the loader alias, so checked kernel instruction
+reads were not the main cost in that interval. With 1 GiB backing and early reservation, the subsequent iPad game launch
+successfully received the full native 64 GiB mapping. Frame timing and sustained
+backing use still need validation; this establishes placement, not playability.
+
+Trace progress now reports aggregate instruction-fetch counts for the loader's
+readable alias and the checked kernel fallback. It records no instruction
+contents and continues after the first hour of execution.

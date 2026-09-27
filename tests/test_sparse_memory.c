@@ -4,13 +4,15 @@
 #include <stdio.h>
 #include <string.h>
 
+static GMResult (*initialize)(GMSparseMemory *,uint64_t,uint64_t,size_t);
+
 static const uint64_t base = UINT64_C(0x10000000000);
 #define PAGE GM_PAGE_SIZE
 #define GIB (UINT64_C(1) << 30)
 
 static void write_statistics(void) {
     GMSparseMemory m={0};
-    assert(gm_sparse_init(&m,base,GIB,2*PAGE)==GM_OK);
+    assert(initialize(&m,base,GIB,2*PAGE)==GM_OK);
     assert(gm_sparse_map(&m,base,PAGE,GM_READ|GM_WRITE,GM_READ|GM_WRITE,false)==GM_OK);
     uint64_t value=7,old=0,wrong=9;
     assert(gm_sparse_stats(&m).write_operations==0);
@@ -31,7 +33,7 @@ static void write_statistics(void) {
 
 static void large_reservations(void) {
     GMSparseMemory m = {0};
-    assert(gm_sparse_init(&m, base, 256 * GIB, 16 * PAGE) == GM_OK);
+    assert(initialize(&m, base, 256 * GIB, 16 * PAGE) == GM_OK);
     const uint64_t sizes[] = {16 * GIB, 64 * GIB, 32 * GIB};
     uint64_t addresses[3], expected = base;
     for (unsigned i = 0; i < 3; ++i) {
@@ -72,7 +74,7 @@ static void large_reservations(void) {
 
 static void exhaustion_and_recycling(void) {
     GMSparseMemory m = {0};
-    assert(gm_sparse_init(&m, base, GIB, 2 * PAGE) == GM_OK);
+    assert(initialize(&m, base, GIB, 2 * PAGE) == GM_OK);
     assert(gm_sparse_map(&m, base, GIB, 3, 7, false) == GM_OK);
     uint64_t value = 7, out = 0;
     assert(gm_sparse_write(&m, base, &value, 8) == GM_OK);
@@ -107,7 +109,7 @@ static uint32_t random_value(uint32_t *state) {
 }
 static void reference_comparison(void) {
     GMSparseMemory sparse = {0}; GuestMemory dense = {0};
-    assert(gm_sparse_init(&sparse, base, 64 * PAGE, 64 * PAGE) == GM_OK);
+    assert(initialize(&sparse, base, 64 * PAGE, 64 * PAGE) == GM_OK);
     uint32_t rng = 0x31415926;
     for (unsigned step = 0; step < 20000; ++step) {
         uint64_t a = base + (random_value(&rng) % 60) * PAGE;
@@ -163,7 +165,7 @@ static void *worker(void *raw) {
 }
 static void concurrent_pages(void) {
     GMSparseMemory m = {0};
-    assert(gm_sparse_init(&m, base, GIB, 8 * PAGE) == GM_OK);
+    assert(initialize(&m, base, GIB, 8 * PAGE) == GM_OK);
     assert(gm_sparse_map(&m, base, GIB, 3, 3, false) == GM_OK);
     pthread_t threads[8]; Worker workers[8];
     for (unsigned i = 0; i < 8; ++i) {
@@ -176,7 +178,7 @@ static void concurrent_pages(void) {
 }
 static void atomic_operations(void) {
     GMSparseMemory m = {0};
-    assert(gm_sparse_init(&m, base, 2 * PAGE, PAGE) == GM_OK);
+    assert(initialize(&m, base, 2 * PAGE, PAGE) == GM_OK);
     assert(gm_sparse_map(&m, base, 2 * PAGE, 3, 3, false) == GM_OK);
     const struct { GMSparseAtomic operation; uint64_t initial, operand, expected; } cases[] = {
         {GM_ATOMIC_ADD, 250, 9, 3}, {GM_ATOMIC_CLEAR, 0xa5, 0x81, 0x24},
@@ -220,7 +222,7 @@ static void atomic_operations(void) {
 }
 static void exclusive_page_isolation(void) {
     GMSparseMemory m={0};
-    assert(gm_sparse_init(&m,base,3*PAGE,3*PAGE)==GM_OK);
+    assert(initialize(&m,base,3*PAGE,3*PAGE)==GM_OK);
     assert(gm_sparse_map(&m,base,3*PAGE,3,3,false)==GM_OK);
     GMSparseExclusive monitor={0};uint64_t value=0,desired=41;bool stored=false;
     // First-write allocation on another page does not break this monitor.
@@ -278,7 +280,7 @@ static void *atomic_worker(void *raw) {
 }
 static void concurrent_atomics(void) {
     GMSparseMemory m = {0};
-    assert(gm_sparse_init(&m, base, PAGE, PAGE) == GM_OK);
+    assert(initialize(&m, base, PAGE, PAGE) == GM_OK);
     assert(gm_sparse_map(&m, base, PAGE, 3, 3, false) == GM_OK);
     pthread_t threads[8]; Worker workers[8];
     for (unsigned i = 0; i < 8; ++i) {
@@ -293,11 +295,11 @@ static void concurrent_atomics(void) {
 }
 static void malformed_and_limits(void) {
     GMSparseMemory m = {0}; uint64_t a;
-    assert(gm_sparse_init(&m, 0, PAGE, PAGE) == GM_INVALID);
-    assert(gm_sparse_init(&m, base, UINT64_MAX, PAGE) == GM_INVALID);
-    assert(gm_sparse_init(&m, base, GIB, PAGE - 1) == GM_INVALID);
-    assert(gm_sparse_init(&m, base, GIB, PAGE) == GM_OK);
-    assert(gm_sparse_init(&m, base, GIB, PAGE) == GM_INVALID);
+    assert(initialize(&m, 0, PAGE, PAGE) == GM_INVALID);
+    assert(initialize(&m, base, UINT64_MAX, PAGE) == GM_INVALID);
+    assert(initialize(&m, base, GIB, PAGE - 1) == GM_INVALID);
+    assert(initialize(&m, base, GIB, PAGE) == GM_OK);
+    assert(initialize(&m, base, GIB, PAGE) == GM_INVALID);
     assert(gm_sparse_map(&m, base + 1, PAGE, 3, 3, false) == GM_INVALID);
     assert(gm_sparse_map(&m, base, PAGE, 4, 3, false) == GM_INVALID);
     assert(gm_sparse_map(&m, UINT64_MAX - PAGE + 1, PAGE, 3, 3, false) == GM_INVALID);
@@ -311,8 +313,11 @@ static void malformed_and_limits(void) {
     gm_sparse_destroy(&m); gm_sparse_destroy(&m);
 }
 int main(void) {
-    write_statistics();
-    large_reservations(); exhaustion_and_recycling(); reference_comparison();
-    concurrent_pages(); atomic_operations(); exclusive_page_isolation(); concurrent_atomics(); malformed_and_limits();
+    for(unsigned layout=0;layout<2;layout++) {
+        initialize=layout?gm_sparse_init_blocks:gm_sparse_init;
+        write_statistics();
+        large_reservations(); exhaustion_and_recycling(); reference_comparison();
+        concurrent_pages(); atomic_operations(); exclusive_page_isolation(); concurrent_atomics(); malformed_and_limits();
+    }
     puts("PASS: 112 GiB sparse reservations, independent reference comparison, atomic failures, recycling and concurrent pages");
 }

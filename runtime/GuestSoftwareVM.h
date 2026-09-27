@@ -7,6 +7,8 @@
 // Process-lifetime opt-in. The caller restricts this to the authorized Cyberpunk
 // profile (or our test fixtures). No guest instructions are patched or logged.
 bool gsv_start(size_t backing_bytes, size_t force_threshold, int log_fd);
+// Experimental backing placement, initialized before installing handlers.
+bool gsv_start_blocks(size_t backing_bytes, size_t force_threshold, int log_fd);
 void gsv_stop(void); // Only after every software-address user has stopped.
 bool gsv_enabled(void);
 bool gsv_address(const void *address);
@@ -44,3 +46,7 @@ size_t gsv_fread(void *buffer, size_t size, size_t count, FILE *file);
 size_t gsv_fwrite(const void *buffer, size_t size, size_t count, FILE *file);
 GMSparseStats gsv_stats(void);
 uint64_t gsv_fault_count(void);
+
+// Aggregate runtime fetch paths only; no application instructions or PCs.
+typedef struct { uint64_t alias_fetches, checked_fetches; } GSVFetchStats;
+GSVFetchStats gsv_fetch_stats(void);

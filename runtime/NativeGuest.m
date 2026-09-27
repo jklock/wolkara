@@ -253,6 +253,7 @@ static void schedule_memory_progress(unsigned tick, uint64_t previous) {
         if(!gsv_enabled()) return;
         uint64_t faults=gsv_fault_count();
         GMSparseStats stats=gsv_stats();
+        GSVFetchStats fetches=gsv_fetch_stats();
         thread_act_array_t threads=NULL; mach_msg_type_number_t count=0;
         unsigned running=0,waiting=0,other=0;
         if(task_threads(mach_task_self(),&threads,&count)==KERN_SUCCESS) {
@@ -270,6 +271,8 @@ static void schedule_memory_progress(unsigned tick, uint64_t previous) {
         log_once("[software-vm] progress tick=%u faults=%llu delta=%llu backing_pages=%zu writes=%llu threads_running=%u waiting=%u other=%u\n",
             tick,(unsigned long long)faults,(unsigned long long)(faults-previous),stats.resident_pages,
             (unsigned long long)stats.write_operations,running,waiting,other);
+        log_once("[software-vm] fetch paths tick=%u alias=%llu checked=%llu\n",tick,
+            (unsigned long long)fetches.alias_fetches,(unsigned long long)fetches.checked_fetches);
         task_vm_info_data_t vm={0};mach_msg_type_number_t vm_count=TASK_VM_INFO_COUNT;
         if(task_info(mach_task_self(),TASK_VM_INFO,(task_info_t)&vm,&vm_count)==KERN_SUCCESS &&
            vm_count>=TASK_VM_INFO_REV1_COUNT)
@@ -282,7 +285,7 @@ static void schedule_memory_progress(unsigned tick, uint64_t previous) {
                 log_once("[software-vm] wait tick=%u t%u %s address=%p software=%d\n",tick,thread,
                     wait.operation,(void *)wait.address,gsv_address((void *)wait.address));
         }
-        if(tick<360) schedule_memory_progress(tick+1,faults);
+        schedule_memory_progress(tick+1,faults);
     });
 }
 // Optional diagnostics after debugger detachment. Log our own threads'
@@ -1780,7 +1783,12 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
             forced=strtoull(force,&rest,10);
             if(*rest || forced>(1ULL<<20)) { LOG("[software-vm] invalid forced reservation threshold\n"); goto done; }
         }
-        if(!gsv_start((size_t)megabytes<<20,(size_t)forced<<20,fileno(guest.log))) {
+        const char *block_option=getenv("TOLKARA_SOFTWARE_VM_SMALL_BLOCKS");
+        bool small_blocks=block_option && !strcmp(block_option,"1");
+        bool started=small_blocks ? gsv_start_blocks((size_t)megabytes<<20,(size_t)forced<<20,fileno(guest.log)) :
+                                    gsv_start((size_t)megabytes<<20,(size_t)forced<<20,fileno(guest.log));
+        LOG("[software-vm] backing layout=%s\n",small_blocks?"small allocator blocks":"contiguous mmap");
+        if(!started) {
             LOG("[software-vm] initialization failed\n"); goto done;
         }
         const char *native_pool=getenv("TOLKARA_SOFTWARE_VM_NATIVE_POOL_MB");

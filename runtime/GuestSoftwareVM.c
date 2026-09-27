@@ -20,9 +20,10 @@ static uint64_t base, span;
 static void *guard;
 static size_t force_threshold;
 static size_t native_pool_size, forced_pool_size;
+static _Atomic(void *) pending_native_pool;
 static int log_fd = -1;
 static atomic_bool enabled;
-static atomic_uint_fast64_t fault_count;
+static atomic_uint_fast64_t fault_count, alias_fetches, checked_fetches;
 static uintptr_t code_base, code_alias;
 static size_t code_size;
 static atomic_bool code_alias_enabled;
@@ -40,7 +41,7 @@ static bool rounded(size_t size, uint64_t *result) {
     return true;
 }
 bool gsv_enabled(void) { return atomic_load_explicit(&enabled, memory_order_acquire); }
-void gsv_prefer_native_pool(size_t size) { native_pool_size=size; }
+
 void gsv_force_pool(size_t size) { forced_pool_size=size; }
 bool gsv_address(const void *address) {
     uint64_t a = (uintptr_t)address;
@@ -53,6 +54,17 @@ static void report(const char *message, uint64_t value) {
     line[n++] = '0'; line[n++] = 'x';
     for (int shift = 60; shift >= 0; shift -= 4) line[n++] = "0123456789abcdef"[(value >> shift) & 15];
     line[n++] = '\n'; (void)write(log_fd, line, n);
+}
+void gsv_prefer_native_pool(size_t size) {
+    // Startup-only: reserve before initializers fragment the native VM range.
+    // The application receives this mapping only on an exact eligible request.
+    void *previous=atomic_exchange(&pending_native_pool,NULL);
+    if(previous)munmap(previous,native_pool_size);
+    native_pool_size=size;
+    if(!gsv_enabled() || !size)return;
+    void *reserved=mmap(NULL,size,PROT_NONE,MAP_PRIVATE|MAP_ANON,-1,0);
+    if(reserved==MAP_FAILED)report("[software-vm] early native pool failed errno ",errno);
+    else { atomic_store(&pending_native_pool,reserved);report("[software-vm] early native pool bytes ",size); }
 }
 bool gsv_code_alias(const void *executable, const void *readable, size_t size) {
     uintptr_t start=(uintptr_t)executable, alias=(uintptr_t)readable;
@@ -73,9 +85,11 @@ bool gsv_fetch_instruction(uint64_t pc,uint32_t *instruction) {
     if(!instruction || (pc&3) || gsv_address((void *)(uintptr_t)pc)) return false;
     if(atomic_load_explicit(&code_alias_enabled,memory_order_acquire) &&
        pc>=code_base && pc-code_base<=code_size-4) {
+        atomic_fetch_add_explicit(&alias_fetches,1,memory_order_relaxed);
         memcpy(instruction,(const void *)(code_alias+(uintptr_t)(pc-code_base)),sizeof *instruction);
         return true;
     }
+    atomic_fetch_add_explicit(&checked_fetches,1,memory_order_relaxed);
     vm_size_t actual=0;
     return vm_read_overwrite(mach_task_self(),(vm_address_t)pc,sizeof *instruction,
                             (vm_address_t)instruction,&actual)==KERN_SUCCESS && actual==sizeof *instruction;
@@ -184,7 +198,7 @@ int gsv_sigaction(int number, const struct sigaction *action, struct sigaction *
     pthread_mutex_unlock(&action_lock);
     return result;
 }
-bool gsv_start(size_t backing_bytes, size_t force, int fd) {
+static bool start(size_t backing_bytes, size_t force, int fd, bool small_blocks) {
     if (gsv_enabled()) return false;
     span = UINT64_C(512) << 30; base = UINT64_C(1) << 40;
     guard = MAP_FAILED;
@@ -196,7 +210,9 @@ bool gsv_start(size_t backing_bytes, size_t force, int fd) {
         if (guard == MAP_FAILED) return false;
         base = (uintptr_t)guard;
     }
-    if (gm_sparse_init(&memory, base, span, backing_bytes) != GM_OK) {
+    GMResult initialized=small_blocks ? gm_sparse_init_blocks(&memory,base,span,backing_bytes) :
+                                       gm_sparse_init(&memory,base,span,backing_bytes);
+    if (initialized != GM_OK) {
         if (guard != MAP_FAILED) munmap(guard, span);
         return false;
     }
@@ -212,16 +228,26 @@ bool gsv_start(size_t backing_bytes, size_t force, int fd) {
         return false;
     }
     log_fd = fd; force_threshold = force; native_pool_size=forced_pool_size=0; atomic_store(&fault_count, 0);
+    atomic_store(&pending_native_pool,NULL);
+    atomic_store(&alias_fetches,0);atomic_store(&checked_fetches,0);
     code_base=code_alias=code_size=0;atomic_store(&code_alias_enabled,false);
     atomic_store_explicit(&enabled, true, memory_order_release);
     report("[software-vm] base ", base); report("[software-vm] backing bytes ", backing_bytes);
     return true;
+}
+bool gsv_start(size_t backing_bytes, size_t force, int fd) {
+    return start(backing_bytes,force,fd,false);
+}
+bool gsv_start_blocks(size_t backing_bytes, size_t force, int fd) {
+    return start(backing_bytes,force,fd,true);
 }
 void gsv_stop(void) {
     if (!gsv_enabled()) return;
     atomic_store(&enabled, false);
     atomic_store(&code_alias_enabled,false);
     sigaction(SIGSEGV, &original[0], NULL); sigaction(SIGBUS, &original[1], NULL);
+    void *pending=atomic_exchange(&pending_native_pool,NULL);
+    if(pending)munmap(pending,native_pool_size);
     gm_sparse_destroy(&memory); if (guard != MAP_FAILED) munmap(guard, span);
 }
 void *gsv_map(void *address, size_t size, int prot, int flags, int fd, off_t offset) {
@@ -235,6 +261,13 @@ void *gsv_map(void *address, size_t size, int prot, int flags, int fd, off_t off
                  ((forced_pool_size && size == forced_pool_size) ||
                   (force_threshold && size >= force_threshold) ||
                   (native_pool_size && size >= (64u<<20) && size != native_pool_size));
+    if(!address && eligible && !(flags&MAP_FIXED) && !force && size==native_pool_size) {
+        void *reserved=atomic_exchange(&pending_native_pool,NULL);
+        if(reserved) {
+            if(!mprotect(reserved,size,prot))return reserved;
+            int failure=errno;munmap(reserved,size);errno=failure;return MAP_FAILED;
+        }
+    }
     if (!software_hint && !force) {
         void *result = mmap(address, size, prot, flags, fd, offset);
         if (result != MAP_FAILED || errno != ENOMEM || size < (64u << 20)) return result;
@@ -474,3 +507,8 @@ size_t gsv_fread(void *b, size_t s, size_t n, FILE *f) { return stream_io(b, s, 
 size_t gsv_fwrite(const void *b, size_t s, size_t n, FILE *f) { return stream_io((void *)b, s, n, f, true); }
 GMSparseStats gsv_stats(void) { return gm_sparse_stats(&memory); }
 uint64_t gsv_fault_count(void) { return atomic_load(&fault_count); }
+
+GSVFetchStats gsv_fetch_stats(void) {
+    return (GSVFetchStats){atomic_load_explicit(&alias_fetches,memory_order_relaxed),
+                          atomic_load_explicit(&checked_fetches,memory_order_relaxed)};
+}
