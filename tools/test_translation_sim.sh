@@ -22,6 +22,9 @@ CC=(xcrun --sdk iphonesimulator clang -target arm64-apple-ios17.0-simulator -isy
 "${CC[@]}" -Itranslation/CoreGraphics translation/AKSupport/AKSupport.m translation/CoreGraphics/*.m translation/CoreGraphics/*.c \
     tests/test_displays.m $(cat translation/CoreGraphics/ldflags) -framework CoreGraphics -o build/emulation/test_displays
 xcrun simctl spawn "$SIM_ID" "$PWD/build/emulation/test_displays"
+"${CC[@]}" translation/AKSupport/AKSupport.m translation/CoreAudio/*.m tests/test_audio_hardware.m \
+    $(cat translation/CoreAudio/ldflags) -framework CoreAudio -o build/emulation/test_audio_hardware
+xcrun simctl spawn "$SIM_ID" "$PWD/build/emulation/test_audio_hardware"
 "${CC[@]}" -Itranslation/AppKit translation/AKSupport/AKSupport.m translation/AppKit/*.m tests/test_appkit_views.m \
     $(cat translation/AppKit/ldflags) -o build/emulation/test_appkit_views
 xcrun simctl spawn "$SIM_ID" "$PWD/build/emulation/test_appkit_views"
