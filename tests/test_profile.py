@@ -105,6 +105,7 @@ class ProfileTests(unittest.TestCase):
             for name in ['system.reg', 'volatile.reg', 'drive_c/windows/system32/kernel32.dll', '.wineserver/server-1-2/socket']:
                 (prefix / name).parent.mkdir(parents=True, exist_ok=True)
                 (prefix / name).write_text(name)
+            (prefix / 'drive_c/game/games').mkdir(parents=True)
             (prefix / 'dosdevices').mkdir()
             os.symlink('../drive_c', prefix / 'dosdevices' / 'c:')
             (prefix / 'drive_c/users/vk').mkdir(parents=True)
@@ -112,6 +113,9 @@ class ProfileTests(unittest.TestCase):
             staged = install.device_prefix(prefix, Path(directory) / 'prefix-stage')
             kept = sorted(str(p.relative_to(staged)) for p in staged.rglob('*') if not p.is_dir())
             self.assertEqual(kept, ['drive_c/windows/system32/kernel32.dll', 'system.reg', 'volatile.reg'])
+            # An empty folder the game saves into comes along; the links' folders do not.
+            self.assertTrue((staged / 'drive_c/game/games').is_dir())
+            self.assertFalse((staged / 'dosdevices').exists() or (staged / '.wineserver').exists())
 
 
 if __name__ == '__main__': unittest.main()
