@@ -42,8 +42,35 @@ static BOOL eventMonitorsEnabled(void) {
 // Where the pointer is, in screen coordinates (bottom-left origin), as the
 // last mouse event left it.
 static NSPoint mouseScreenLocation;
-@implementation NSEvent
+@implementation NSEvent { AKQuartzEvent *_quartz; }
 + (NSPoint)mouseLocation { return mouseScreenLocation; }
+// The Quartz view of the event, made once: its location in global display
+// coordinates (top-left origin), and the fields Wine's Mac driver reads.
+- (CFTypeRef)CGEvent {
+    @synchronized (self) {
+        if (!_quartz) {
+            AKQuartzEvent *event = [AKQuartzEvent new];
+            event.type = (uint32_t)_type;   // AppKit's and Quartz's numbers agree for these events
+            NSWindow *window = self.window;
+            NSPoint screen = window ? [window convertPointToScreen:_locationInWindow] : mouseScreenLocation;
+            event.location = CGPointMake(screen.x, NSScreen.screens.firstObject.frame.size.height - screen.y);
+            event.timestamp = (uint64_t)(_timestamp * 1e9);
+            event.flags = _modifierFlags;
+            [event setIntegerValueField:1 value:_clickCount];                  // kCGMouseEventClickState
+            [event setIntegerValueField:3 value:_buttonNumber];                // kCGMouseEventButtonNumber
+            [event setDoubleValueField:4 value:_deltaX];                       // kCGMouseEventDeltaX
+            [event setDoubleValueField:5 value:_deltaY];                       // kCGMouseEventDeltaY
+            [event setIntegerValueField:8 value:_isARepeat];                   // kCGKeyboardEventAutorepeat
+            [event setIntegerValueField:9 value:_keyCode];                     // kCGKeyboardEventKeycode
+            [event setIntegerValueField:10 value:40];                          // kCGKeyboardEventKeyboardType: ANSI, as LMGetKbdType
+            [event setIntegerValueField:11 value:(int64_t)lround(_deltaY)];    // kCGScrollWheelEventDeltaAxis1
+            [event setIntegerValueField:12 value:(int64_t)lround(_deltaX)];    // kCGScrollWheelEventDeltaAxis2
+            [event setIntegerValueField:40 value:getpid()];                    // kCGEventTargetUnixProcessID
+            _quartz = event;
+        }
+        return (__bridge CFTypeRef)_quartz;
+    }
+}
 - (NSString *)description { return [NSString stringWithFormat:@"<NSEvent type=%lu loc=%@ key=%d>", (unsigned long)_type, NSStringFromCGPoint(_locationInWindow), _keyCode]; }
 + (id)addLocalMonitorForEventsMatchingMask:(NSUInteger)mask handler:(id)handler {
     return eventMonitorsEnabled() ? AKEventMonitorAdd(mask, handler) : nil;
@@ -423,8 +450,24 @@ static void logLayer(CALayer *layer,unsigned depth) {
 }
 @implementation NSWindow { UIWindow *_uiWindow; AKHostView *_host; NSRect _contentRect; NSResponder *_firstResponder; NSUInteger _collectionBehavior; }
 - (instancetype)initWithContentRect:(NSRect)r styleMask:(NSUInteger)m backing:(NSUInteger)b defer:(BOOL)d {
-    if ((self = [super init])) { _contentRect = r; _styleMask=m; self.nextResponder = NSApp; }
+    static _Atomic NSInteger numbers;
+    if ((self = [super init])) { _contentRect = r; _styleMask=m; self.nextResponder = NSApp; _windowNumber = ++numbers; }
     return self;
+}
+// Visible windows, frontmost first: the window shown last is in front.
++ (NSArray<NSNumber *> *)windowNumbersWithOptions:(NSUInteger)options {
+    (void)options;
+    NSMutableArray<NSNumber *> *numbers = [NSMutableArray new];
+    for (NSWindow *window in NSApp.windows.reverseObjectEnumerator) if (window.visible) [numbers addObject:@(window.windowNumber)];
+    return numbers;
+}
++ (NSInteger)windowNumberAtPoint:(NSPoint)point belowWindowWithWindowNumber:(NSInteger)above {
+    BOOL below = above == 0;
+    for (NSWindow *window in NSApp.windows.reverseObjectEnumerator) {
+        if (!below) { below = window.windowNumber == above; continue; }
+        if (window.visible && CGRectContainsPoint(window.frame, point)) return window.windowNumber;
+    }
+    return 0;
 }
 - (instancetype)initWithContentRect:(NSRect)r styleMask:(NSUInteger)m backing:(NSUInteger)b defer:(BOOL)d screen:(id)s {
     return [self initWithContentRect:r styleMask:m backing:b defer:d];
@@ -591,6 +634,7 @@ static void logLayer(CALayer *layer,unsigned depth) {
 - (NSArray<NSWindow *> *)windows { return _windows; }
 - (NSEvent *)currentEvent { return _currentEvent; }
 - (NSWindow *)keyWindow { return _windows.lastObject; }
+- (NSWindow *)windowWithWindowNumber:(NSInteger)number { for (NSWindow *window in _windows) if (window.windowNumber == number) return window; return nil; }
 - (NSWindow *)mainWindow { return _windows.lastObject; }
 - (BOOL)setActivationPolicy:(NSInteger)p { return YES; }
 - (BOOL)isActive { return _active; }
