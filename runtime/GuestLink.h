@@ -29,6 +29,15 @@ typedef struct {
 // Breadth first; one that cannot be read is counted.
 bool gl_load(GuestLinkSet *set, const GuestImage *executable, const char *executable_path,
              char *error, size_t error_size);
+// Libraries named beside the executable's own list, for a compatibility
+// runtime that opens its libraries by path at run time rather than linking
+// them: after gl_load, each absolute path (resolved, inside the folder) is
+// carried like a library the executable links, then what it links. A non-NULL
+// root, a folder that holds the executable, becomes the application folder.
+// Unreadable ones are counted as for gl_load; false when a path is not inside,
+// or the list is full.
+bool gl_carry(GuestLinkSet *set, const char *root, const char *const *paths, size_t count,
+              char *error, size_t error_size);
 // Where an install name points inside the application, if anywhere.
 bool gl_resolve(const GuestLinkSet *set, const GuestImage *from, const char *from_path,
                 const char *name, char *out, size_t size);

@@ -3,6 +3,7 @@
 #import "Images.h"
 #import "TextInput.h"
 #import <GameController/GameController.h>
+#import <objc/message.h>
 #import <objc/runtime.h>
 
 NSApplication *NSApp;
@@ -38,7 +39,38 @@ static BOOL eventMonitorsEnabled(void) {
     });
     return enabled;
 }
-@implementation NSEvent
+// Where the pointer is, in screen coordinates (bottom-left origin), as the
+// last mouse event left it.
+static NSPoint mouseScreenLocation;
+@implementation NSEvent { AKQuartzEvent *_quartz; }
++ (NSPoint)mouseLocation { return mouseScreenLocation; }
+// The Quartz view of the event, made once: its location in global display
+// coordinates (top-left origin), and the fields Wine's Mac driver reads.
+- (CFTypeRef)CGEvent {
+    @synchronized (self) {
+        if (!_quartz) {
+            AKQuartzEvent *event = [AKQuartzEvent new];
+            event.type = (uint32_t)_type;   // AppKit's and Quartz's numbers agree for these events
+            NSWindow *window = self.window;
+            NSPoint screen = window ? [window convertPointToScreen:_locationInWindow] : mouseScreenLocation;
+            event.location = CGPointMake(screen.x, NSScreen.screens.firstObject.frame.size.height - screen.y);
+            event.timestamp = (uint64_t)(_timestamp * 1e9);
+            event.flags = _modifierFlags;
+            [event setIntegerValueField:1 value:_clickCount];                  // kCGMouseEventClickState
+            [event setIntegerValueField:3 value:_buttonNumber];                // kCGMouseEventButtonNumber
+            [event setDoubleValueField:4 value:_deltaX];                       // kCGMouseEventDeltaX
+            [event setDoubleValueField:5 value:_deltaY];                       // kCGMouseEventDeltaY
+            [event setIntegerValueField:8 value:_isARepeat];                   // kCGKeyboardEventAutorepeat
+            [event setIntegerValueField:9 value:_keyCode];                     // kCGKeyboardEventKeycode
+            [event setIntegerValueField:10 value:40];                          // kCGKeyboardEventKeyboardType: ANSI, as LMGetKbdType
+            [event setIntegerValueField:11 value:(int64_t)lround(_deltaY)];    // kCGScrollWheelEventDeltaAxis1
+            [event setIntegerValueField:12 value:(int64_t)lround(_deltaX)];    // kCGScrollWheelEventDeltaAxis2
+            [event setIntegerValueField:40 value:getpid()];                    // kCGEventTargetUnixProcessID
+            _quartz = event;
+        }
+        return (__bridge CFTypeRef)_quartz;
+    }
+}
 - (NSString *)description { return [NSString stringWithFormat:@"<NSEvent type=%lu loc=%@ key=%d>", (unsigned long)_type, NSStringFromCGPoint(_locationInWindow), _keyCode]; }
 + (id)addLocalMonitorForEventsMatchingMask:(NSUInteger)mask handler:(id)handler {
     return eventMonitorsEnabled() ? AKEventMonitorAdd(mask, handler) : nil;
@@ -50,10 +82,17 @@ static BOOL eventMonitorsEnabled(void) {
 
 #pragma mark - NSView
 
-@implementation NSView { NSMutableArray<NSView *> *_subviews; NSMutableArray<NSDictionary *> *_cursorRects; __weak NSView *_superview; }
+@implementation NSTrackingArea
+- (instancetype)initWithRect:(NSRect)rect options:(NSUInteger)options owner:(id)owner userInfo:(NSDictionary *)userInfo {
+    if ((self = [super init])) { _rect = rect; _options = options; _owner = owner; _userInfo = [userInfo copy]; }
+    return self;
+}
+@end
+
+@implementation NSView { NSMutableArray<NSView *> *_subviews; NSMutableArray<NSDictionary *> *_cursorRects; NSMutableArray<NSTrackingArea *> *_trackingAreas; __weak NSView *_superview; }
 - (instancetype)init { return [self initWithFrame:CGRectZero]; }
 - (instancetype)initWithFrame:(NSRect)frame {
-    if ((self = [super init])) { _frame = frame; _bounds = (CGRect){CGPointZero, frame.size}; _subviews = [NSMutableArray new]; _cursorRects=[NSMutableArray new]; }
+    if ((self = [super init])) { _frame = frame; _bounds = (CGRect){CGPointZero, frame.size}; _subviews = [NSMutableArray new]; _cursorRects=[NSMutableArray new]; _trackingAreas=[NSMutableArray new]; }
     return self;
 }
 - (CALayer *)makeBackingLayer { return [CALayer layer]; }
@@ -63,6 +102,8 @@ static BOOL eventMonitorsEnabled(void) {
 }
 - (void)setLayer:(CALayer *)l {
     _layer = l;
+    // As AppKit's: a view's layer is placed by its origin, which Wine's Mac driver sets as the position.
+    l.anchorPoint = CGPointZero;
     l.frame = _frame; l.delegate = nil;
 }
 - (void)setFrame:(NSRect)f {
@@ -91,6 +132,28 @@ static BOOL eventMonitorsEnabled(void) {
     [self viewDidMoveToWindow];
 }
 - (void)viewDidMoveToWindow {}
+- (NSArray<NSTrackingArea *> *)trackingAreas { return [_trackingAreas copy]; }
+- (void)addTrackingArea:(NSTrackingArea *)area { if (area && ![_trackingAreas containsObject:area]) [_trackingAreas addObject:area]; }
+- (void)removeTrackingArea:(NSTrackingArea *)area { if (area) [_trackingAreas removeObject:area]; }
+- (void)updateTrackingAreas {}
+- (BOOL)wantsUpdateLayer { return NO; }
+- (void)updateLayer {}
+- (void)setNeedsDisplay:(BOOL)flag {
+    if (!flag) { _needsDisplay = NO; return; }
+    if (_needsDisplay) return;
+    _needsDisplay = YES;
+    // One pass per turn of the main run loop, however often it is asked for.
+    dispatch_async(dispatch_get_main_queue(), ^{ [self displayIfNeeded]; });
+}
+- (void)setNeedsDisplayInRect:(NSRect)rect { (void)rect; self.needsDisplay = YES; }
+- (void)displayIfNeeded { if (_needsDisplay) [self display]; }
+- (void)display {
+    _needsDisplay = NO;
+    if (!self.wantsUpdateLayer) return;
+    [CATransaction begin]; [CATransaction setDisableActions:YES];
+    [self updateLayer];
+    [CATransaction commit];
+}
 - (void)discardCursorRects { [_cursorRects removeAllObjects]; }
 - (void)resetCursorRects { [self discardCursorRects]; }
 - (void)addCursorRect:(NSRect)rect cursor:(NSCursor *)cursor { if(cursor) [_cursorRects addObject:@{@"rect":[NSValue valueWithCGRect:rect],@"cursor":cursor}]; }
@@ -227,6 +290,7 @@ static NSEventModifierFlags AKMods(UIKeyModifierFlags f) {
     e.type = t; e.window = self.nsWindow; e.modifierFlags = _mods; e.buttonNumber = b; e.clickCount = 1;
     e.timestamp = NSProcessInfo.processInfo.systemUptime;
     e.locationInWindow = CGPointMake(p.x, self.bounds.size.height - p.y); self.nsWindow.ak_mouseLocation=e.locationInWindow;   // AppKit: bottom-left origin
+    mouseScreenLocation=[self.nsWindow convertPointToScreen:e.locationInWindow];
     e.deltaX = p.x - _last.x; e.deltaY = p.y - _last.y; _last = p;
     NSView *view=self.nsWindow.contentView;
     NSCursor *cursor=[view ak_cursorAtPoint:[view convertPoint:e.locationInWindow fromView:nil]];
@@ -386,8 +450,24 @@ static void logLayer(CALayer *layer,unsigned depth) {
 }
 @implementation NSWindow { UIWindow *_uiWindow; AKHostView *_host; NSRect _contentRect; NSResponder *_firstResponder; NSUInteger _collectionBehavior; }
 - (instancetype)initWithContentRect:(NSRect)r styleMask:(NSUInteger)m backing:(NSUInteger)b defer:(BOOL)d {
-    if ((self = [super init])) { _contentRect = r; _styleMask=m; self.nextResponder = NSApp; }
+    static _Atomic NSInteger numbers;
+    if ((self = [super init])) { _contentRect = r; _styleMask=m; self.nextResponder = NSApp; _windowNumber = ++numbers; }
     return self;
+}
+// Visible windows, frontmost first: the window shown last is in front.
++ (NSArray<NSNumber *> *)windowNumbersWithOptions:(NSUInteger)options {
+    (void)options;
+    NSMutableArray<NSNumber *> *numbers = [NSMutableArray new];
+    for (NSWindow *window in NSApp.windows.reverseObjectEnumerator) if (window.visible) [numbers addObject:@(window.windowNumber)];
+    return numbers;
+}
++ (NSInteger)windowNumberAtPoint:(NSPoint)point belowWindowWithWindowNumber:(NSInteger)above {
+    BOOL below = above == 0;
+    for (NSWindow *window in NSApp.windows.reverseObjectEnumerator) {
+        if (!below) { below = window.windowNumber == above; continue; }
+        if (window.visible && CGRectContainsPoint(window.frame, point)) return window.windowNumber;
+    }
+    return 0;
 }
 - (instancetype)initWithContentRect:(NSRect)r styleMask:(NSUInteger)m backing:(NSUInteger)b defer:(BOOL)d screen:(id)s {
     return [self initWithContentRect:r styleMask:m backing:b defer:d];
@@ -421,6 +501,10 @@ static void logLayer(CALayer *layer,unsigned depth) {
 - (void)setMinSize:(NSSize)size { _contentMinSize=size; }   // frame and content sizes coincide here
 - (NSSize)minSize { return _contentMinSize; }
 - (void)setFrameOrigin:(NSPoint)origin { _contentRect.origin=origin; }
+- (NSRect)frameRectForContentRect:(NSRect)rect { return rect; }
+- (NSRect)contentRectForFrameRect:(NSRect)rect { return rect; }
++ (NSRect)frameRectForContentRect:(NSRect)rect styleMask:(NSUInteger)style { (void)style; return rect; }
++ (NSRect)contentRectForFrameRect:(NSRect)rect styleMask:(NSUInteger)style { (void)style; return rect; }
 - (NSResponder *)firstResponder { return _firstResponder ?: self; }
 - (BOOL)makeFirstResponder:(NSResponder *)r {
     if (r && ![r acceptsFirstResponder]) return NO;
@@ -440,7 +524,13 @@ static void logLayer(CALayer *layer,unsigned depth) {
 }
 - (void)ak_hostBoundsChanged:(CGRect)b {
     if (CGSizeEqualToSize(b.size, CGSizeZero)) return;
-    _contentView.layer.contentsScale = self.backingScaleFactor;
+    // As AppKit: the view may keep its own scale, as Wine's does when it draws
+    // one pixel a point.
+    CALayer *layer = _contentView.layer; CGFloat scale = self.backingScaleFactor;
+    SEL keep = @selector(layer:shouldInheritContentsScale:fromWindow:);
+    if (layer.contentsScale != scale && (![_contentView respondsToSelector:keep] ||
+        ((BOOL (*)(id, SEL, CALayer *, CGFloat, NSWindow *))objc_msgSend)(_contentView, keep, layer, scale, self)))
+        layer.contentsScale = scale;
     BOOL resized = !CGSizeEqualToSize(_contentView.frame.size, b.size);
     _contentView.frame = b;
     if (resized) {
@@ -460,7 +550,10 @@ static void logLayer(CALayer *layer,unsigned depth) {
     [_host layoutIfNeeded];
     if(_host) [self ak_hostBoundsChanged:_host.bounds];
 }
-- (void)makeKeyAndOrderFront:(id)sender {
+// Every way of showing a window ends here, never in a method a guest's window
+// class may override: Wine's makeKeyAndOrderFront: orders with orderFront:.
+- (void)makeKeyAndOrderFront:(id)sender { (void)sender; [self ak_orderFront]; }
+- (void)ak_orderFront {
     BOOL wasKey=self.keyWindow;
     if (!_uiWindow) {
         UIWindowScene *scene = nil;
@@ -494,9 +587,11 @@ static void logLayer(CALayer *layer,unsigned depth) {
     for(UIWindow *window in _uiWindow.windowScene.windows) AKLog(@"UIKit window %@ hidden=%d key=%d level=%g root=%@",window,window.hidden,window.keyWindow,window.windowLevel,window.rootViewController);
     logLayer(_uiWindow.layer,0);
 }
-- (void)orderFront:(id)s { [self makeKeyAndOrderFront:s]; }
+// One game surface: shown is key.
+- (void)orderFront:(id)sender { (void)sender; [self ak_orderFront]; }
+- (void)makeKeyWindow { if (self.visible) [self ak_orderFront]; }
 - (void)orderOut:(id)sender { _uiWindow.hidden = YES; uncoverLauncher(); }
-- (void)setIsVisible:(BOOL)visible { visible ? [self makeKeyAndOrderFront:nil] : [self orderOut:nil]; }
+- (void)setIsVisible:(BOOL)visible { visible ? [self ak_orderFront] : [self orderOut:nil]; }
 - (void)makeMainWindow { }   // single game surface; already key
 - (void)close { [self orderOut:nil]; [(NSMutableArray *)NSApp.windows removeObject:self]; }
 - (void)sendEvent:(NSEvent *)e {
@@ -519,6 +614,8 @@ static void logLayer(CALayer *layer,unsigned depth) {
 
 #pragma mark - NSWindowController
 
+@implementation NSPanel
+@end
 @implementation NSWindowController { NSWindow *_window; }
 - (instancetype)initWithWindow:(NSWindow *)window { if ((self=[super init])) _window=window; return self; }
 - (NSWindow *)window { return _window; }
@@ -547,6 +644,7 @@ static void logLayer(CALayer *layer,unsigned depth) {
 - (NSArray<NSWindow *> *)windows { return _windows; }
 - (NSEvent *)currentEvent { return _currentEvent; }
 - (NSWindow *)keyWindow { return _windows.lastObject; }
+- (NSWindow *)windowWithWindowNumber:(NSInteger)number { for (NSWindow *window in _windows) if (window.windowNumber == number) return window; return nil; }
 - (NSWindow *)mainWindow { return _windows.lastObject; }
 - (BOOL)setActivationPolicy:(NSInteger)p { return YES; }
 - (BOOL)isActive { return _active; }

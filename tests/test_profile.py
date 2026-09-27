@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -36,6 +37,85 @@ class ProfileTests(unittest.TestCase):
                         {'archive/mac': '../Mac'}, {'archive/mac': 'archive/Mac'}, {'archive/mac': 'mac'},
                         {'archive/mac': 'Other'}):
             with self.assertRaises(ValueError, msg=repr(aliases)): check(self.write({**good, 'caseAliases': aliases}))
+
+    def test_runtime_command_line(self):
+        # A compatibility runtime elsewhere in Documents, with its command line: data only.
+        good = {'id': 'w', 'name': 'W', 'workingDirectory': 'W/game', 'runtime': 'W/Runtime', 'executable': 'bin/run',
+                'arguments': ['game.exe', '--windowed'], 'environment': {'PREFIX': '${Documents}/W/prefix', '_X1': ''},
+                'libraries': ['lib/core.so'], 'codePool': 64}
+        check(self.write(good))
+        for change in ({'runtime': '../R'}, {'runtime': '/R'}, {'runtime': 'R/'}, {'runtime': ''}, {'runtime': 'R/./bin'},
+                       {'arguments': 'game.exe'}, {'arguments': [1]}, {'arguments': ['x'] * 65}, {'arguments': ['y' * 4097]},
+                       {'environment': ['A=1']}, {'environment': {'1X': 'a'}}, {'environment': {'A B': 'a'}},
+                       {'environment': {'A': 1}}, {'environment': {'A': 'y' * 4097}}, {'environment': {f'V{i}': '' for i in range(65)}},
+                       {'libraries': 'lib/core.so'}, {'libraries': ['../core.so']}, {'libraries': ['/lib/core.so']},
+                       {'libraries': ['lib/./core.so']}, {'libraries': [1]}, {'libraries': [f'l{i}.so' for i in range(65)]},
+                       {'codePool': 0}, {'codePool': 1025}, {'codePool': '64'}, {'codePool': 1.5}, {'codePool': True}):
+            with self.assertRaises(ValueError): check(self.write({**good, **change}))
+        # A runtime's libraries only come with a runtime.
+        without = {k: v for k, v in good.items() if k != 'runtime'}
+        with self.assertRaises(ValueError): check(self.write(without))
+        without = {k: v for k, v in good.items() if k not in ('runtime', 'libraries')}
+        with self.assertRaises(ValueError): check(self.write(without))
+
+    def test_heroes3_hd_settings(self):
+        # The staged copy's HD mod settings: pinned keys replaced in place, CRLF kept, defaults used on a fresh copy.
+        sys.path.insert(0, str(ROOT / 'profiles' / 'heroes3-hota'))
+        import install
+        with tempfile.TemporaryDirectory() as directory:
+            game = Path(directory)
+            folder = game / '_HD3_Data' / 'Settings'
+            folder.mkdir(parents=True)
+            (folder / '#default#hota.ini').write_bytes(b'<Version> = 1\r\n<Update.CheckAtStart> = 1\r\n<Graphics.RenderingMode> = -1\r\n')
+            install.hd_settings(game)
+            lines = (folder / 'hota.ini').read_bytes().split(b'\r\n')
+            self.assertEqual(lines, [b'<Version> = 1', b'<Update.CheckAtStart> = 0', b'<Graphics.RenderingMode> = 2', b''])
+            (folder / 'hota.ini').write_bytes(b'<Version> = 2\r\n<Update.CheckAtStart> = 1\r\n')
+            install.hd_settings(game)
+            self.assertEqual((folder / 'hota.ini').read_bytes(),
+                             b'<Graphics.RenderingMode> = 2\r\n<Version> = 2\r\n<Update.CheckAtStart> = 0\r\n')
+            (folder / 'hota.ini').unlink(); (folder / '#default#hota.ini').unlink()
+            install.hd_settings(game)
+            self.assertFalse((folder / 'hota.ini').exists())
+
+    def test_heroes3_device_runtime(self):
+        # The iPad gets the runtime's Unix side, data, 32-bit modules, the server library, the
+        # native modules a WoW64 process loads and the placed libraries: nothing else.
+        sys.path.insert(0, str(ROOT / 'profiles' / 'heroes3-hota'))
+        import install
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = Path(directory) / 'Wine'
+            files = ['bin/wine', 'bin/wineserver', 'bin/wineserver.so', 'share/wine/nls/l_intl.nls',
+                     'lib/wine/aarch64-unix/wine', 'lib/wine/aarch64-unix/ntdll.so',
+                     'lib/wine/i386-windows/kernel32.dll', 'lib/wine/i386-windows/libkernel32.a',
+                     'lib/wine/aarch64-windows/ntdll.dll', 'lib/wine/aarch64-windows/libwow64fex.dll',
+                     'lib/wine/aarch64-windows/shell32.dll', 'lib/libfreetype.6.dylib', 'lib/libavcodec.63.dylib']
+            for name in files:
+                (runtime / name).parent.mkdir(parents=True, exist_ok=True)
+                (runtime / name).write_text(name)
+            staged = install.device_runtime(runtime, Path(directory) / 'stage')
+            kept = sorted(str(p.relative_to(staged)) for p in staged.rglob('*') if p.is_file())
+            self.assertEqual(kept, sorted(['bin/wineserver.so', 'share/wine/nls/l_intl.nls', 'lib/wine/aarch64-unix/wine',
+                                           'lib/wine/aarch64-unix/ntdll.so', 'lib/wine/i386-windows/kernel32.dll',
+                                           'lib/wine/aarch64-windows/ntdll.dll', 'lib/wine/aarch64-windows/libwow64fex.dll',
+                                           'lib/libfreetype.6.dylib']))
+            self.assertEqual((staged / 'lib/wine/aarch64-unix/ntdll.so').read_text(), 'lib/wine/aarch64-unix/ntdll.so')
+            # The prefix goes without its links into this Mac and without a server's state.
+            prefix = Path(directory) / 'prefix'
+            for name in ['system.reg', 'volatile.reg', 'drive_c/windows/system32/kernel32.dll', '.wineserver/server-1-2/socket']:
+                (prefix / name).parent.mkdir(parents=True, exist_ok=True)
+                (prefix / name).write_text(name)
+            (prefix / 'drive_c/game/games').mkdir(parents=True)
+            (prefix / 'dosdevices').mkdir()
+            os.symlink('../drive_c', prefix / 'dosdevices' / 'c:')
+            (prefix / 'drive_c/users/vk').mkdir(parents=True)
+            os.symlink('/Users/vk/Documents', prefix / 'drive_c/users/vk/Documents')
+            staged = install.device_prefix(prefix, Path(directory) / 'prefix-stage')
+            kept = sorted(str(p.relative_to(staged)) for p in staged.rglob('*') if not p.is_dir())
+            self.assertEqual(kept, ['drive_c/windows/system32/kernel32.dll', 'system.reg', 'volatile.reg'])
+            # An empty folder the game saves into comes along; the links' folders do not.
+            self.assertTrue((staged / 'drive_c/game/games').is_dir())
+            self.assertFalse((staged / 'dosdevices').exists() or (staged / '.wineserver').exists())
 
 
 if __name__ == '__main__': unittest.main()

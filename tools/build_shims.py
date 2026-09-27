@@ -16,7 +16,9 @@ For library <Leaf>: hand-written sources in translation/<Leaf>/ are compiled fir
 symbol the guest needs that they do not define gets a generated logging stub
 (function: log once, return 0; string constant: CFSTR of its own name; class: empty
 AKStubObject subclass). Libraries that exist on iOS are re-exported by their shim.
-Optional translation/<Leaf>/ldflags holds extra linker flags.
+Optional translation/<Leaf>/ldflags holds extra linker flags ({outdir} names
+where the adapters are built); a directory with only that file is an adapter too (translation/AudioUnit re-exports the
+AudioToolbox adapter: iOS has no AudioUnit library, AudioToolbox carries its API).
 """
 import glob, hashlib, json, os, re, shutil, subprocess, sys
 from pathlib import Path
@@ -103,7 +105,7 @@ def build(leaf, install_name, symbols, real_tbd=None, provider_tbds=(), extra=()
         ld += ["-L", outdir, "-lAKSupport"]
     fl = os.path.join(ROOT, "translation", d, "ldflags")
     if os.path.exists(fl):
-        ld += open(fl).read().split()
+        ld += [flag.replace("{outdir}", outdir) for flag in open(fl).read().split()]
     run(CC + objs + ld + list(extra))
     if real_tbd and "LC_REEXPORT_DYLIB" not in subprocess.run(["otool", "-l", out], capture_output=True, text=True).stdout:
         sys.exit(f"{out}: re-export of the real library was not recorded")
@@ -129,7 +131,8 @@ if generic:
     standalone, absent = translation_leaves("standalone"), translation_leaves("absent")
     for leaf in sorted(ADAPTERS - absent):
         directory = os.path.join(written, leaf)
-        if leaf == "AKSupport" or not any(f.endswith((".c", ".m")) for f in os.listdir(directory)):
+        # An adapter is sources, or only linker flags (one that re-exports another adapter).
+        if leaf == "AKSupport" or not any(f.endswith((".c", ".m")) or f == "ldflags" for f in os.listdir(directory)):
             continue
         build(leaf, f"@rpath/ak{leaf}.dylib", [], None if leaf in standalone else sdk_library(leaf))
     if absent_list:

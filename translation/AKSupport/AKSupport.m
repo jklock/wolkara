@@ -39,6 +39,15 @@ static void forward(id self, NSInvocation *inv) {
 + (void)forwardInvocation:(NSInvocation *)i { forward(self, i); }
 @end
 
+@implementation AKQuartzEvent { NSMutableDictionary<NSNumber *, NSNumber *> *_fields; }
+- (instancetype)init { if ((self = [super init])) _fields = [NSMutableDictionary new]; return self; }
+// A field reads as either kind, as Quartz converts between them; unset is zero.
+- (int64_t)integerValueField:(uint32_t)field { @synchronized (self) { return _fields[@(field)].longLongValue; } }
+- (double)doubleValueField:(uint32_t)field { @synchronized (self) { return _fields[@(field)].doubleValue; } }
+- (void)setIntegerValueField:(uint32_t)field value:(int64_t)value { @synchronized (self) { _fields[@(field)] = @(value); } }
+- (void)setDoubleValueField:(uint32_t)field value:(double)value { @synchronized (self) { _fields[@(field)] = @(value); } }
+@end
+
 #include <stdatomic.h>
 static atomic_uint cursorHideCount;
 bool AKCursorIsHidden(void) { return atomic_load(&cursorHideCount)>0; }

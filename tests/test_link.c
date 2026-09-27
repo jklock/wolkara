@@ -143,6 +143,29 @@ int main(void) {
     assert(!gl_same_install_name("/S/Metal.framework/Versions/A", "/S/Metal.framework"));
     assert(!gl_same_install_name(NULL, "/S/Metal.framework/Metal") && !gl_same_install_name("x", NULL));
 
+    // A runtime's libraries, named by the profile: the runtime folder around
+    // the executable becomes the application's; a file there that is not an
+    // image is counted, one outside refused, one already carried skipped.
+    char runtime_file[512], resolved_file[512];
+    snprintf(runtime_file, sizeof runtime_file, "%s/core.so", root);
+    touch(runtime_file);
+    assert(realpath(runtime_file, resolved_file));
+    const char *const not_inside[] = {runtime_file};
+    char error[256];
+    assert(!gl_carry(&set, NULL, not_inside, 1, error, sizeof error) && strstr(error, "not a file inside"));
+    assert(!gl_carry(&set, frameworks, NULL, 0, error, sizeof error) && strstr(error, "does not hold the executable"));
+    const char *const relative_path[] = {"core.so"};
+    assert(!gl_carry(&set, root, relative_path, 1, error, sizeof error));
+    char resolved_root[512];
+    assert(realpath(root, resolved_root));
+    const char *const runtime_libraries[] = {runtime_file, resolved_carried};
+    size_t carried_before = set.count, refused_before = set.refused;
+    assert(gl_carry(&set, root, runtime_libraries, 2, error, sizeof error));
+    assert(!strcmp(set.root, resolved_root) && set.count == carried_before && set.refused == refused_before + 1);
+    assert(gl_inside(&set, runtime_file) && gl_inside(&set, carried));
+    assert(!gl_carry(NULL, root, runtime_libraries, 2, error, sizeof error));
+    unlink(runtime_file);
+
     gl_destroy(&set);
     assert(!set.root && !set.executable && !set.count && !set.executable_image);
 

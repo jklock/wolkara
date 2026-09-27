@@ -24,6 +24,19 @@ typedef NS_ENUM(NSInteger, TKAppSource) {
 // SHA-256 recorded when the entry was added; empty if unknown.
 @property(nonatomic, readonly, copy) NSString *sha256;
 @property(nonatomic, readonly, copy, nullable) NSString *profile;
+// From the profile: the command line of a compatibility runtime (its own
+// arguments after the executable, and environment variables whose values may
+// use `${Documents}`). Empty for an application started on its own.
+@property(nonatomic, readonly, copy) NSArray<NSString *> *arguments;
+@property(nonatomic, readonly, copy) NSDictionary<NSString *, NSString *> *environment;
+// From the profile: the runtime's folder, relative to Documents, and the
+// libraries it opens by path, relative to that folder; placed with the
+// executable at start. Nil and empty for an application started on its own.
+@property(nonatomic, readonly, copy, nullable) NSString *runtime;
+@property(nonatomic, readonly, copy) NSArray<NSString *> *libraries;
+// From the profile: megabytes of prepared executable memory the runtime writes
+// its own code into; 0 for none.
+@property(nonatomic, readonly) NSUInteger codePool;
 @property(nonatomic, readonly) NSDate *added;
 @property(nonatomic, readonly, nullable) NSDate *lastLaunched;
 @end
@@ -33,6 +46,10 @@ typedef NS_ENUM(NSInteger, TKAppSource) {
 @interface TKAppLibrary : NSObject
 // Validated app profiles (profiles/*/profile.json) in a directory.
 + (NSArray<NSDictionary *> *)profilesInDirectory:(NSString *)directory;
+// Documents-relative executable a profile describes: `executable` under its
+// `runtime` folder when it names one (a compatibility runtime started with the
+// application's files as the working directory), else under `workingDirectory`.
++ (NSString *)executableOfProfile:(NSDictionary *)profile;
 // `storage` holds apps.json and should not be user-visible; `documents` holds
 // the applications' files and Tolkara's module copies (GuestModules).
 - (instancetype)initWithDocuments:(NSString *)documents storage:(NSString *)storage

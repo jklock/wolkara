@@ -13,10 +13,12 @@ static NativeCodeMemory local_quarantine;
 #include "GuestVMBudget.h"
 #include "GuestSoftwareVM.h"
 #include "NativeGuestPolicy.h"
+#include <TargetConditionals.h>
 #include "GuestStubs.h"
 #include "GuestTLS.h"
 #include "GuestWrap.h"
 #include "GuestUnwind.h"
+#include "HostExecutionProbe.h"
 #include "GuestWait.h"
 #include "GuestWaitTrace.h"
 #include "SignedImage.h"
@@ -165,19 +167,42 @@ static void signal_hex(const char *label, uintptr_t value) {
     for(int shift=60;shift>=0;shift-=4) buffer[n++]="0123456789abcdef"[(value>>shift)&15];
     buffer[n++]='\n'; (void)write(signal_log_fd,buffer,n);
 }
+static void signal_text(const char *label, const char *text) {
+    char buffer[256]; size_t n=0;
+    for(;*label && n<64;label++) buffer[n++]=*label;
+    for(;text && *text && n<sizeof buffer-1;text++) buffer[n++]=*text;
+    buffer[n++]='\n'; (void)write(signal_log_fd,buffer,n);
+}
+// Which image an address lies in: a placed one by its file and unslid
+// address, anything else by what dladdr says (this handler is opt-in).
+static void signal_where(const char *label, uintptr_t address) {
+    signal_hex(label,address);
+    const GuestLibrary *library=gl_library_at(&carried,address);
+    uintptr_t base=(uintptr_t)guest.arena.executable;
+    if(library) {
+        const char *leaf=strrchr(library->path,'/');
+        signal_text("  image=",leaf?leaf+1:library->path); signal_hex("  preferred=",address-library->slide);
+    }
+    else if(address>=base && address-base<guest.arena.size) signal_hex("  preferred=",address-guest.slide);
+    else {
+        Dl_info info={0};
+        if(dladdr((void *)address,&info)) {
+            const char *leaf=info.dli_fname?strrchr(info.dli_fname,'/'):NULL;
+            signal_text("  image=",leaf?leaf+1:info.dli_fname); signal_text("  symbol=",info.dli_sname);
+        }
+    }
+}
 static void diagnostic_signal(int number,siginfo_t *info,void *context) {
     ucontext_t *uc=context;
     signal_hex("signal=",number); signal_hex("fault=",(uintptr_t)info->si_addr);
     arm_thread_state64_t state=uc->uc_mcontext->__ss;
     uintptr_t pc=arm_thread_state64_get_pc(state),fp=arm_thread_state64_get_fp(state);
-    signal_hex("pc=",pc); signal_hex("lr=",arm_thread_state64_get_lr(state));
+    signal_where("pc=",pc); signal_where("lr=",arm_thread_state64_get_lr(state));
     for(unsigned i=0;i<32 && fp && !(fp&7);i++) {
         uintptr_t frame[2]; vm_size_t actual=0;
         if(vm_read_overwrite(mach_task_self(),fp,sizeof frame,(vm_address_t)frame,&actual)!=KERN_SUCCESS || actual!=sizeof frame) break;
         uintptr_t lr=frame[1]&0x0000ffffffffffffULL;
-        signal_hex("frame=",lr);
-        uintptr_t base=(uintptr_t)guest.arena.executable;
-        if(lr>=base && lr-base<guest.arena.size) signal_hex("preferred=",lr-guest.slide);
+        signal_where("frame=",lr);
         if(frame[0]<=fp || frame[0]-fp>8*1024*1024) break; fp=frame[0];
     }
     struct sigaction action=guest_signal_actions[number];
@@ -207,6 +232,11 @@ static NCPreparation prepare_externally(void *address, size_t size, void *contex
 }
 static bool publish(void *address, size_t size, void *context) {
     (void)context;
+#if TARGET_OS_SIMULATOR
+    // The simulator is a Mac process: memory it maps executes without a helper.
+    LOG("[native] simulator: arena address=%p size=%zu needs no preparation\n", address, size);
+    return true;
+#endif
     volatile uint64_t completion = 0;
     LOG("[native] publish fresh zeroed arena address=%p size=%zu\n", address, size);
     host_debugger_publish_arena(address, size, &completion);
@@ -258,6 +288,7 @@ static void schedule_memory_progress(unsigned tick, uint64_t previous) {
 // Optional diagnostics after debugger detachment. Log our own threads'
 // program counters and symbols only; never copy guest code or data, attach,
 // suspend a thread, or modify guest registers/instructions.
+static void describe_caller(const void *address, char *out, size_t size);
 static void sample_all_threads(unsigned number) {
     thread_act_array_t threads=NULL; mach_msg_type_number_t count=0;
     if(task_threads(mach_task_self(),&threads,&count)!=KERN_SUCCESS) return;
@@ -267,17 +298,15 @@ static void sample_all_threads(unsigned number) {
         arm_thread_state64_t state={0}; mach_msg_type_number_t stateCount=ARM_THREAD_STATE64_COUNT;
         kern_return_t kr=thread_get_state(threads[i],ARM_THREAD_STATE64,(thread_state_t)&state,&stateCount);
         uintptr_t pc=kr==KERN_SUCCESS?arm_thread_state64_get_pc(state):0;
-        Dl_info info={0}; if(pc) dladdr((void *)pc,&info);
-        LOG("[native] thread %u pc=%#lx preferred=%#llx symbol=%s image=%s\n",i,(unsigned long)pc,
-            pc&&inside((void *)pc,1)?pc-guest.slide:0,info.dli_sname?:"unknown",info.dli_fname?:"unknown");
+        char where[512]; describe_caller((void *)pc,where,sizeof where);
+        LOG("[native] thread %u pc=%#lx %s\n",i,(unsigned long)pc,where);
         if(kr!=KERN_SUCCESS) { mach_port_deallocate(mach_task_self(),threads[i]); continue; }
         // Poor-man's stack: guest frames carry no frame pointers, so scan the
         // live stack and log only words that resolve to code, never the data.
         uintptr_t sp=arm_thread_state64_get_sp(state);
         uintptr_t lr=arm_thread_state64_get_lr(state)&0x0000ffffffffffffULL;
-        Dl_info linfo={0}; if(lr) dladdr((void *)lr,&linfo);
-        LOG("[native] thread %u lr=%#lx preferred=%#llx symbol=%s image=%s\n",i,(unsigned long)lr,
-            lr&&inside((void *)lr,1)?lr-guest.slide:0,linfo.dli_sname?:"unknown",linfo.dli_fname?:"unknown");
+        describe_caller((void *)lr,where,sizeof where);
+        LOG("[native] thread %u lr=%#lx %s\n",i,(unsigned long)lr,where);
         enum { SCAN=16384 };
         uintptr_t window[SCAN/8];
         vm_size_t got=0;
@@ -290,8 +319,8 @@ static void sample_all_threads(unsigned number) {
                 bool guestCode=inside((void *)value,1);
                 if(!guestCode && !vinfo.dli_fname) continue;
                 previous=value; shown++;
-                LOG("[native] thread %u stack %u %#lx preferred=%#llx symbol=%s image=%s\n",i,shown,(unsigned long)value,
-                    guestCode?value-guest.slide:0,vinfo.dli_sname?:"unknown",vinfo.dli_fname?:"unknown");
+                describe_caller((void *)value,where,sizeof where);
+                LOG("[native] thread %u stack %u %#lx %s\n",i,shown,(unsigned long)value,where);
             }
         }
         mach_port_deallocate(mach_task_self(),threads[i]);
@@ -326,6 +355,53 @@ static void schedule_native_sample(thread_t thread, unsigned number) {
 static NSBundle *guest_bundle;
 static CFBundleRef guest_cf_bundle;
 static NSArray<NSString *> *guest_arguments;
+// argv[1..] for a compatibility runtime (profile command line); see ng_set_arguments.
+static char *launch_arguments[64];
+static size_t launch_argument_count;
+void ng_set_arguments(const char *const *arguments, size_t count) {
+    for (size_t i=0;i<launch_argument_count;i++) { free(launch_arguments[i]); launch_arguments[i]=NULL; }
+    launch_argument_count=0;
+    for (size_t i=0;i<count && i<64;i++) {
+        if (!arguments[i] || strlen(arguments[i])>4096) break;
+        launch_arguments[launch_argument_count++]=strdup(arguments[i]);
+    }
+}
+// Libraries a profile names beside the executable's own list; see ng_set_libraries.
+static char *launch_root, *launch_libraries[GL_MAX_LIBRARIES];
+static size_t launch_library_count;
+void ng_set_libraries(const char *root, const char *const *paths, size_t count) {
+    free(launch_root); launch_root=NULL;
+    for (size_t i=0;i<launch_library_count;i++) { free(launch_libraries[i]); launch_libraries[i]=NULL; }
+    launch_library_count=0;
+    if (root && strlen(root)<PATH_MAX) launch_root=strdup(root);
+    for (size_t i=0;i<count && i<GL_MAX_LIBRARIES;i++) {
+        if (!paths[i] || strlen(paths[i])>=PATH_MAX) break;
+        launch_libraries[launch_library_count++]=strdup(paths[i]);
+    }
+}
+// See ng_set_code_pool.
+static size_t code_pool_size;
+void ng_set_code_pool(size_t size) { code_pool_size=size; }
+// ${CodePool} in the environment's values, now that the pool exists.
+static void expand_code_pool(const char *executable, const char *writable, size_t size) {
+    char replacement[64], value[4096];
+    snprintf(replacement,sizeof replacement,"%#lx-%#lx@%#lx",(unsigned long)(uintptr_t)executable,
+             (unsigned long)((uintptr_t)executable+size),(unsigned long)(uintptr_t)writable);
+    extern char **environ;
+    // Names first: setenv may reallocate environ.
+    NSMutableArray<NSString *> *names=[NSMutableArray new];
+    for (char **entry=environ;*entry;entry++) if (strstr(*entry,"${CodePool}")) {
+        const char *equals=strchr(*entry,'=');
+        if (equals) [names addObject:[[NSString alloc] initWithBytes:*entry length:(NSUInteger)(equals-*entry) encoding:NSUTF8StringEncoding]];
+    }
+    for (NSString *name in names) {
+        const char *current=getenv(name.UTF8String);
+        if (current && ng_expand(current,"${CodePool}",replacement,value,sizeof value)) {
+            setenv(name.UTF8String,value,1);
+            LOG("[native] environment %s: code pool %s\n",name.UTF8String,replacement);
+        }
+    }
+}
 static NSArray<NSString *> *(*original_arguments)(id,SEL);
 static NSArray<NSString *> *guest_process_arguments(id receiver,SEL selector) {
     if(guest_arguments && inside(__builtin_return_address(0),1)) {
@@ -544,6 +620,9 @@ static void *guest_mmap(void *address, size_t size, int prot, int flags, int fd,
     LOG("[native] mmap -> %p errno=%d\n",result,result==MAP_FAILED?errno:0); return result;
 }
 static void guest_jit_protect(int enabled) { LOG("[native] jit write protection=%d (separate RW/RX views)\n",enabled); }
+// compiler-rt's instruction cache flush, which iPadOS's libSystem does not
+// export: after code is written, before it runs.
+static void guest_clear_cache(char *start, char *end) { if (start && end>start) sys_icache_invalidate(start,(size_t)(end-start)); }
 static void guest_unexpected_lazy_bind(void) {
     LOG("[native] unexpected lazy binder call after eager binding\n"); __builtin_trap();
 }
@@ -606,6 +685,7 @@ static bool trace_guest;
 static int guest_open(const char *, int, ...);
 static int guest_openat(int, const char *, int, ...);
 static int guest_stat(const char *, struct stat *);
+static int guest_fstatat(int, const char *, struct stat *, int);
 static int guest_lstat(const char *, struct stat *);
 static int guest_fstat(int, struct stat *);
 static int guest_access(const char *, int);
@@ -706,6 +786,7 @@ static void *hook(const char *name) {
     HOOK("exit",guest_exit); HOOK("abort",guest_abort);
     if (trace_guest || case_insensitive_files || gsv_enabled()) {
         HOOK("open",guest_open); HOOK("openat",guest_openat); HOOK("stat",guest_stat); HOOK("lstat",guest_lstat);
+        HOOK("fstatat",guest_fstatat);
         HOOK("access",guest_access); HOOK("opendir",guest_opendir);
         HOOK("fopen",guest_fopen); HOOK("fopen$DARWIN_EXTSN",guest_fopen_extsn);
         HOOK("realpath",guest_realpath); HOOK("realpath$DARWIN_EXTSN",guest_realpath_extsn);
@@ -739,7 +820,7 @@ static void *hook(const char *name) {
     }
     HOOK("sysctlbyname",guest_sysctlbyname);
     HOOK("sysctl",guest_sysctl); HOOK("sysconf",guest_sysconf);
-    HOOK("pthread_jit_write_protect_np",guest_jit_protect);
+    HOOK("pthread_jit_write_protect_np",guest_jit_protect); HOOK("__clear_cache",guest_clear_cache);
 #undef HOOK
     return NULL;
 }
@@ -755,6 +836,15 @@ static void *guest_dlsym(void *handle, const char *name) {
         value = placed_symbol(index,name,first);
         (void)dlerror();   // a library it links lacking the name is not the guest's error
         if (!value) snprintf(guest_dl_error,sizeof guest_dl_error,"dlsym(%p, %s): symbol not found",handle,name?name:"(null)");
+    }
+    else if (!value && handle==RTLD_DEFAULT) {
+        // Every loaded image in load order, as dyld searches: the placed ones
+        // (the executable, then what it carries) come first.
+        char symbol[1024]; uint64_t address=0;
+        if (name && snprintf(symbol,sizeof symbol,"_%s",name)<(int)sizeof symbol &&
+            gl_lookup(&carried,&guest.image,guest.path,BIND_SPECIAL_DYLIB_FLAT_LOOKUP,symbol,&address,NULL))
+            value=(void *)(uintptr_t)address;
+        else value=dlsym(handle,name);
     }
     else if (!value) value = dlsym(handle,name);
     // Tracing reaches through the application's own libraries: what a placed
@@ -813,8 +903,29 @@ static int guest_posix_spawn(pid_t *pid, const char *path, const posix_spawn_fil
     LOG("[native] posix_spawn(%s) -> %d\n",path?shown:"NULL",result);
     return result;
 }
-static void guest_exit(int code) { LOG("[native] exit(%d)\n",code); exit(code); }
-static void guest_abort(void) { LOG("[native] abort()\n"); abort(); }
+// Where a placed image called from, as its file's own (unslid) address, for
+// symbolizing on the Mac; host code is named by dladdr.
+static void describe_caller(const void *address, char *out, size_t size) {
+    uintptr_t at=(uintptr_t)address;
+    const GuestLibrary *library=gl_library_at(&carried,at);
+    const char *path=library?library->path:inside(address,1)?guest.path:NULL;
+    if (path) {
+        const char *leaf=strrchr(path,'/');
+        snprintf(out,size,"%s preferred=%#lx",leaf?leaf+1:path,(unsigned long)(at-(library?library->slide:guest.slide)));
+        return;
+    }
+    Dl_info info={0};
+    if (dladdr(address,&info) && info.dli_fname) snprintf(out,size,"%s+%#lx",info.dli_sname?:info.dli_fname,(unsigned long)(at-(uintptr_t)(info.dli_sname?info.dli_saddr:info.dli_fbase)));
+    else snprintf(out,size,"%p",address);
+}
+static void guest_exit(int code) {
+    char caller[512]; describe_caller(__builtin_return_address(0),caller,sizeof caller);
+    LOG("[native] exit(%d) called from %s\n",code,caller); exit(code);
+}
+static void guest_abort(void) {
+    char caller[512]; describe_caller(__builtin_return_address(0),caller,sizeof caller);
+    LOG("[native] abort() called from %s\n",caller); abort();
+}
 // Each distinct line once: games probe the same missing files in loops. A
 // full table stops the logging, never the guest.
 static void log_once(const char *format, ...) {
@@ -942,6 +1053,14 @@ static int guest_stat(const char *path, struct stat *buffer) {
     if (result) trace_failure("stat",path);
     else trace_success("stat",path,(long long)buffer->st_size);
     if(!result && output!=buffer && gsv_copy(output,buffer,sizeof *buffer)!=GM_OK) { errno=EFAULT; return -1; }
+    return result;
+}
+static int guest_fstatat(int directory, const char *path, struct stat *buffer, int flags) {
+    int result=fstatat(directory,path,buffer,flags);
+    char found[PATH_MAX];
+    if (result && case_variant_at(directory,path,found,sizeof found) && !(result=fstatat(directory,found,buffer,flags)))
+        case_found(path,found);
+    if (result) trace_failure("fstatat",path);
     return result;
 }
 static int guest_lstat(const char *path, struct stat *buffer) {
@@ -1459,7 +1578,9 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
     }
     guest.log=log; guest.path=strdup(path);
     gs_log(log); gw_log(log);
-    guest_arguments=@[@(path)];
+    NSMutableArray *process_arguments=[NSMutableArray arrayWithObject:@(path)];
+    for (size_t i=0;i<launch_argument_count;i++) [process_arguments addObject:@(launch_arguments[i])];
+    guest_arguments=process_arguments;
     Method arguments_method=class_getInstanceMethod(NSProcessInfo.class,@selector(arguments));
     original_arguments=(void *)method_setImplementation(arguments_method,(IMP)guest_process_arguments);
     previous_exception_preprocessor=objc_setExceptionPreprocessor(log_exception);
@@ -1480,6 +1601,11 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
     // Carried libraries load as data too, placed beside the executable.
     if (!gl_load(&carried,&guest.image,path,error,sizeof error))
         LOG("[native] carried libraries unavailable: %s\n",error);
+    // A runtime's libraries, opened by path later, are placed now as well.
+    else if ((launch_root || launch_library_count) &&
+             !gl_carry(&carried,launch_root,(const char *const *)launch_libraries,launch_library_count,error,sizeof error)) {
+        LOG("[native] the profile's libraries cannot be placed: %s\n",error); goto done;
+    }
     // The executable answers for its own exports whatever was carried.
     carried.executable_image=&guest.image;
     gl_report(&carried,log);
@@ -1495,9 +1621,25 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
         library_offset[i]=total;
         total+=(size_t)gi_extent(&carried.libraries[i].image,&library_low[i]);
     }
+    // A runtime's own code pool after the images (ng_set_code_pool).
+    size_t page_size=(size_t)getpagesize(), pool_offset=total, pool_size=0;
+    if (code_pool_size) {
+        pool_size=(code_pool_size+page_size-1)/page_size*page_size;
+        total+=pool_size;
+        LOG("[native] code pool of %zu bytes after the images\n",pool_size);
+    }
+    // --jit-probe: one spare page after everything, for the arena stage.
+    bool jit_probe=[NSProcessInfo.processInfo.arguments containsObject:@"--jit-probe"];
+    size_t probe_offset=total;
+    if (jit_probe) total+=(size_t)getpagesize();
     bool arena_ready;
     bool signed_backend=atomic_load(&use_signed_image);
     // The signed container is captured from one executable's own pages.
+    // Nothing but the signed pages executes there: no code pool.
+    if (signed_backend && pool_size) {
+        LOG("[native] Local signing cannot provide a code pool, which this runtime needs; guest entry blocked\n");
+        goto done;
+    }
     if (signed_backend && carried.count) {
         LOG("[native] Local signing places only the application's own image; this one carries %zu librar%s of its own; guest entry blocked\n",
             carried.count,carried.count==1?"y":"ies");
@@ -1560,6 +1702,30 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
     for (size_t i=0;i<carried.count;i++)
         carried.libraries[i].slide=(uintptr_t)guest.arena.executable+library_offset[i]-library_low[i];
     LOG("[native] arena ready base=%p slide=%#llx\n",guest.arena.executable,(unsigned long long)guest.slide);
+    if (pool_size)
+        expand_code_pool((char *)guest.arena.executable+pool_offset,(char *)guest.arena.writable+pool_offset,pool_size);
+    if (jit_probe) {
+        // Diagnostic (docs/WINDOWS.md): now that the helper has prepared the
+        // arena and detached, may this process execute memory it maps itself?
+        // A runtime that generates code (an x86 emulator) needs that. Only our
+        // own two-instruction sample runs; a kernel rejection may end the
+        // process, so each stage is flushed first. Guest entry is skipped.
+        // The arena first: memory the helper prepared, as a code pool would use it.
+        size_t page=(size_t)getpagesize();
+        HPArenaResult arena=arena_execution_probe((char *)guest.arena.executable+probe_offset,
+                                                  (char *)guest.arena.writable+probe_offset,page,log);
+        LOG("[jit-probe] arena: alias=%s rewrite=%s direct=%s after-direct=%s direct_errno=%d rwx_errno=%d\n",
+            arena.alias_execute?"PASS":"FAIL",arena.alias_rewrite?"PASS":"FAIL",arena.direct_rewrite?"PASS":"FAIL",
+            arena.alias_after_direct?"PASS":"FAIL",arena.direct_errno,arena.rwx_errno);
+        HPResult wx=host_execution_probe(HP_WRITE_THEN_EXECUTE,log);
+        LOG("[jit-probe] write-then-execute: execute=%s rewrite=%s allocation_errno=%d protection_errno=%d\n",
+            wx.executable?"PASS":"FAIL",wx.rewrite_executable?"PASS":"FAIL",wx.allocation_errno,wx.protection_errno);
+        HPResult rwx=host_execution_probe(HP_READ_WRITE_EXECUTE,log);
+        LOG("[jit-probe] read-write-execute: execute=%s rewrite=%s allocation_errno=%d protection_errno=%d\n",
+            rwx.executable?"PASS":"FAIL",rwx.rewrite_executable?"PASS":"FAIL",rwx.allocation_errno,rwx.protection_errno);
+        LOG("[jit-probe] done; guest entry skipped\n");
+        goto done;
+    }
     {
         NSData *data=[NSData dataWithContentsOfFile:@(library_map)];
         NSDictionary *mapping=data?[NSJSONSerialization JSONObjectWithData:data options:0 error:NULL]:nil;
@@ -1746,8 +1912,14 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
         else LOG("[native] the application records no initializers\n");
         char *executable_argument=NULL;
         asprintf(&executable_argument,"executable_path=%s",guest.path);
-        const char *argv[]={guest.path,NULL}, *env[]={NULL}, *apple[]={executable_argument,NULL};
-        int argc=1;
+        // argv outlives this call: the program may keep pointers into it. The
+        // carried libraries' initializers, the client's and main all see it.
+        const char **argv=calloc(launch_argument_count+2,sizeof *argv);
+        argv[0]=guest.path;
+        for (size_t i=0;i<launch_argument_count;i++) argv[i+1]=launch_arguments[i];
+        const char *env[]={NULL}, *apple[]={executable_argument,NULL};
+        int argc=(int)launch_argument_count+1;
+        if (launch_argument_count) LOG("[native] %zu launch arguments after the executable path\n",launch_argument_count);
         // dyld order: a library's initializers before the client's, and
         // before those of the carried libraries that link it.
         size_t order[GL_MAX_LIBRARIES], ordered=gl_initialization_order(&carried,order);

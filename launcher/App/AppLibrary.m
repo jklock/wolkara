@@ -1,6 +1,7 @@
 #import "AppLibrary.h"
 #import "GuestImage.h"
 #import "GuestModule.h"
+#include <ctype.h>
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
@@ -49,6 +50,36 @@ static BOOL valid_case_aliases(id aliases) {
 static BOOL inside_folder(NSString *path, NSString *root) {
     return path && ([path isEqualToString:root] || [path hasPrefix:[root stringByAppendingString:@"/"]]);
 }
+// A compatibility runtime's command line is plain strings, bounded like
+// tools/check_profile.py: at most 64 arguments or variables of 4096 bytes.
+static BOOL valid_arguments(id arguments) {
+    if (![arguments isKindOfClass:NSArray.class] || [arguments count]>64) return NO;
+    for (id argument in arguments) if (![argument isKindOfClass:NSString.class] || [argument length]>4096) return NO;
+    return YES;
+}
+static BOOL valid_environment(id environment) {
+    if (![environment isKindOfClass:NSDictionary.class] || [environment count]>64) return NO;
+    NSCharacterSet *word=[NSCharacterSet characterSetWithCharactersInString:@"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_"];
+    for (id name in environment) {
+        if (![name isKindOfClass:NSString.class] || ![name length] || [name length]>256 || isdigit([name characterAtIndex:0])) return NO;
+        if ([name rangeOfCharacterFromSet:word.invertedSet].location!=NSNotFound) return NO;
+        if (![environment[name] isKindOfClass:NSString.class] || [environment[name] length]>4096) return NO;
+    }
+    return YES;
+}
+// libraries, as tools/check_profile.py checks them: at most 64 paths inside
+// the runtime's folder, so only with a runtime.
+static BOOL valid_libraries(id libraries) {
+    if (![libraries isKindOfClass:NSArray.class] || [libraries count]>64) return NO;
+    for (id library in libraries) if (!valid_relative(library,NO)) return NO;
+    return YES;
+}
+// codePool, as tools/check_profile.py checks it: 1 to 1024 megabytes, only with a runtime.
+static BOOL valid_code_pool(id size) {
+    return [size isKindOfClass:NSNumber.class] && CFGetTypeID((__bridge CFTypeRef)size)!=CFBooleanGetTypeID() &&
+           [size doubleValue]==[size integerValue] &&
+           [size integerValue]>=1 && [size integerValue]<=1024;
+}
 static NSString *clean_name(id name) {
     if (![name isKindOfClass:NSString.class]) return nil;
     NSString *trimmed=[name stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
@@ -58,6 +89,8 @@ static NSString *clean_name(id name) {
 
 @interface TKApp ()
 @property(nonatomic, copy) NSDictionary *record;
+// The profile the record came from, for its command line; nil for a plain app.
+@property(nonatomic, copy, nullable) NSDictionary *launchProfile;
 @end
 @implementation TKApp
 + (instancetype)appWithRecord:(NSDictionary *)record {
@@ -78,6 +111,11 @@ static NSString *clean_name(id name) {
 - (NSString *)workingDirectory { return self.record[@"workingDirectory"]; }
 - (NSString *)sha256 { return self.record[@"sha256"]?:@""; }
 - (NSString *)profile { return self.record[@"profile"]; }
+- (NSArray<NSString *> *)arguments { return self.launchProfile[@"arguments"]?:@[]; }
+- (NSDictionary<NSString *, NSString *> *)environment { return self.launchProfile[@"environment"]?:@{}; }
+- (NSString *)runtime { return self.launchProfile[@"runtime"]; }
+- (NSArray<NSString *> *)libraries { return self.launchProfile[@"libraries"]?:@[]; }
+- (NSUInteger)codePool { return [self.launchProfile[@"codePool"] unsignedIntegerValue]; }
 - (NSDate *)added { return [NSDate dateWithTimeIntervalSince1970:[self.record[@"added"] doubleValue]]; }
 - (NSDate *)lastLaunched {
     NSNumber *value=self.record[@"lastLaunched"];
@@ -107,10 +145,25 @@ static NSString *clean_name(id name) {
             ![profile[@"id"] isKindOfClass:NSString.class] || ![profile[@"id"] length] || [seen containsObject:profile[@"id"]] ||
             !valid_relative(profile[@"workingDirectory"],NO) || !valid_relative(profile[@"executable"],NO) ||
             !valid_case_aliases(profile[@"caseAliases"])) continue;
+        if ((profile[@"runtime"] && !valid_relative(profile[@"runtime"],NO)) ||
+            (profile[@"arguments"] && !valid_arguments(profile[@"arguments"])) ||
+            (profile[@"environment"] && !valid_environment(profile[@"environment"])) ||
+            (profile[@"libraries"] && (!profile[@"runtime"] || !valid_libraries(profile[@"libraries"]))) ||
+            (profile[@"codePool"] && (!profile[@"runtime"] || !valid_code_pool(profile[@"codePool"])))) continue;
         [seen addObject:profile[@"id"]];
         [profiles addObject:profile];
     }
     return profiles;
+}
++ (NSString *)executableOfProfile:(NSDictionary *)profile {
+    return join(profile[@"runtime"]?:profile[@"workingDirectory"],profile[@"executable"]);
+}
+// TKApp for a stored record, carrying its profile's command line.
+- (TKApp *)appForRecord:(NSDictionary *)record {
+    TKApp *app=[TKApp appWithRecord:record];
+    if (app && record[@"profile"])
+        for (NSDictionary *profile in _profiles) if ([profile[@"id"] isEqual:record[@"profile"]]) { app.launchProfile=profile; break; }
+    return app;
 }
 
 - (instancetype)initWithDocuments:(NSString *)documents storage:(NSString *)storage profiles:(NSArray<NSDictionary *> *)profiles {
@@ -158,7 +211,7 @@ static NSString *clean_name(id name) {
 
 - (NSArray<TKApp *> *)apps {
     NSMutableArray *apps=[NSMutableArray new];
-    @synchronized (self) { for (NSDictionary *record in _records) [apps addObject:[TKApp appWithRecord:record]]; }
+    @synchronized (self) { for (NSDictionary *record in _records) [apps addObject:[self appForRecord:record]]; }
     [apps sortWithOptions:NSSortStable usingComparator:^NSComparisonResult(TKApp *a, TKApp *b) {
         if (a.lastLaunched || b.lastLaunched) {
             if (!b.lastLaunched) return NSOrderedAscending;
@@ -191,7 +244,7 @@ static NSString *clean_name(id name) {
 // application finds its bundle resources next to the executable.
 - (NSDictionary *)describeExecutable:(NSString *)relative {
     for (NSDictionary *profile in _profiles)
-        if ([join(profile[@"workingDirectory"],profile[@"executable"]).stringByStandardizingPath isEqual:relative])
+        if ([[TKAppLibrary executableOfProfile:profile].stringByStandardizingPath isEqual:relative])
             return @{@"name":clean_name(profile[@"name"]),@"workingDirectory":profile[@"workingDirectory"],@"profile":profile[@"id"]};
     NSArray<NSString *> *parts=relative.pathComponents;
     NSUInteger n=parts.count;
@@ -215,23 +268,28 @@ static NSString *clean_name(id name) {
 - (TKApp *)addRecord:(NSDictionary *)record error:(NSError **)error {
     @synchronized (self) {
         // An entry for the same file (or copy) already exists: refresh its hash.
+        // A profile's entry follows the profile when a newer one names another
+        // executable (its id, name and launch history stay).
         for (NSUInteger i=0;i<_records.count;i++) {
             NSDictionary *existing=_records[i];
-            BOOL same=[existing[@"source"] isEqual:record[@"source"]] &&
-                ([record[@"source"] isEqual:@"copy"] ? [existing[@"sha256"] isEqual:record[@"sha256"]] : [existing[@"executable"] isEqual:record[@"executable"]]);
+            BOOL documents=[record[@"source"] isEqual:@"documents"] && [existing[@"source"] isEqual:@"documents"];
+            BOOL profiled=documents && record[@"profile"] && [existing[@"profile"] isEqual:record[@"profile"]];
+            BOOL same=profiled || ([existing[@"source"] isEqual:record[@"source"]] &&
+                ([record[@"source"] isEqual:@"copy"] ? [existing[@"sha256"] isEqual:record[@"sha256"]] : [existing[@"executable"] isEqual:record[@"executable"]]));
             if (!same) continue;
             NSMutableArray *records=[_records mutableCopy];
             NSMutableDictionary *updated=[existing mutableCopy];
             if (record[@"sha256"]) updated[@"sha256"]=record[@"sha256"];
+            if (profiled) { updated[@"executable"]=record[@"executable"]; updated[@"workingDirectory"]=record[@"workingDirectory"]; }
             records[i]=updated;
             NSMutableSet *dismissed=[_dismissedProfiles mutableCopy];
             if (updated[@"profile"]) [dismissed removeObject:updated[@"profile"]];
-            return [self saveRecords:records dismissed:dismissed legacy:_legacyImported error:error] ? [TKApp appWithRecord:updated] : nil;
+            return [self saveRecords:records dismissed:dismissed legacy:_legacyImported error:error] ? [self appForRecord:updated] : nil;
         }
         NSMutableDictionary *added=[record mutableCopy];
         added[@"id"]=NSUUID.UUID.UUIDString;
         added[@"added"]=@(NSDate.date.timeIntervalSince1970);
-        TKApp *app=[TKApp appWithRecord:added];
+        TKApp *app=[self appForRecord:added];
         if (!app) { library_error(error,@"The app entry is invalid."); return nil; }
         NSMutableSet *dismissed=[_dismissedProfiles mutableCopy];
         if (added[@"profile"]) [dismissed removeObject:added[@"profile"]];
@@ -289,13 +347,16 @@ static NSString *bundle_executable(NSString *path, NSError **error) {
         dismissed=[_dismissedProfiles copy]; legacyImported=_legacyImported;
     }
     for (NSDictionary *profile in _profiles) {
-        NSString *relative=join(profile[@"workingDirectory"],profile[@"executable"]);
+        NSString *relative=[TKAppLibrary executableOfProfile:profile];
         if ([dismissed containsObject:profile[@"id"]] || [known containsObject:relative]) continue;
         // Recorded by its real location, as an import from the picker would be.
         NSString *real=[self relativeInDocuments:join(_documents,relative)];
         if (!real || [known containsObject:real]) continue;
         struct stat st;
         if (lstat(join(_documents,real).fileSystemRepresentation,&st) || !S_ISREG(st.st_mode)) continue;
+        // A runtime is only listed with the application's folder it would start in.
+        BOOL directory=NO;
+        if (![NSFileManager.defaultManager fileExistsAtPath:join(_documents,profile[@"workingDirectory"]) isDirectory:&directory] || !directory) continue;
         NSString *hash=guest_module_hash(join(_documents,real),NULL,NULL);
         if (!hash) continue;
         NSMutableDictionary *record=[@{@"source":@"documents",@"executable":real,@"sha256":hash} mutableCopy];
@@ -358,7 +419,7 @@ static NSString *bundle_executable(NSString *path, NSError **error) {
         if (removed[@"profile"]) [dismissed addObject:removed[@"profile"]];
         if (!removed[@"profile"])
             for (NSDictionary *profile in _profiles)
-                if ([join(profile[@"workingDirectory"],profile[@"executable"]).stringByStandardizingPath isEqual:removed[@"executable"]])
+                if ([[TKAppLibrary executableOfProfile:profile].stringByStandardizingPath isEqual:removed[@"executable"]])
                     [dismissed addObject:profile[@"id"]];
         if (![self saveRecords:records dismissed:dismissed legacy:_legacyImported error:error]) return NO;
         if ([removed[@"source"] isEqual:@"copy"]) {

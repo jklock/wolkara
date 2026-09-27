@@ -1,5 +1,6 @@
 #include "NativeGuestPolicy.h"
 #include <assert.h>
+#include <string.h>
 #include <stdio.h>
 
 int main(void) {
@@ -52,5 +53,14 @@ int main(void) {
     assert(ng_reserved_choice(false, true, 4096, 8192) == NG_RESERVED_GIVE_BACK);
     assert(ng_reserved_choice(false, true, 16384, 8192) == NG_RESERVED_GIVE_BACK);
 
-    puts("PASS: runtime stubs only where no build-time analysis covered an import; reserved arena taken, refused or given back");
+    // A placeholder in a profile's environment, replaced wherever it occurs.
+    char out[64];
+    assert(ng_expand("${CodePool}", "${CodePool}", "0x1-0x2@0x3", out, sizeof out) && !strcmp(out, "0x1-0x2@0x3"));
+    assert(ng_expand("a=${CodePool};b=${CodePool}", "${CodePool}", "x", out, sizeof out) && !strcmp(out, "a=x;b=x"));
+    assert(!ng_expand("${Documents}/x", "${CodePool}", "x", out, sizeof out) && !strcmp(out, "${Documents}/x"));
+    assert(!ng_expand("${CodePool}", "${CodePool}", "0123456789", out, 8) && !out[0]);
+    assert(!ng_expand("${CodePo", "${CodePool}", "x", out, sizeof out) && !strcmp(out, "${CodePo"));
+    assert(!ng_expand("", "${CodePool}", "x", out, sizeof out) && !out[0]);
+    puts("PASS: runtime stubs only where no build-time analysis covered an import; reserved arena taken, refused or given back;"
+         " environment placeholders expanded");
 }

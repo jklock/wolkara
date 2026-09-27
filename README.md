@@ -120,8 +120,8 @@ So that you can judge this yourself rather than take our word for it:
   stays on your Mac and your iPad.
 - The loader answers a short, fixed list of calls itself instead of passing them
   to iPadOS, because they concern how the image was loaded: `mmap`, `mprotect`,
-  `munmap`, `memcpy`, `memmove`, `memset` (for the separate read-write and
-  executable views of code memory), `pthread_jit_write_protect_np`, `dladdr`,
+  `munmap`, `memcpy`, `memmove`, `memset`, `__clear_cache` (for the separate
+  read-write and executable views of code memory), `pthread_jit_write_protect_np`, `dladdr`,
   `dlsym`, `_NSGetExecutablePath`, `CFBundleGetMainBundle`, `_tlv_bootstrap`,
   `dyld_stub_binder`, `__ulock_wait` and `sigaction` (the last only when you
   opt into crash logging). The list is in

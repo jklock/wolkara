@@ -101,6 +101,40 @@ bool gl_resolve(const GuestLinkSet *set, const GuestImage *from, const char *fro
     return accept(set, candidate, out, size);
 }
 
+static bool known_path(const GuestLinkSet *set, const char *path) {
+    for (size_t i = 0; i < set->count; i++) if (!strcmp(set->libraries[i].path, path)) return true;
+    return false;
+}
+// One more carried library, read from `path` (resolved, inside the folder). One
+// that cannot be read is counted and skipped; false only when the list is full.
+static bool carry(GuestLinkSet *set, const char *path, const char *install_name, size_t loader_index,
+                  char *error, size_t error_size) {
+    if (set->count == GL_MAX_LIBRARIES)
+        return fail(error, error_size, "the application carries more than %d libraries", GL_MAX_LIBRARIES);
+    GuestLibrary *library = &set->libraries[set->count];
+    if (!gi_load_library(path, &library->image, set->refusal, sizeof set->refusal)) {
+        set->refused++;
+        return true;
+    }
+    // Its thread-local storage cannot be set up: refused.
+    if (library->image.tls_initializer_count) {
+        snprintf(set->refusal, sizeof set->refusal, "%s needs thread-local constructors", install_name);
+        gi_destroy(&library->image);
+        set->refused++;
+        return true;
+    }
+    library->path = strdup(path);
+    library->install_name = strdup(install_name);
+    library->loader = loader_index;
+    if (!library->path || !library->install_name) {
+        gi_destroy(&library->image);
+        free(library->path); free(library->install_name);
+        *library = (GuestLibrary){0};
+        return fail(error, error_size, "cannot hold the library list");
+    }
+    set->count++;
+    return true;
+}
 static bool carried_by(GuestLinkSet *set, const GuestImage *from, const char *from_path,
                        char *error, size_t error_size) {
     const GuestLibrary *loader = library_of(set, from);
@@ -108,33 +142,8 @@ static bool carried_by(GuestLinkSet *set, const GuestImage *from, const char *fr
     for (size_t i = 0; i < from->dylib_count; i++) {
         char path[PATH_MAX];
         if (!gl_resolve(set, from, from_path, from->dylibs[i], path, sizeof path)) continue;
-        bool known = false;
-        for (size_t j = 0; j < set->count && !known; j++) known = !strcmp(set->libraries[j].path, path);
-        if (known) continue;
-        if (set->count == GL_MAX_LIBRARIES)
-            return fail(error, error_size, "the application carries more than %d libraries", GL_MAX_LIBRARIES);
-        GuestLibrary *library = &set->libraries[set->count];
-        if (!gi_load_library(path, &library->image, set->refusal, sizeof set->refusal)) {
-            set->refused++;
-            continue;
-        }
-        // Its thread-local storage cannot be set up: refused.
-        if (library->image.tls_initializer_count) {
-            snprintf(set->refusal, sizeof set->refusal, "%s needs thread-local constructors", from->dylibs[i]);
-            gi_destroy(&library->image);
-            set->refused++;
-            continue;
-        }
-        library->path = strdup(path);
-        library->install_name = strdup(from->dylibs[i]);
-        library->loader = loader_index;
-        if (!library->path || !library->install_name) {
-            gi_destroy(&library->image);
-            free(library->path); free(library->install_name);
-            *library = (GuestLibrary){0};
-            return fail(error, error_size, "cannot hold the library list");
-        }
-        set->count++;
+        if (known_path(set, path)) continue;
+        if (!carry(set, path, from->dylibs[i], loader_index, error, error_size)) return false;
     }
     return true;
 }
@@ -158,6 +167,33 @@ bool gl_load(GuestLinkSet *set, const GuestImage *executable, const char *execut
         if (!carried_by(set, &set->libraries[i].image, set->libraries[i].path, error, error_size)) {
             gl_destroy(set); return false;
         }
+    return true;
+}
+
+bool gl_carry(GuestLinkSet *set, const char *root, const char *const *paths, size_t count,
+              char *error, size_t error_size) {
+    if (error_size) error[0] = 0;
+    if (!set || !set->executable || !set->root || (count && !paths)) return fail(error, error_size, "invalid link set request");
+    if (root) {
+        char resolved[PATH_MAX];
+        if (!realpath(root, resolved)) return fail(error, error_size, "cannot resolve the runtime folder");
+        if (!inside(resolved, set->root)) return fail(error, error_size, "the runtime folder does not hold the executable");
+        char *wider = strdup(resolved);
+        if (!wider) return fail(error, error_size, "cannot hold the link set");
+        free(set->root);
+        set->root = wider;
+    }
+    size_t first = set->count;
+    for (size_t i = 0; i < count; i++) {
+        char path[PATH_MAX];
+        if (!paths[i] || paths[i][0] != '/' || !accept(set, paths[i], path, sizeof path))
+            return fail(error, error_size, "%s is not a file inside the application", paths[i] ? paths[i] : "(null)");
+        if (known_path(set, path)) continue;
+        if (!carry(set, path, path, GL_MAX_LIBRARIES, error, error_size)) return false;
+    }
+    // Then what those link, as for the executable's own.
+    for (size_t i = first; i < set->count; i++)
+        if (!carried_by(set, &set->libraries[i].image, set->libraries[i].path, error, error_size)) return false;
     return true;
 }
 

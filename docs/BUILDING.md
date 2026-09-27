@@ -286,6 +286,12 @@ for apps started from the library:
   own file APIs are not covered, and each miss costs a directory listing. For
   a known case, prefer a profile's `caseAliases` (see
   [profiles/README.md](../profiles/README.md)).
+- `--guest-arguments=<arguments>` and `--guest-environment=NAME=value` (with
+  `--local-game-startup` or `--native-startup`): replace a profile's command
+  line (tab-separated) or set one variable over its environment for this
+  launch, for a compatibility runtime's own diagnostics (Wine's `WINEDEBUG`
+  channels, say) without building the app again. `--guest-environment` may
+  be given more than once.
 - `TOLKARA_VM_BUDGET_MB=<megabytes>` in the launch environment (experimental):
   anonymous reservations of 64 MiB and more count against this budget; past
   it they are mapped smaller than requested, followed by a guard page. Counted

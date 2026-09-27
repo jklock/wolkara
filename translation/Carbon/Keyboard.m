@@ -3,6 +3,7 @@
 
 #define TIS_CONSTANT(name) const CFStringRef name = CFSTR(#name)
 TIS_CONSTANT(kTISCategoryKeyboardInputSource);
+TIS_CONSTANT(kTISNotifyEnabledKeyboardInputSourcesChanged);
 TIS_CONSTANT(kTISNotifySelectedKeyboardInputSourceChanged);
 TIS_CONSTANT(kTISPropertyInputSourceCategory);
 TIS_CONSTANT(kTISPropertyInputSourceID);
@@ -10,8 +11,10 @@ TIS_CONSTANT(kTISPropertyInputSourceIsEnabled);
 TIS_CONSTANT(kTISPropertyInputSourceIsSelectCapable);
 TIS_CONSTANT(kTISPropertyInputSourceIsSelected);
 TIS_CONSTANT(kTISPropertyInputSourceLanguages);
+TIS_CONSTANT(kTISPropertyInputSourceType);
 TIS_CONSTANT(kTISPropertyLocalizedName);
 TIS_CONSTANT(kTISPropertyUnicodeKeyLayoutData);
+TIS_CONSTANT(kTISTypeKeyboardLayout);
 
 static NSDictionary *keyboardSource(void) {
     static NSDictionary *source;
@@ -24,6 +27,7 @@ static NSDictionary *keyboardSource(void) {
             (__bridge id)kTISPropertyInputSourceIsSelectCapable: @YES,
             (__bridge id)kTISPropertyInputSourceIsSelected: @YES,
             (__bridge id)kTISPropertyInputSourceLanguages: @[@"en"],
+            (__bridge id)kTISPropertyInputSourceType: (__bridge id)kTISTypeKeyboardLayout,
             (__bridge id)kTISPropertyLocalizedName: @"U.S.",
             (__bridge id)kTISPropertyUnicodeKeyLayoutData: [NSData dataWithBytes:&AKUSLayout length:sizeof(AKUSLayout)]
         };
