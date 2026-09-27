@@ -9,7 +9,7 @@ mkdir -p build/LaunchProgressProbe.app build/launch-progress
 xcrun --sdk iphonesimulator clang -target arm64-apple-ios17.0-simulator \
     -isysroot "$(xcrun --sdk iphonesimulator --show-sdk-path)" \
     -fobjc-arc -Wall -Wextra -Werror -Ilauncher/App -framework UIKit -framework QuartzCore \
-    launcher/App/LaunchProgressView.m tests/launch_progress_probe.m \
+    launcher/App/LaunchProgressView.m launcher/App/StartupActivity.m launcher/App/StartupActivityText.m tests/launch_progress_probe.m \
     -o build/LaunchProgressProbe.app/LaunchProgressProbe
 python3 - <<'PY'
 import plistlib
@@ -46,6 +46,12 @@ def screenshot(name):
                     'build/launch-progress/' + name + '.png'], check=True, capture_output=True)
 time.sleep(3)
 screenshot('before')
+# The probe holds its main thread from 4 to 10 s: the activity lines must still change.
+time.sleep(3)
+screenshot('busy-1')
+time.sleep(2.5)
+screenshot('busy-2')
+time.sleep(2)
 try:
     os.kill(pid, signal.SIGSTOP)
     time.sleep(3)
@@ -55,5 +61,6 @@ finally:
         os.kill(pid, signal.SIGCONT)
     except ProcessLookupError:
         pass
-print('Review build/launch-progress/{before,suspended}.png: elapsed time must advance by 3 seconds.')
+print('Review build/launch-progress/{before,suspended}.png: elapsed time must advance by 3 seconds;')
+print('busy-1 and busy-2 (main thread held): the activity step, its seconds and the report size must advance.')
 PY

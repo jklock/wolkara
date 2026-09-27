@@ -1,10 +1,17 @@
 #pragma once
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 // Development startup diagnostic. Requires debugger publication of a fresh
 // runtime arena, and never changes the packaged original executable.
 bool ng_initialize(const char *path, const char *frameworks, const char *library_map, FILE *log, bool full_startup);
+// What startup is doing now, for a status drawn while application code holds
+// the main thread: a fixed description (NULL before ng_initialize), parts done
+// of total (0 of 0 when not counted), and since when (mach_absolute_time).
+// Any thread.
+typedef struct { const char *step; unsigned long long done, total; uint64_t since; } NGStartupStep;
+NGStartupStep ng_startup_step(void);
 // Command-line arguments after the executable path (argv[1..]), for a
 // compatibility runtime started from a profile. Copied; at most 64 of 4096
 // bytes. Call before ng_initialize; default: none.

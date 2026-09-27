@@ -10,8 +10,10 @@
 #import "LaunchProgressView.h"
 #import "NativeGuest.h"
 #import "SignedFileProbe.h"
+#import "StartupActivity.h"
 #include "HostDiagnostics.h"
 #include <errno.h>
+#include <mach/mach_time.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -24,6 +26,7 @@
 @property(nonatomic, strong) UIWindow *window;
 @property(nonatomic, strong) UILabel *status;
 @property(nonatomic, strong) TKLaunchProgressView *launchProgress;
+@property(nonatomic, strong) TKStartupActivityView *startupActivity;
 @property(nonatomic, strong) UIButton *diagnosticsButton;
 @property(nonatomic, strong) UINavigationController *navigation;
 @property(nonatomic, strong) TKLibraryViewController *libraryController;
@@ -237,6 +240,9 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     self.launchProgress = [TKLaunchProgressView new];
     self.launchProgress.translatesAutoresizingMaskIntoConstraints = NO;
     [controller.view addSubview:self.launchProgress];
+    self.startupActivity = [TKStartupActivityView new];
+    self.startupActivity.translatesAutoresizingMaskIntoConstraints = NO;
+    [controller.view addSubview:self.startupActivity];
     self.diagnosticsButton=[UIButton buttonWithType:UIButtonTypeSystem];
     [self.diagnosticsButton setTitle:@"Diagnostics and logs" forState:UIControlStateNormal];
     [self.diagnosticsButton addTarget:self action:@selector(showDiagnostics) forControlEvents:UIControlEventTouchUpInside];
@@ -249,7 +255,10 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
         [self.status.centerYAnchor constraintEqualToAnchor:controller.view.centerYAnchor],
         [self.launchProgress.topAnchor constraintEqualToAnchor:self.status.bottomAnchor constant:20],
         [self.launchProgress.leadingAnchor constraintEqualToAnchor:self.status.leadingAnchor],
-        [self.diagnosticsButton.topAnchor constraintEqualToAnchor:self.launchProgress.bottomAnchor constant:24],
+        [self.startupActivity.topAnchor constraintEqualToAnchor:self.launchProgress.bottomAnchor constant:12],
+        [self.startupActivity.leadingAnchor constraintEqualToAnchor:self.status.leadingAnchor],
+        [self.startupActivity.trailingAnchor constraintEqualToAnchor:self.status.trailingAnchor],
+        [self.diagnosticsButton.topAnchor constraintEqualToAnchor:self.startupActivity.bottomAnchor constant:24],
         [self.diagnosticsButton.centerXAnchor constraintEqualToAnchor:controller.view.centerXAnchor],
     ]];
     return controller;
@@ -265,6 +274,7 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
 }
 - (void)showStartStopped {
     [self.launchProgress stop];
+    [self stopStartupActivity];
     self.diagnosticsButton.hidden=NO;
     UIApplication.sharedApplication.idleTimerDisabled=NO;
 }
@@ -493,7 +503,7 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
             self.status.text=[@"Local launch could not prepare. Close and reopen the app to retry.\n" stringByAppendingString:report];
             [self showStartStopped];return;
         }
-        self.status.text=[NSString stringWithFormat:@"Starting %@…\nKeep the app open. Startup currently takes a few minutes.",app.name];
+        self.status.text=[NSString stringWithFormat:@"Starting %@…\nKeep Tolkara open.",app.name];
         // Guest main must enter from a timer callout, never a dispatch block.
         [self performSelector:@selector(startLocalGame) withObject:nil afterDelay:0];
     }];
@@ -537,7 +547,7 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
             // As for Developer service: an uncached shader waits instead of failing.
             setenv("TOLKARA_WAIT_FOR_MISSING_SHADERS","1",1);
             UIApplication.sharedApplication.idleTimerDisabled=YES;
-            self.status.text=[NSString stringWithFormat:@"Starting %@…\nKeep the app open. Startup currently takes a few minutes.",app.name];
+            self.status.text=[NSString stringWithFormat:@"Starting %@…\nKeep Tolkara open.",app.name];
             // Guest main must enter from a timer callout, never a dispatch block.
             [self performSelector:@selector(startSignedGame:) withObject:container afterDelay:0];
         });
@@ -568,7 +578,7 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     // An uncached shader waits instead of failing.
     setenv("TOLKARA_WAIT_FOR_MISSING_SHADERS","1",1);
     UIApplication.sharedApplication.idleTimerDisabled=YES;
-    self.status.text=[NSString stringWithFormat:@"Starting %@…\nKeep the app open. Startup currently takes a few minutes.",app.name];
+    self.status.text=[NSString stringWithFormat:@"Starting %@…\nKeep Tolkara open.",app.name];
     // Enter from a timer callout, never a dispatch block.
     [self performSelector:@selector(startExternalJITGame) withObject:nil afterDelay:0];
 }
@@ -682,6 +692,27 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     [self.status.superview layoutIfNeeded];
 }
 #endif
+// What startup is doing, below the elapsed time, until the app's own window
+// is on screen: application code may hold the main thread meanwhile.
+- (void)startStartupActivityInFolder:(NSString *)folder {
+    static mach_timebase_info_data_t timebase;
+    if (!timebase.denom) mach_timebase_info(&timebase);
+    [self.startupActivity startInFolder:folder step:^NSString *(NSTimeInterval *seconds) {
+        NGStartupStep now=ng_startup_step();
+        if (now.step) *seconds=(double)(mach_absolute_time()-now.since)*timebase.numer/timebase.denom/1e9;
+        return TKStartupStepText(now.step,now.done,now.total);
+    }];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(windowBecameVisible:)
+                                               name:UIWindowDidBecomeVisibleNotification object:nil];
+}
+- (void)windowBecameVisible:(NSNotification *)notification {
+    UIWindow *window=notification.object;
+    if (window!=self.window && window.windowLevel==UIWindowLevelNormal) [self stopStartupActivity];
+}
+- (void)stopStartupActivity {
+    [self.startupActivity stop];
+    [NSNotificationCenter.defaultCenter removeObserver:self name:UIWindowDidBecomeVisibleNotification object:nil];
+}
 // container: Local signing's validated page container, or nil for the
 // Developer-service/debugger path. Callers choose it; this only applies it.
 - (void)runNativeGame:(BOOL)fullStartup app:(TKApp *)app container:(NSString *)container {
@@ -709,6 +740,7 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
         return;
     }
     fprintf(log,"[host] app=%s sha256=%s\n",app.name.UTF8String,app.sha256.UTF8String);
+    [self startStartupActivityInFolder:directory];
     if (chdir(directory.fileSystemRepresentation)) fprintf(log,"[host] app working directory failed: %s\n",strerror(errno));
     else fprintf(log,"[host] app working directory=%s\n",directory.fileSystemRepresentation);
     // A profile's caseAliases: folders the application names in another case

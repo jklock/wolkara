@@ -325,9 +325,20 @@ Animation so they keep moving while the service pauses the host process. There
 is no measured completion percentage during that pause. Preparation failures
 stop the indicator and expose the existing diagnostics action.
 
+Below the clock, every launch mode shows what startup is doing until the app's
+own window appears: the runtime's current step (loading, linking, the app's
+startup code with a count of its initializers, the check against the page
+container, then the app's own startup) with its duration, and the file the app
+most recently wrote in its folder with its size and age. These lines are
+redrawn from a background queue, so they keep changing while application code
+holds the main thread; a long wait while the app writes, say, a crash report
+into `Errors/` shows as such.
+
 To check the display without loading application code, boot an iPad simulator
 and run `tools/test_launch_progress.sh` (or pass a simulator ID and `--dark`).
-This installs only our standalone UIKit fixture, pauses it for three seconds,
-resumes it, and saves before/during screenshots in `build/launch-progress/`.
-Verify that the clock advances during suspension. The fixture uses a separate
-bundle ID and does not start authorization or run a guest.
+This installs only our standalone UIKit fixture, holds its main thread for six
+seconds while a stand-in step counts and a file grows, then pauses it for three
+seconds and resumes it, saving screenshots in `build/launch-progress/`. Verify
+that the activity lines advance between `busy-1` and `busy-2`, and that the
+clock advances during suspension. The fixture uses a separate bundle ID and
+does not start authorization or run a guest.
