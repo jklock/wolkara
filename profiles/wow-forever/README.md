@@ -8,8 +8,9 @@ service on 2026-10-02: the user reported successful login and about two hours
 of gameplay without problems at 60 FPS, 50% render scale and graphics quality
 2. A Bluetooth keyboard and AssistiveTouch are currently required for the
 tested setup. See the [iPhone guide](../../docs/IPHONE.md) for the beta portal,
-public certificate resource and mouse/controller setup. iOS keyboard
-integration and a touchscreen trackpad are planned, not implemented.
+public certificate resource and mouse/controller setup. Experimental
+[iOS keyboard and trackpad controls](../../docs/TOUCH_INPUT.md) are now
+implemented in this branch, but have not yet been validated in this game.
 
 You need your own installation made by the Battle.net app on a Mac, and your own
 account. Nothing from the game is included here.

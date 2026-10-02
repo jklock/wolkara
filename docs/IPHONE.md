@@ -113,9 +113,11 @@ keyboard was needed to enter account details. Forever gameplay is now
 confirmed. Classic Era's controller and ConsolePort tests remain inconclusive; see
 [COMPATIBILITY.md](../COMPATIBILITY.md#iphone-validation-2026-10-01).
 
-Future work is to bring up the iOS keyboard for text entry and use the
-touchscreen as a trackpad. These features are not implemented yet; they are
-intended to reduce the need for external input devices and AssistiveTouch.
+This branch adds experimental [iOS keyboard and touchscreen trackpad
+controls](TOUCH_INPUT.md), including two-finger scrolling. Their synthetic
+and simulator tests pass; they have not yet been validated in WoW on the
+physical iPhone. The Bluetooth keyboard and AssistiveTouch requirements above
+describe the earlier, user-tested build.
 
 ## What changed in the project
 

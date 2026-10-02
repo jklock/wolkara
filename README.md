@@ -33,7 +33,9 @@ and graphics quality 2. A Bluetooth keyboard and AssistiveTouch are currently
 required for the tested setup. Launch after reboot without a Mac connection
 is confirmed. Classic Era 1.15.9 reached its cinematic and login screen on
 the same device. See the [iPhone guide](docs/IPHONE.md) for setup, input
-workarounds and the planned iOS keyboard and touchscreen trackpad improvements.
+workarounds and the experimental [iOS keyboard and touchscreen trackpad](docs/TOUCH_INPUT.md).
+The new touch controls have simulator coverage; physical-device game validation
+is still pending.
 
 Tested on an iPad Pro (M5) with iPadOS 27. The first application validated end
 to end, with Developer service, is World of Warcraft Classic (Classic Era macOS
