@@ -6,11 +6,12 @@ The macOS arm64 Classic beta client (1.60.1) from `_classic_beta_`. See
 On an iPhone 16 Pro Max / iOS 27.0, build 70170 was tested with Developer
 service on 2026-10-02: the user reported successful login and about two hours
 of gameplay without problems at 60 FPS, 50% render scale and graphics quality
-2. A Bluetooth keyboard and AssistiveTouch are currently required for the
-tested setup. See the [iPhone guide](../../docs/IPHONE.md) for the beta portal,
+2. That session used a Bluetooth keyboard and AssistiveTouch. See the
+[iPhone guide](../../docs/IPHONE.md) for the beta portal,
 public certificate resource and mouse/controller setup. Experimental
 [iOS keyboard and trackpad controls](../../docs/TOUCH_INPUT.md) are now
-implemented in this branch, but have not yet been validated in this game.
+implemented in this branch; the user subsequently confirmed them working
+correctly in Forever on the same iPhone (2026-10-02).
 
 You need your own installation made by the Battle.net app on a Mac, and your own
 account. Nothing from the game is included here.
