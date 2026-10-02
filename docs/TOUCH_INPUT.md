@@ -73,8 +73,10 @@ It builds and launches only the test screen, never an imported application.
 exits after the assertions. Synthetic tests are also registered in the
 standard emulation and translation test scripts.
 
-Physical iPhone and iPad testing of these controls is pending. In particular,
-WoW login, Unicode entry, menu activation, camera movement and two-finger
-scrolling still need manual checks. The existing two-hour Forever gameplay
-report used the earlier Bluetooth-keyboard/AssistiveTouch setup and does not
-validate this new input implementation.
+On 2026-10-02 the user confirmed that the new keyboard and trackpad controls
+work correctly in WoW Forever on the iPhone 16 Pro Max / iOS 27.0 setup. This
+is a manual usability report in addition to the synthetic and simulator
+checks above. Other devices, physical iPad input, other applications and rich
+text composition remain unverified. The earlier two-hour gameplay and 60 FPS
+report used the Bluetooth-keyboard/AssistiveTouch setup; it is not a new
+performance measurement of these controls.

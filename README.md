@@ -29,13 +29,13 @@ or assets.
 Experimental iPhone support is available. On an iPhone 16 Pro Max with iOS
 27.0, Forever 1.60.1 (70170) logs in and plays using Developer service. The
 user reported about two hours without problems at 60 FPS, 50% render scale
-and graphics quality 2. A Bluetooth keyboard and AssistiveTouch are currently
-required for the tested setup. Launch after reboot without a Mac connection
+and graphics quality 2. That initial setup used a Bluetooth keyboard and
+AssistiveTouch. Launch after reboot without a Mac connection
 is confirmed. Classic Era 1.15.9 reached its cinematic and login screen on
 the same device. See the [iPhone guide](docs/IPHONE.md) for setup, input
 workarounds and the experimental [iOS keyboard and touchscreen trackpad](docs/TOUCH_INPUT.md).
-The new touch controls have simulator coverage; physical-device game validation
-is still pending.
+The new touch controls have simulator coverage and were subsequently confirmed
+working by the user in Forever on the same physical iPhone.
 
 Tested on an iPad Pro (M5) with iPadOS 27. The first application validated end
 to end, with Developer service, is World of Warcraft Classic (Classic Era macOS

@@ -5,8 +5,10 @@ physical iPhone result is limited to an iPhone 16 Pro Max running iOS 27.0
 with Developer service. On 2026-10-02 the user confirmed login and about two
 hours of gameplay in World of Warcraft Forever 1.60.1 (build 70170) without
 problems, reporting 60 FPS at 50% render scale and graphics quality 2. A
-Bluetooth keyboard and AssistiveTouch are currently required for the tested
-setup. Classic Era 1.15.9 (build 70003) reached its cinematic and login screen.
+Bluetooth keyboard and AssistiveTouch were used for that initial session.
+The user subsequently confirmed the new iOS keyboard and touchscreen trackpad
+working in Forever on the same iPhone. Classic Era 1.15.9 (build 70003) reached
+its cinematic and login screen.
 See [COMPATIBILITY.md](../COMPATIBILITY.md) for the recorded results.
 
 ## Build and install with your own settings
@@ -102,9 +104,9 @@ after rebuilding with it and using the beta's own portal setting.
 
 ## Mouse, controller and keyboard
 
-The working Forever setup currently requires a **Bluetooth keyboard** and
-**Settings > Accessibility > Touch > AssistiveTouch** to be enabled. Both
-Classic Era and Forever required AssistiveTouch for the tested mouse setup.
+The initial Forever setup used a **Bluetooth keyboard** and
+**Settings > Accessibility > Touch > AssistiveTouch**. Both Classic Era and
+Forever required AssistiveTouch for the tested physical mouse setup.
 
 In Forever, left mouse click did not activate the tested controls. Pressing
 the mouse wheel (middle click, not scrolling) worked and allowed controller
@@ -113,11 +115,12 @@ keyboard was needed to enter account details. Forever gameplay is now
 confirmed. Classic Era's controller and ConsolePort tests remain inconclusive; see
 [COMPATIBILITY.md](../COMPATIBILITY.md#iphone-validation-2026-10-01).
 
-This branch adds experimental [iOS keyboard and touchscreen trackpad
-controls](TOUCH_INPUT.md), including two-finger scrolling. Their synthetic
-and simulator tests pass; they have not yet been validated in WoW on the
-physical iPhone. The Bluetooth keyboard and AssistiveTouch requirements above
-describe the earlier, user-tested build.
+This branch adds [iOS keyboard and touchscreen trackpad controls](TOUCH_INPUT.md),
+including two-finger scrolling. Their synthetic and simulator tests pass, and
+on 2026-10-02 the user confirmed the new controls working correctly in Forever
+on the physical iPhone 16 Pro Max / iOS 27.0. The Bluetooth keyboard and
+AssistiveTouch observations above describe the earlier setup. Input on other
+devices and applications remains unverified.
 
 ## What changed in the project
 
