@@ -74,15 +74,21 @@ static bool rebases(GuestImage *image, Cursor *c, uint64_t slide, const Observer
         }
         while (count--) {
             uint64_t address, value;
-            if (type != REBASE_TYPE_POINTER || !target(image, seg, offset, &address) ||
-                gm_read(&image->memory, address, &value, 8) != GM_OK) return false;
+            if (type != REBASE_TYPE_POINTER || !target(image, seg, offset, &address)) {
+                snprintf(error, error_size, "invalid rebase target segment=%zu offset=%#llx type=%u",
+                         seg, (unsigned long long)offset, type);
+                return false;
+            }
+            if (gm_read(&image->memory, address, &value, 8) != GM_OK) return false;
             value += slide; // Mach-O pointer arithmetic intentionally wraps for negative slides.
             if (gm_populate(&image->memory, address, &value, 8) != GM_OK || !add(&offset, 8 + skip)) return false;
             stats->rebases++;
             notify(o, address, value, NULL);
         }
     }
-    return false; // Missing DONE.
+    // A complete opcode may end exactly at the declared rebase_size without
+    // DONE. Truncated operands and invalid targets have already been refused.
+    return true;
 }
 static bool binds(GuestImage *image, Cursor *c, bool lazy, bool weak_stream, GFResolve resolve,
                   void *context, const Observer *o, GFStats *stats, char *error, size_t error_size) {

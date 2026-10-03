@@ -48,6 +48,55 @@ static size_t put_uleb(uint8_t *out, uint64_t value) {
     } while (value);
     return size;
 }
+static void rebase_stream_end(void) {
+    // The declared byte length can terminate a complete rebase opcode stream;
+    // DONE is not mandatory. Every operand and target must still be valid.
+    const uint8_t complete[][7] = {
+        {0x11, 0x20, 0, 0x51},
+        {0x11, 0x20, 0, 0x60, 1},
+        {0x11, 0x20, 0, 0x70, 0},
+        {0x11, 0x20, 0, 0x80, 1, 0},
+    };
+    const size_t lengths[] = {4, 5, 5, 6};
+    GuestImage image; GFStats stats; char error[256]; uint64_t value;
+    for (size_t n = 0; n < sizeof lengths / sizeof lengths[0]; n++) {
+        setup(&image, complete[n], lengths[n], NULL, 0);
+        assert(gf_apply(&image, 0x200000, resolve, NULL, &stats, error, sizeof error));
+        assert(stats.rebases == 1 && stats.binds == 0);
+        assert(gm_read(&image.memory, 0x100000000, &value, 8) == GM_OK && value == 0x100200800);
+        gi_destroy(&image);
+    }
+    // Ending inside an operand is still malformed, even without a DONE byte.
+    const uint8_t incomplete[][7] = {
+        {0x11, 0x20}, {0x11, 0x20, 0x80}, {0x11, 0x20, 0, 0x30},
+        {0x11, 0x20, 0, 0x60}, {0x11, 0x20, 0, 0x70, 0x80},
+        {0x11, 0x20, 0, 0x80}, {0x11, 0x20, 0, 0x80, 1},
+    };
+    const size_t truncated[] = {2, 3, 4, 4, 5, 4, 5};
+    for (size_t n = 0; n < sizeof truncated / sizeof truncated[0]; n++) {
+        setup(&image, incomplete[n], truncated[n], NULL, 0);
+        assert(!gf_apply(&image, 0x200000, resolve, NULL, &stats, error, sizeof error));
+        assert(stats.rebases == 0);
+        gi_destroy(&image);
+    }
+    // A final pointer exactly inside the segment is valid. A pointer crossing
+    // its end, an unaligned pointer, or an unknown opcode is refused.
+    for (unsigned invalid = 0; invalid < 3; invalid++) {
+        uint8_t stream[16] = {0x11, 0x20}; size_t length = 2;
+        length += put_uleb(stream + length, GM_PAGE_SIZE - (invalid == 0 ? 8 : invalid == 1 ? 0 : 4));
+        stream[length++] = 0x51;
+        setup(&image, stream, length, NULL, 0);
+        bool ok = gf_apply(&image, 1, resolve, NULL, &stats, error, sizeof error);
+        assert(ok == (invalid == 0));
+        assert(stats.rebases == (invalid == 0 ? 1u : 0u));
+        if (!ok) assert(strstr(error, "invalid rebase target"));
+        gi_destroy(&image);
+    }
+    const uint8_t unknown[] = {0x90};
+    setup(&image, unknown, sizeof unknown, NULL, 0);
+    assert(!gf_apply(&image, 0, resolve, NULL, &stats, error, sizeof error));
+    gi_destroy(&image);
+}
 static void large_rebases(void) {
     // A real large image can exceed a million pointers in one opcode or
     // cumulatively. The source stream is in a separate read-only segment.
@@ -133,6 +182,7 @@ static void chained_setup(GuestImage *i, uint16_t format, uint64_t first, uint64
 }
 
 int main(void) {
+    rebase_stream_end();
     large_rebases();
     GuestImage i; GFStats stats; char error[256]; uint64_t value;
     const uint8_t r[] = {0x11,0x20,0,0x51,0};
@@ -327,5 +377,6 @@ int main(void) {
     }
     puts("PASS: Mach-O pointer relocation, import binding, signed addends, observed fixups, malformed fixup bounds");
     puts("PASS: lazy binds first, chained fixups, chained initializers read after fixups, malformed chains");
+    puts("PASS: complete rebase streams without DONE, truncated operands and final target bounds");
     puts("PASS: large rebase streams and image-sized work budget, including repeated targets and huge counts");
 }
