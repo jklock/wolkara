@@ -1,76 +1,108 @@
-// Isolated UIKit fixture: synthetic metadata, empty library, no network or guest execution.
+// Isolated UIKit fixture: our synthetic installation, no network or guest execution.
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 #include <stdatomic.h>
-#include <assert.h>
 #import "../launcher/WoW/WoWViewController.h"
 #import "../launcher/WoW/Client.h"
+#import "wow_installation_fixture.h"
 
-@interface TKEmptyLibrary : NSObject
-- (NSArray *)apps;
+@interface TKWoWViewController (Fixture)
+- (void)selectProduct:(NSDictionary *)product;
+- (void)refresh;
 @end
-@implementation TKEmptyLibrary
-- (NSArray *)apps { return @[]; }
-@end
-
-static atomic_uint requests;
-static NSDictionary *Version(id self, SEL selector, NSString *product, NSString *region, NSError **error) {
-    (void)self; (void)selector; (void)region; (void)error;
-    // A slow first response exercises the controller's stale-result guard.
-    unsigned request=atomic_fetch_add(&requests,1);
-    [NSThread sleepForTimeInterval:request==0?0.5:0.02];
-    return @{@"VersionsName":[@"Synthetic / " stringByAppendingString:product],
-        @"BuildConfig":TKWoWMD5([@"build" dataUsingEncoding:NSUTF8StringEncoding]),
-        @"CDNConfig":TKWoWMD5([@"cdn" dataUsingEncoding:NSUTF8StringEncoding])};
-}
+static atomic_uint requests, revision;
+static atomic_bool failure, slow;
+static TKFixtureLibrary *fixture;
 static NSDictionary *Plan(id self, SEL selector, NSString *product, NSString *region, NSString *locale, NSError **error) {
-    (void)selector;
-    return @{@"version":Version(self,NULL,product,region,error),@"product":product,@"region":region,@"locale":locale,
-        @"files":@[@{@"path":@"Synthetic.app/Contents/MacOS/Synthetic"}],@"installFileBytes":@4096,@"complete":@NO};
+    (void)self; (void)selector; (void)region; (void)locale;
+    unsigned request=atomic_fetch_add(&requests,1);
+    [NSThread sleepForTimeInterval:(request==0 || atomic_load(&slow))?0.5:0.02];
+    if (atomic_load(&failure)) { if (error) *error=TKWoWError(@"Synthetic offline response"); return nil; }
+    return [fixture planForProduct:product revision:atomic_load(&revision)];
+}
+static UIView *Find(UIView *view, NSString *identifier) {
+    if ([view.accessibilityIdentifier isEqual:identifier]) return view;
+    for (UIView *child in view.subviews) { UIView *match=Find(child,identifier); if (match) return match; }
+    return nil;
 }
 @interface TKWoWFixtureDelegate : UIResponder <UIApplicationDelegate>
 @property(nonatomic) UIWindow *window;
 @property(nonatomic) TKWoWViewController *controller;
+@property(nonatomic) NSUInteger launches, setups;
 @end
 @implementation TKWoWFixtureDelegate
-- (void)chooseRow:(NSInteger)row section:(NSInteger)section {
-    [self.controller tableView:self.controller.tableView didSelectRowAtIndexPath:[NSIndexPath indexPathForRow:row inSection:section]];
-}
-- (NSString *)status {
-    return [self.controller tableView:self.controller.tableView cellForRowAtIndexPath:[NSIndexPath indexPathForRow:0 inSection:2]].textLabel.text;
-}
+- (UIButton *)primary { return (id)Find(self.controller.view,@"wow.primary"); }
+- (NSString *)status { return [(UILabel *)Find(self.controller.view,@"wow.status") text]; }
+- (void)tap { [[self primary] sendActionsForControlEvents:UIControlEventTouchUpInside]; }
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)options {
     (void)application; (void)options;
-    method_setImplementation(class_getInstanceMethod(TKWoWClient.class,@selector(versionForProduct:region:error:)),(IMP)Version);
     method_setImplementation(class_getInstanceMethod(TKWoWClient.class,@selector(planForProduct:region:locale:error:)),(IMP)Plan);
-    [NSUserDefaults.standardUserDefaults removeObjectForKey:@"WoWProduct"];
+    [NSUserDefaults.standardUserDefaults setObject:@"wow_classic_beta" forKey:@"WoWProduct"];
+    fixture=[TKFixtureLibrary new];
     self.window=[[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
-    self.controller=[[TKWoWViewController alloc] initWithLibrary:(TKAppLibrary *)(id)[TKEmptyLibrary new]];
-    self.controller.title=@"WoW · synthetic preview";
-    self.controller.startApp=^(TKApp *app) { (void)app; assert(!"An empty installation must never launch."); };
+    self.controller=[[TKWoWViewController alloc] initWithLibrary:(id)fixture];
+    __weak TKWoWFixtureDelegate *weakSelf=self;
+    self.controller.startApp=^(TKApp *app) { assert(app==(id)fixture.apps[0]); weakSelf.launches++; };
+    self.controller.showStartupOptions=^{ weakSelf.setups++; weakSelf.controller.executionMode=TKExecutionModeDeveloperService; };
     self.window.rootViewController=[[UINavigationController alloc] initWithRootViewController:self.controller];
     [self.window makeKeyAndVisible];
     [self performSelector:@selector(changeSelection) withObject:nil afterDelay:0.1];
     return YES;
 }
 - (void)changeSelection {
-    [self chooseRow:1 section:0];
+    [self.controller selectProduct:TKWoWProducts()[1]];
     [self performSelector:@selector(checkSelection) withObject:nil afterDelay:0.8];
 }
 - (void)checkSelection {
-    assert([[self status] containsString:@"wow_classic_era"]);
-    [self chooseRow:2 section:2];
-    [self performSelector:@selector(checkPlan) withObject:nil afterDelay:0.3];
+    assert(![self primary].enabled);
+    assert([[(UIButton *)Find(self.controller.view,@"wow.edition") configuration].title containsString:@"Classic Era"]);
+    assert([[(UILabel *)Find(self.controller.view,@"wow.version") text] containsString:@"demo"]);
+    [self.controller selectProduct:TKWoWProducts()[0]];
+    [self performSelector:@selector(checkReady) withObject:nil afterDelay:0.3];
 }
-- (void)checkPlan {
-    assert([[self status] containsString:@"1 macOS installation files"]);
-    [self chooseRow:4 section:2];
-    [self performSelector:@selector(checkBlocked) withObject:nil afterDelay:0.3];
+- (void)checkReady {
+    assert([self primary].enabled);
+    [self tap]; assert(self.setups==1 && self.launches==0);
+    atomic_store(&revision,1); [self tap];
+    [self performSelector:@selector(checkOutdated) withObject:nil afterDelay:0.3];
 }
-- (void)checkBlocked {
-    assert([[self status] containsString:@"No matching imported installation"]);
-    puts("WoW UIKit fixture PASS: selection race, verified-plan display, missing-installation launch blocked."); fflush(stdout);
-    [self.controller.tableView scrollToRowAtIndexPath:[NSIndexPath indexPathForRow:0 inSection:2] atScrollPosition:UITableViewScrollPositionTop animated:NO];
+- (void)checkOutdated {
+    assert(![self primary].enabled && self.launches==0);
+    atomic_store(&failure,true); [self.controller refresh];
+    [self performSelector:@selector(checkOffline) withObject:nil afterDelay:0.3];
+}
+- (void)checkOffline {
+    assert([self primary].enabled && self.launches==0);
+    atomic_store(&failure,false); atomic_store(&revision,0); [self tap];
+    [self performSelector:@selector(startThenBackground) withObject:nil afterDelay:0.3];
+}
+- (void)startThenBackground {
+    assert([self primary].enabled);
+    atomic_store(&slow,true); [self tap];
+    [NSNotificationCenter.defaultCenter postNotificationName:UIApplicationWillResignActiveNotification object:nil];
+    [self performSelector:@selector(checkCancellation) withObject:nil afterDelay:0.7];
+}
+- (void)checkCancellation {
+    assert(self.launches==0); atomic_store(&slow,false); [self.controller refresh];
+    [self performSelector:@selector(captureAndLaunch) withObject:nil afterDelay:0.3];
+}
+- (void)captureAndLaunch {
+    assert([self primary].enabled);
+    [self.window layoutIfNeeded];
+    CGRect button=[[self primary] convertRect:[self primary].bounds toView:self.window];
+    assert(CGRectContainsRect(self.window.bounds,button));
+    UIGraphicsImageRenderer *renderer=[[UIGraphicsImageRenderer alloc] initWithBounds:self.window.bounds];
+    UIImage *image=[renderer imageWithActions:^(UIGraphicsImageRendererContext *context) {
+        (void)context; [self.window drawViewHierarchyInRect:self.window.bounds afterScreenUpdates:YES];
+    }];
+    NSString *documents=NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject;
+    assert([UIImagePNGRepresentation(image) writeToFile:[documents stringByAppendingPathComponent:@"wow-home.png"] atomically:YES]);
+    [self tap]; [self performSelector:@selector(checkLaunch) withObject:nil afterDelay:0.3];
+}
+- (void)checkLaunch {
+    assert(self.launches==1); self.controller.sessionUsed=YES;
+    assert(![self primary].enabled);
+    puts("WoW UIKit PASS: automatic check, edition race, missing/outdated launch blocked, startup choice, offline retry, background cancellation, verified launch and session end."); fflush(stdout);
     if (![NSProcessInfo.processInfo.arguments containsObject:@"--preview"]) exit(0);
 }
 @end

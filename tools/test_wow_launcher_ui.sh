@@ -14,7 +14,7 @@ APP=build/wow-launcher/WoWFixture.app
 mkdir -p "$APP"
 xcrun --sdk iphonesimulator clang -target arm64-apple-ios17.0-simulator -fobjc-arc -O1 -g \
     -Wall -Wextra -Werror -Wno-deprecated-declarations \
-    launcher/WoW/*.m tests/test_wow_launcher_app.m -framework Foundation -framework UIKit -lz \
+    launcher/WoW/*.m tests/test_wow_launcher_app.m -framework Foundation -framework UIKit -framework QuartzCore -framework CoreGraphics -lz \
     -o "$APP/WoWFixture"
 cat > "$APP/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

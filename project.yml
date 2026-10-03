@@ -11,7 +11,7 @@ settings:
     TOLKARA_KEYCHAIN_GROUP: ${TOLKARA_KEYCHAIN_GROUP}
     # Optional execution-mode preselection (developer-service or local-signing;
     # tools/package_ipa.sh passes external-jit), read once into Info.plist.
-    # Empty: the app asks on first launch.
+    # Empty: startup configuration is offered before playing.
     TOLKARA_MODE: ${TOLKARA_MODE}
     CODE_SIGN_STYLE: Automatic
     CURRENT_PROJECT_VERSION: 1

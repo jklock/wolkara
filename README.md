@@ -26,10 +26,13 @@ or assets.
 
 ## Status
 
-This branch also includes an [experimental WoW launcher](docs/WOW_LAUNCHER.md):
-edition selection, update checks, verified CDN metadata and original-client
-downloads to temporary storage. Full game installation, automatic patching and
-on-device Local signing preparation are not implemented yet.
+This branch opens directly into a themed [WoW home screen](docs/WOW_LAUNCHER.md),
+with edition selection, automatic update checks and a verified Play action for
+an already imported installation. General tools are under Settings. Full game
+installation and automatic patching are not implemented; updates still require
+the Mac. Developer service still prepares memory each opening. Distribution and
+native WoW execution through **AltStore PAL are not established**; installing
+from that marketplace does not automatically enable the current execution modes.
 
 Experimental iPhone support is available. On an iPhone 16 Pro Max with iOS
 27.0, Forever 1.60.1 (70170) logs in and plays using Developer service. The
@@ -69,8 +72,9 @@ Helper processes that an app launches separately
 iPadOS executes only code whose pages are covered by a valid code signature,
 with one exception for development: memory that a debugger has prepared, either
 the device's own developer service or a JIT enabler: your sideloading tool, or a
-separate one such as StikDebug. Tolkara supports three routes. Each user chooses one: the app asks
-on first launch, and **Execution mode…** in the app changes it later.
+separate one such as StikDebug. Tolkara supports three routes. On this WoW branch,
+choose one under **Settings → Startup options** or when a verified installation
+is ready to play. Browsing editions does not require choosing a mode.
 
 | | Developer service | Local signing | External JIT |
 | --- | --- | --- | --- |
@@ -125,7 +129,8 @@ With `TOLKARA_MODE=local-signing`, `tools/install.sh` also builds, signs and
 copies the page container. Copy your application's files to the iPad (for the
 WoW Classic profile,
 [`profiles/wow-classic-era/install.py`](profiles/wow-classic-era)), open Tolkara
-on the iPad and tap the app in its library.
+on the device and choose its edition on the WoW home screen. Other applications
+remain accessible under **Settings → Advanced library and diagnostics**.
 
 To check a change without a device:
 

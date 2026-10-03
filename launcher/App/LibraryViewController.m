@@ -1,6 +1,5 @@
 #import "LibraryViewController.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
-#import "../WoW/WoWViewController.h"
 
 @interface TKLibraryViewController () <UIDocumentPickerDelegate>
 @end
@@ -28,9 +27,7 @@
     [self.tableView registerClass:UITableViewCell.class forCellReuseIdentifier:@"notice"];
     _addItem=[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemAdd target:self action:@selector(importApp)];
     _addItem.accessibilityLabel=@"Add App";
-    UIBarButtonItem *wow=[[UIBarButtonItem alloc] initWithTitle:@"WoW" style:UIBarButtonItemStylePlain
-        target:self action:@selector(showWoW)];
-    self.navigationItem.rightBarButtonItems=@[_addItem,wow];
+    self.navigationItem.rightBarButtonItem=_addItem;
     UIBarButtonItem *diagnostics=[[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"stethoscope"]
         style:UIBarButtonItemStylePlain target:self action:@selector(showDiagnostics)];
     diagnostics.accessibilityLabel=@"Diagnostics";
@@ -188,15 +185,6 @@
 
 #pragma mark Actions
 
-- (void)showWoW {
-    TKWoWViewController *controller=[[TKWoWViewController alloc] initWithLibrary:_library];
-    __weak TKLibraryViewController *weakSelf=self;
-    controller.startApp=^(TKApp *app) {
-        TKLibraryViewController *library=weakSelf;
-        [library.delegate libraryViewController:library startApp:app];
-    };
-    [self.navigationController pushViewController:controller animated:YES];
-}
 - (void)showDiagnostics { [self.delegate libraryViewControllerShowDiagnostics:self]; }
 - (void)showExecutionMode { [self.delegate libraryViewControllerShowExecutionMode:self]; }
 

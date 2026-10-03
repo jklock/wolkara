@@ -7,30 +7,48 @@ modes are unchanged. No game files, signing identities or accounts are bundled.
 
 ## Available now
 
-The **WoW** button in Tolkara's library opens a native edition selector:
-Forever Beta, Classic Era, Classic, Retail and Retail Beta. It remembers the
-selected product, region and download language. Forever currently corresponds
-to `wow_classic_beta`; this channel is not assumed to be a permanent product ID.
+Normal launches now open a **WoW home screen directly**, with a dark navy and
+gold interface, edition selector and one primary action. The design uses native
+UIKit controls and typography, not bundled Blizzard artwork. The old general
+library, diagnostics and execution-mode chooser remain under **Settings**.
+English and Spanish interface text follows the device language. Landscape uses
+two columns; narrow screens and accessibility text sizes use a scrolling column.
 
-- Checks the selected channel on opening the screen and returning to it.
-- Queries Blizzard's public HTTPS version/CDN services without Battle.net or
-  an account. A failed check is an error, never interpreted as “up to date”.
-- Downloads the build configuration and installation manifest, verifies their
-  content hashes, decodes BLTE, and filters macOS/ARM64/region/language tags.
-- Can download the original WoW executable into **temporary staging storage**.
-  It uses the encoding manifest to resolve content hashes and verifies the
-  original bytes. This does not install an executable or make a game playable.
-- **Play imported copy** checks the latest metadata again, requires the
-  imported copy's `.build.info` to match the product, active build, CDN config
-  and version, and hashes its original executable against the manifest before
-  passing it to Tolkara's existing launch path. Missing metadata, a patch,
-  a failed request or an executable mismatch blocks this launch.
+- Remembers Forever Beta, Classic Era, Classic, Retail or Retail Beta, plus region
+  and download language. Forever currently maps to `wow_classic_beta`; this is
+  not assumed to be a permanent product ID. Listing a product does not prove
+  runtime compatibility.
+- Checks automatically on opening, returning to the screen and returning to the
+  foreground. The refresh control also checks on demand. Failed checks remain
+  errors and never count as “up to date”.
+- Shows distinct checking, not installed, update required, installation needs
+  attention, ready and failed-check states, with installed/available versions
+  and the last successful check time. It explicitly says updates are currently
+  **checked automatically but installed manually**.
+- **Play** repeats the current-build check, requires one valid active product in
+  `.build.info`, matching build/CDN/version keys, and verifies the original
+  executable's size and hash against the verified installation manifest.
+  A missing installation, patch, bad metadata, network failure or executable
+  mismatch blocks this launch. An unconfigured execution mode offers setup.
+- Leaving the screen, switching edition or backgrounding invalidates pending
+  results, including a pending Play request. A consumed runtime session cannot
+  start another game. No request automatically starts a game on opening.
+- Keeps startup preparation visible: Developer service still takes several
+  minutes on each opening. Changing the home screen does not cache an executable
+  arena or remove that work.
 
 The imported installation must already exist in Tolkara's library, with the
 usual `World of Warcraft/_<edition>_/…` layout and `.build.info` in its parent.
-This check does not audit every CASC data block. Other entries in Tolkara's
-original library retain their existing behaviour: this is an opt-in prototype,
-not a global update gate. Edition visibility does not establish runtime support.
+“Ready” checks metadata and the original executable, not every CASC data block.
+The advanced library retains its original launch behaviour; its manual launch
+path is not covered by the WoW home screen's update gate.
+
+The underlying CDN tools query Blizzard's public HTTPS services without an
+account, verify configuration and installation manifests, decode BLTE and
+filter macOS/ARM64/region/language tags. The developer CLI can stage an original
+file using the encoding manifest and verify its bytes. Staging a file is **not
+a game installation**. These developer operations are no longer primary UI
+buttons, and no Download or Install action pretends a full installer exists.
 
 Only English (`enUS`) and Spanish (`esES`) are exposed in the prototype UI.
 Download preferences do not edit `WTF/Config.wtf`, the portal, account data,
@@ -47,7 +65,9 @@ timeouts, cancellation, no credentials/cookies, no redirects and no HTTP
 fallback. A changed published build invalidates an extraction plan. Encoding
 metadata is cached by content hash and reverified before reuse.
 
-`WoWViewController.m` is the UIKit interface. A generation counter prevents
+`Installation.m` performs the read-only installed-build/executable check.
+`WoWViewController.m` is the UIKit home screen, integrated in `launcher/App/main.m`.
+A generation counter prevents
 late responses for a previously selected edition from updating the current
 screen. Background transfers do not run UIKit or start a guest. The public
 protocol source reference is [TACTSharp](https://github.com/wowdev/TACTSharp);
@@ -86,6 +106,33 @@ Executable preparation must be a separate recorded stage, invalidated when the
 executable or signing requirements change. It must never reuse an incompatible
 container or silently fall back to a partially installed build.
 
+## AltStore PAL feasibility
+
+The intended public distribution channel is **AltStore PAL**, not Classic.
+There is currently **no demonstrated PAL-compatible native execution path** for
+this launcher. The home screen and an eventual downloader do not solve that.
+
+[AltStore's PAL distribution documentation](https://faq.altstore.io/developers/distribute-with-altstore-pal)
+requires Apple notarization. [Apple's code-signing documentation](https://support.apple.com/guide/security/app-code-signing-process-sec7c917bf14/web)
+explains mandatory executable-code validation. Our engineering conclusion is
+that installing the wrapper through PAL alone cannot be treated as permission
+to execute a separately downloaded Mac client. No notarized build was submitted
+or tested, and no PAL distribution or execution entitlement is claimed.
+
+[AltStore's JIT guide](https://faq.altstore.io/altstore-classic/enabling-jit)
+does describe a helper, StikDebug, distributed through PAL. Its documented target
+apps are sideloaded through **AltStore Classic**, with a pairing setup involving
+a Mac or PC. The helper's availability on PAL does not establish that this
+wrapper installed through PAL can execute WoW.
+
+Local signing remains a development experiment involving the user's own signed
+page container, not a proven solution for marketplace distribution. Its keys or
+third-party code must not be bundled into a public app. Replacing native execution
+with interpretation would be a different engineering project with unproven WoW
+compatibility and performance. “Install from PAL, choose an edition and play,
+without setup or preparation” therefore remains an unresolved feasibility goal,
+not a deliverable promised by this branch.
+
 ## Validation — 2026-10-03
 
 All real CDN requests below were run on the Mac using the **same native client
@@ -106,14 +153,18 @@ cached-encoding executable extraction used **464,437,248 bytes maximum RSS**
 on the Mac (about 443 MiB), versus about 27 GB before. This is a Mac process
 measurement, not an iPhone memory budget or a guarantee for larger builds.
 
-- Focused manifest and client tests: **PASS**, `-Wall -Wextra -Werror`, ASan and
-  UBSan. Synthetic fixtures cover truncation, bounds, decompression limits,
+- Focused manifest, client and installation tests: **PASS**,
+  `-Wall -Wextra -Werror`, ASan and UBSan. Synthetic fixtures cover truncation, bounds, decompression limits,
   checksums, unsafe paths, multi-chunk decoding, tag filtering, cache corruption,
-  missing/changed/ambiguous build metadata, protocol failures and HTTPS-only
-  selection. No third-party application data is in the tests.
+  missing/changed/ambiguous build metadata, read-only inspection, changed original
+  bytes, protocol failures and HTTPS-only selection. No third-party application
+  data is in the tests.
 - UIKit fixture: **PASS** on iPhone 17 Pro / iOS 26.5 Simulator. Synthetic
-  responses exercise rapid edition changes, plan display and blocked launch
-  with no installation. The landscape layout was visually inspected.
+  responses exercise automatic checks, rapid edition changes, missing/outdated
+  installation launch gates, initial startup configuration, offline retry,
+  pending launch cancellation in the background, verified launch callback and
+  session-end blocking. No game code executes. The Spanish landscape layout was
+  visually inspected using the fixture, with the Play button visible.
 - Full integrated Tolkara build for generic iOS ARM64: **BUILD SUCCEEDED**.
   This was an unsigned compile check, with public system roots disabled for this
   test output. It was **not installed on the user's phone**; a private build for
@@ -122,8 +173,8 @@ measurement, not an iPhone memory budget or a guarantee for larger builds.
   `tests.test_sign_guest_local.AdhocTests.test_matches_codesign_byte_for_byte`
   comparison (`sgl-fixture.dylib` differs from `codesign -s -`). This same failure
   was already reproduced on the original base during the iPhone PR review.
-  It is not caused or fixed by the launcher changes. Later suite steps do not run
-  after that failure. The focused launcher tests pass independently.
+  The launcher changes do not modify that signer. This failure remains unresolved.
+  Later suite steps do not run after that failure. The focused launcher tests pass independently.
 
 ## Reproduce
 
