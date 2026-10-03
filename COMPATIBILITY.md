@@ -23,8 +23,14 @@ verified data reuse, resumable staging and atomic activation. Synthetic tests
 and isolated Mac-copy transactions pass: Forever 1.60.1.70205 selected
 1,215,567 standard macOS objects (67,079,188,425 encoded bytes), fetched
 248,252,461 missing asset bytes and verified all 143 loose files. The Mac source
-installation was unchanged. The iPhone updater and gameplay after its update
-are **not yet validated**. Fresh installation is covered only by synthetic
+installation was unchanged. The user subsequently completed the patch download
+on the physical iPhone. Readback confirmed version 1.60.1.70205 and an executable
+identical to the Mac original (SHA-256). Startup stopped before guest entry:
+the loader incorrectly required a DONE marker after the complete rebase stream.
+This revision accepts a stream ending at its declared length, retains operand
+and target bounds checks, and validates all 241,069 rebases and 3,549 binds of
+the readback executable without running it. **Device startup and gameplay after
+this fix still need manual confirmation.** Fresh installation is covered only by synthetic
 fixtures. AltStore PAL execution remains unproven. These launcher checks do not
 extend the gameplay results recorded below.
 

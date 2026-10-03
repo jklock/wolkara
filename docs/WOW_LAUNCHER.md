@@ -88,11 +88,11 @@ for downloading patches. It does not automate login or gameplay.
 
 ## Remaining validation and limits
 
-- The new updater has **not yet updated the physical iPhone**. Real-data tests
-  use isolated APFS clones on the Mac, with the same native updater sources.
-  Those tests prove file installation and integrity, not WoW accepting a newly
-  constructed CASC store on iOS. Physical update, interruption and subsequent
-  gameplay need manual validation.
+- The user completed the pending patch on the physical iPhone. Readback verified
+  the 1.60.1.70205 original executable against the Mac copy. Startup then stopped
+  at a loader compatibility issue described below. Startup/gameplay after that
+  fix and interruption/resumption on the device still need manual validation;
+  matching files alone do not prove WoW accepts the updated CASC store on iOS.
 - Fresh installation is implemented and tested with synthetic data, but a full
   fresh real-game download has not been validated. Other listed editions have
   metadata checks, not complete update/runtime coverage.
@@ -137,9 +137,23 @@ not a deliverable promised by this branch.
 
 ## Validation — 2026-10-03
 
-All real CDN operations below were run on the Mac using the **same native
-client/updater code** compiled into the iOS app. They do not establish downloads
-on a physical iPhone or gameplay with the downloaded copy.
+The initial CDN transactions below were run on the Mac using the **same native
+client/updater code** compiled into the iOS app. They do not establish gameplay
+with the downloaded copy.
+
+The user subsequently downloaded the pending patch inside Tolkara on the iPhone
+16 Pro Max. Readback confirmed version 1.60.1.70205 and an executable whose SHA-256
+exactly matches the original on the Mac. The startup log confirms successful
+112,427,008-byte executable-memory preparation, followed by fixup stream rejection
+before any guest entry. The rebase table ends at byte 136,456 immediately after a
+complete opcode, without DONE; the loader was incorrectly treating that as
+truncation. `GuestFixups.c` now accepts this valid end condition while retaining
+all operand, target and work-budget checks. Synthetic tests cover valid final
+opcodes, truncated operands, out-of-bounds targets and invalid opcodes under
+ASan/UBSan. The unchanged readback executable now passes the loader-only probe:
+241,069 rebases and 3,549 binds. This probe never executes game code. A new manual
+device startup and gameplay test is still needed; the earlier two-hour gameplay
+report was for the previous client.
 
 Two isolated Forever 1.60.1.70205 transactions completed. Both verified
 1,215,567 selected objects (67,079,188,425 encoded bytes), reused existing valid
@@ -184,13 +198,14 @@ measurement, not an iPhone memory budget or a guarantee for larger builds.
   test output. A separate private build with the existing development identity
   and `TOLKARA_SYSTEM_ROOTS=YES` also **BUILD SUCCEEDED**; its strict signature,
   unchanged keychain groups and 158 public root certificates were verified.
-  Neither build was installed on the phone during this update.
+  The user installed the updater afterwards; see the physical patch report above.
 - Full `tools/test_emulation.sh`: **FAIL**, at the previously documented
   `tests.test_sign_guest_local.AdhocTests.test_matches_codesign_byte_for_byte`
   comparison (`sgl-fixture.dylib` differs from `codesign -s -`). This same failure
   was already reproduced on the original base during the iPhone PR review.
   The launcher changes do not modify that signer. This failure remains unresolved.
-  Later suite steps do not run after that failure. The focused launcher tests pass independently.
+  The startup-fix rerun reaches the same failure. Later suite steps do not run
+  after it. Focused launcher and fixup tests pass independently.
 
 ## Reproduce
 
@@ -200,6 +215,14 @@ From the repository root (Xcode and XcodeGen required):
 bash tools/test_wow_launcher.sh
 bash tools/test_wow_launcher_ui.sh
 bash tools/test_emulation.sh
+# Focused fixup regression, also runnable after the unrelated signer failure:
+xcrun clang -std=c11 -D_DARWIN_C_SOURCE -Wall -Wextra -Werror -O1 -g \
+  -fsanitize=address,undefined -fno-omit-frame-pointer -Iruntime \
+  runtime/GuestMemory.c runtime/GuestImage.c runtime/GuestFixups.c \
+  tests/test_fixups.c -o build/emulation/test_fixups
+build/emulation/test_fixups
+# Loader-only validation of the user's unchanged original; no game execution:
+tools/probe_guest.sh /path/to/original/executable --validate-fixups
 tools/generate.sh
 xcodebuild -project Tolkara.xcodeproj -scheme Tolkara -configuration Debug \
   -destination 'generic/platform=iOS' \
