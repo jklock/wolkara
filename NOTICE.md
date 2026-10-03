@@ -1,8 +1,8 @@
 # Notices
 
-Tolkara is original work released under the MIT License. It bundles and links
-no third-party source code or libraries; it uses only Apple's public SDK
-frameworks and the Python standard library.
+Tolkara is released under the MIT License. It uses Apple's public SDK frameworks,
+the system zlib library and the Python standard library. The experimental WoW
+manifest reader includes adaptations described below.
 
 The following public material was consulted as **reference documentation** for
 protocols and formats. No code was copied or translated from these projects.
@@ -27,3 +27,33 @@ published with releases leaves them out.
 
 If you contribute code derived from another project, say so in the pull request
 and add its licence here.
+
+## Experimental WoW launcher
+
+The BLTE, install-manifest and encoding-manifest readers in
+`launcher/WoW/Manifest.m` were adapted using TACTSharp's `BLTE.cs`,
+`InstallInstance.cs` and `EncodingInstance.cs` (https://github.com/wowdev/TACTSharp).
+This implementation adds bounded parsing, checksum validation and synthetic tests.
+TACTSharp itself and its .NET runtime are not bundled. No game files are included.
+
+TACTSharp's MIT licence:
+
+Copyright (c) 2024 Martin Benjamins
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

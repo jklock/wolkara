@@ -26,6 +26,11 @@ or assets.
 
 ## Status
 
+This branch also includes an [experimental WoW launcher](docs/WOW_LAUNCHER.md):
+edition selection, update checks, verified CDN metadata and original-client
+downloads to temporary storage. Full game installation, automatic patching and
+on-device Local signing preparation are not implemented yet.
+
 Experimental iPhone support is available. On an iPhone 16 Pro Max with iOS
 27.0, Forever 1.60.1 (70170) logs in and plays using Developer service. The
 user reported about two hours without problems at 60 FPS, 50% render scale
