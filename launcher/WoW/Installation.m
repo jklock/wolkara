@@ -9,7 +9,7 @@ TKWoWInstallation *TKWoWInspectInstallation(TKAppLibrary *library, NSDictionary 
     result.state=TKWoWInstallationMissing;
     for (TKApp *app in library.apps) {
         if (app.source!=TKAppSourceDocuments || ![app.workingDirectory.lastPathComponent isEqual:product[@"folder"]]) continue;
-        result.state=TKWoWInstallationNeedsRepair;
+        result.state=TKWoWInstallationNeedsRepair; result.app=app;
         NSError *error=nil;
         NSString *directory=[library workingDirectoryForApp:app error:&error];
         NSString *path=[library executablePathForApp:app error:&error];

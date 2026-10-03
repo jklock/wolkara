@@ -17,12 +17,16 @@ pull request; say what you tested, on what hardware, with which execution mode
 ## iPhone validation (2026-10-01)
 
 The [WoW launcher branch](docs/WOW_LAUNCHER.md) was compiled for iOS on 2026-10-03.
-The user opened the earlier prototype through Xcode and reported a confusing
-entry flow and the unchanged startup delay. The revised WoW home screen has
-synthetic simulator coverage; it has not yet been tested on this physical
-iPhone. CDN extraction was validated on the Mac. Automatic full installation,
-patching and AltStore PAL execution remain unimplemented or unproven. These
-launcher checks do not extend the gameplay results recorded below.
+The user tested the themed home screen on this iPhone and requested automatic
+installation of detected patches. This revision implements native CDN updates,
+verified data reuse, resumable staging and atomic activation. Synthetic tests
+and isolated Mac-copy transactions pass: Forever 1.60.1.70205 selected
+1,215,567 standard macOS objects (67,079,188,425 encoded bytes), fetched
+248,252,461 missing asset bytes and verified all 143 loose files. The Mac source
+installation was unchanged. The iPhone updater and gameplay after its update
+are **not yet validated**. Fresh installation is covered only by synthetic
+fixtures. AltStore PAL execution remains unproven. These launcher checks do not
+extend the gameplay results recorded below.
 
 Results updated on 2026-10-02 with the Forever gameplay report below.
 

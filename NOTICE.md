@@ -31,14 +31,47 @@ and add its licence here.
 ## Experimental WoW launcher
 
 The BLTE, install-manifest and encoding-manifest readers in
-`launcher/WoW/Manifest.m` were adapted using TACTSharp's `BLTE.cs`,
-`InstallInstance.cs` and `EncodingInstance.cs` (https://github.com/wowdev/TACTSharp).
+`launcher/WoW/Manifest.m` and the archive reader in `launcher/WoW/CASC.m` were adapted using TACTSharp's `BLTE.cs`,
+`InstallInstance.cs`, `EncodingInstance.cs` and `IndexInstance.cs` (https://github.com/wowdev/TACTSharp).
 This implementation adds bounded parsing, checksum validation and synthetic tests.
 TACTSharp itself and its .NET runtime are not bundled. No game files are included.
 
 TACTSharp's MIT licence:
 
 Copyright (c) 2024 Martin Benjamins
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+The local CASC index format and archive footer reader in `launcher/WoW/CASC.m`
+were adapted with reference to CascLib's `CascIndexFiles.cpp` and
+`CascStructs.h` (https://github.com/ladislav-zezula/CascLib).
+CascLib is not bundled. Public download/storage format documentation was also
+consulted at https://github.com/d07RiV/blizzget/wiki; no blizzget code is copied.
+
+`TKWoWJenkins` adapts Bob Jenkins' `lookup3.c` (May 2006, public domain):
+https://burtleburtle.net/bob/c/lookup3.c. It is used for the local index's
+format checksum, not for cryptographic authentication.
+
+CascLib's MIT licence:
+
+Copyright (c) 2014 Ladislav Zezula
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

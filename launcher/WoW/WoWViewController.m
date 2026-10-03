@@ -1,6 +1,7 @@
 #import "WoWViewController.h"
 #import "Client.h"
 #import "Installation.h"
+#import "Updater.h"
 
 static NSString *L(NSString *english, NSString *spanish) {
     return [NSLocale.preferredLanguages.firstObject hasPrefix:@"es"] ? spanish : english;
@@ -26,7 +27,10 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     NSError *_error;
     NSDate *_checkedAt;
     NSUInteger _generation;
-    BOOL _busy;
+    BOOL _busy, _updating, _updateError;
+    NSString *_updatePhase;
+    uint64_t _updateDone, _updateTotal;
+    UIProgressView *_progressBar;
     CAGradientLayer *_background;
     UIStackView *_columns;
     NSLayoutConstraint *_leftWidth;
@@ -73,7 +77,6 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     _refreshItem.accessibilityIdentifier=@"wow.refresh";
     self.navigationItem.leftBarButtonItem=_refreshItem;
 
-    UILabel *eyebrow=Label(11,UIFontWeightBold,Gold()); eyebrow.text=L(@"TOLKARA  /  PREVIEW",@"TOLKARA  /  EN DESARROLLO");
     UILabel *title=Label(37,UIFontWeightBold,Gold()); title.text=@"WORLD OF\nWARCRAFT";
     UIFontDescriptor *serif=[[UIFont systemFontOfSize:37 weight:UIFontWeightBold].fontDescriptor fontDescriptorWithDesign:UIFontDescriptorSystemDesignSerif];
     if (serif) title.font=[[UIFontMetrics metricsForTextStyle:UIFontTextStyleLargeTitle] scaledFontForFont:[UIFont fontWithDescriptor:serif size:37]];
@@ -81,7 +84,7 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     _editionButton=[self button:@"wow.edition" action:@selector(chooseEdition)];
     _preferencesButton=[self button:@"wow.preferences" action:@selector(preferences)];
     _compatibilityLabel=Label(12,UIFontWeightRegular,Muted());
-    UIStackView *left=Stack(@[eyebrow,title,tagline,_editionButton,_preferencesButton,_compatibilityLabel],12);
+    UIStackView *left=Stack(@[title,tagline,_editionButton,_preferencesButton,_compatibilityLabel],12);
     [left setCustomSpacing:20 afterView:tagline];
 
     _activity=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
@@ -92,7 +95,9 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     [_activity setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
     _detailLabel=Label(15,UIFontWeightRegular,Muted()); _detailLabel.accessibilityIdentifier=@"wow.detail";
     _versionLabel=Label(12,UIFontWeightRegular,Muted()); _versionLabel.accessibilityIdentifier=@"wow.version";
-    UIStackView *status=Stack(@[stateRow,_detailLabel,_versionLabel],10);
+    _progressBar=[[UIProgressView alloc] initWithProgressViewStyle:UIProgressViewStyleDefault];
+    _progressBar.progressTintColor=Gold(); _progressBar.accessibilityIdentifier=@"wow.progress";
+    UIStackView *status=Stack(@[stateRow,_detailLabel,_progressBar,_versionLabel],10);
     status.layoutMargins=UIEdgeInsetsMake(20,20,20,20); status.layoutMarginsRelativeArrangement=YES;
     status.backgroundColor=[UIColor colorWithRed:0.07 green:0.105 blue:0.15 alpha:1];
     status.layer.cornerRadius=16; status.layer.borderWidth=1;
@@ -100,8 +105,8 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     _primaryButton=[self button:@"wow.primary" action:@selector(primaryAction)];
     [_primaryButton.heightAnchor constraintGreaterThanOrEqualToConstant:52].active=YES;
     UILabel *updates=Label(12,UIFontWeightRegular,Muted()); updates.accessibilityIdentifier=@"wow.updates";
-    updates.text=L(@"Updates are checked on opening. Installation is still manual.",
-        @"Busca actualizaciones al abrir. Por ahora se instalan manualmente.");
+    updates.text=L(@"Updates install automatically on opening. Keep the app open; interrupted downloads resume next time.",
+        @"Instala las actualizaciones al abrir. Mantén la app abierta; si sales, la descarga se reanuda al volver.");
     _startupLabel=Label(12,UIFontWeightRegular,Muted()); _startupLabel.accessibilityIdentifier=@"wow.startup";
     UIStackView *right=Stack(@[status,_primaryButton,updates,_startupLabel],12);
     _columns=Stack(@[left,right],32); _columns.accessibilityIdentifier=@"wow.columns";
@@ -164,22 +169,60 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     [self refresh];
 }
 - (void)refresh { [self checkForUpdatesAndLaunch:NO]; }
-- (void)checkForUpdatesAndLaunch:(BOOL)launch {
+- (void)checkForUpdatesAndLaunch:(BOOL)launch { [self checkForUpdatesAndLaunch:launch install:NO]; }
+- (void)checkForUpdatesAndLaunch:(BOOL)launch install:(BOOL)install {
+    NSString *installKey=[@"WoWInstallRequested." stringByAppendingString:_product[@"id"]];
+    if(install)[NSUserDefaults.standardUserDefaults setBool:YES forKey:installKey];
+    install=install || [NSUserDefaults.standardUserDefaults boolForKey:installKey];
     [self cancel]; _plan=nil; _installation=nil; _error=nil; _checkedAt=nil;
+    _updating=NO; _updateError=NO; _updatePhase=nil; _updateDone=0; _updateTotal=0;
     _client=[TKWoWClient new]; _busy=YES; [self render];
     TKWoWClient *client=_client; NSUInteger generation=_generation;
     NSDictionary *product=_product; NSString *region=_region, *locale=_locale;
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
+    static dispatch_queue_t queue; static dispatch_once_t once;
+    dispatch_once(&once,^{ queue=dispatch_queue_create("org.tolkara.wow-updates",DISPATCH_QUEUE_SERIAL); });
+    dispatch_async(queue,^{
         [self->_library discover];
         NSError *error=nil;
         NSDictionary *plan=[client planForProduct:product[@"id"] region:region locale:locale error:&error];
         TKWoWInstallation *installation=plan?TKWoWInspectInstallation(self->_library,product,plan):nil;
+        BOOL updateAttempted=plan && (install || installation.state==TKWoWInstallationOutdated) && !client.cancelled;
+        if(updateAttempted) {
+            void (^progress)(NSString *,uint64_t,uint64_t)=^(NSString *phase,uint64_t done,uint64_t total) {
+                dispatch_async(dispatch_get_main_queue(),^{
+                    if(generation!=self->_generation)return;
+                    self->_plan=plan;self->_installation=installation;self->_updating=YES;
+                    self->_updatePhase=phase;self->_updateDone=done;self->_updateTotal=total;[self render];
+                });
+            };
+            progress(@"snapshot",0,0);
+            NSString *directory=installation.app?[self->_library workingDirectoryForApp:installation.app error:&error]:nil;
+            NSString *root=directory?directory.stringByDeletingLastPathComponent:
+                [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject stringByAppendingPathComponent:@"World of Warcraft"];
+            TKWoWUpdater *updater=[[TKWoWUpdater alloc] initWithClient:client];
+            if([updater updatePlan:plan root:root progress:progress error:&error]) {
+                [self->_library discover];installation=TKWoWInspectInstallation(self->_library,product,plan);error=nil;
+                // Editions without a bundled compatibility profile still need a
+                // library entry after their first download. Register only the
+                // original executable already verified by the install manifest.
+                if(installation.state==TKWoWInstallationMissing) {
+                    NSMutableArray *executables=[NSMutableArray new];
+                    for(NSDictionary *file in plan[@"files"])if([file[@"path"] hasSuffix:@".app/Contents/MacOS/World of Warcraft"])
+                        [executables addObject:[[root stringByAppendingPathComponent:product[@"folder"]] stringByAppendingPathComponent:file[@"path"]]];
+                    if(executables.count==1 && [self->_library importExecutable:executables[0] copy:NO error:&error])
+                        installation=TKWoWInspectInstallation(self->_library,product,plan);
+                }
+                if(installation.state==TKWoWInstallationReady)[NSUserDefaults.standardUserDefaults removeObjectForKey:installKey];
+                else error=error?:installation.error?:TKWoWError(@"The downloaded installation could not be registered in the library.");
+            }
+        }
+
         dispatch_async(dispatch_get_main_queue(),^{
             if (generation!=self->_generation) return;
             self->_plan=plan; self->_installation=installation; self->_error=error;
-            self->_checkedAt=plan?NSDate.date:nil; self->_busy=NO; [self render];
+            self->_checkedAt=plan?NSDate.date:nil; self->_busy=NO; self->_updating=NO; self->_updateError=updateAttempted && error; [self render];
             // Returning from the background or changing edition invalidates this request.
-            if (launch && installation.state==TKWoWInstallationReady && installation.app && !self->_sessionUsed &&
+            if (launch && !error && !client.cancelled && installation.state==TKWoWInstallationReady && installation.app && !self->_sessionUsed &&
                 self.view.window && self.navigationController.topViewController==self && self.startApp) self.startApp(installation.app);
         });
     });
@@ -187,6 +230,9 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
 - (void)primaryAction {
     if (_busy || _sessionUsed) return;
     if (_error || !_plan) { [self refresh]; return; }
+    if (_installation.state==TKWoWInstallationMissing || _installation.state==TKWoWInstallationNeedsRepair) {
+        [self checkForUpdatesAndLaunch:NO install:YES];return;
+    }
     if (_installation.state!=TKWoWInstallationReady) return;
     if (_executionMode==TKExecutionModeNone) { if (self.showStartupOptions) self.showStartupOptions(); return; }
     [self checkForUpdatesAndLaunch:YES];
@@ -208,34 +254,56 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     _compatibilityLabel.text=([_product[@"id"] isEqual:@"wow"] || [_product[@"id"] isEqual:@"wow_beta"] || [_product[@"id"] isEqual:@"wow_classic"])?
         L(@"Compatibility with this edition is not yet verified.",@"La compatibilidad con esta edición aún no está verificada."):
         L(@"Experimental support on iPhone and iPad.",@"Soporte experimental en iPhone y iPad.");
+    _editionButton.enabled=!_updating;_preferencesButton.enabled=!_updating;
+    self.navigationItem.rightBarButtonItem.enabled=!_updating;
+    _progressBar.hidden=!_updating || !_updateTotal;
+    _progressBar.progress=_updateTotal?(float)((double)_updateDone/_updateTotal):0;
     NSString *title=nil, *detail=nil, *action=nil;
     BOOL enabled=NO;
     if (_sessionUsed) {
         title=L(@"Reopen to start again",@"Vuelve a abrir la app");
         detail=L(@"Close the app from the app switcher before starting another session.",@"Ciérrala desde el selector de apps antes de iniciar otra sesión.");
         action=L(@"Session ended",@"Sesión finalizada");
+    } else if (_busy && _updating) {
+        title=L(@"Updating your game…",@"Actualizando el juego…");
+        NSDictionary *phases=@{@"snapshot":L(@"Preparing the installation",@"Preparando la instalación"),
+            @"manifests":L(@"Reading the update",@"Consultando la actualización"),
+            @"verify":L(@"Checking existing data",@"Comprobando los datos existentes"),
+            @"indices":L(@"Locating download files",@"Localizando los archivos de descarga"),
+            @"download":L(@"Downloading new data",@"Descargando los datos nuevos"),
+            @"files":L(@"Installing game files",@"Instalando los archivos del juego"),
+            @"activate":L(@"Finishing the update",@"Terminando la actualización"),
+            @"complete":L(@"Update complete",@"Actualización completada")};
+        detail=phases[_updatePhase]?:L(@"Preparing…",@"Preparando…");
+        if(_updateTotal) {
+            BOOL bytes=[_updatePhase isEqual:@"verify"] || [_updatePhase isEqual:@"download"];
+            NSString *done=bytes?[NSByteCountFormatter stringFromByteCount:(int64_t)_updateDone countStyle:NSByteCountFormatterCountStyleFile]:@(_updateDone).stringValue;
+            NSString *total=bytes?[NSByteCountFormatter stringFromByteCount:(int64_t)_updateTotal countStyle:NSByteCountFormatterCountStyleFile]:@(_updateTotal).stringValue;
+            detail=[detail stringByAppendingFormat:@" · %@ / %@",done,total];
+        }
+        action=L(@"Updating…",@"Actualizando…");
     } else if (_busy) {
         title=L(@"Checking your adventure…",@"Comprobando tu aventura…");
         detail=L(@"Checking the latest version and your installed copy.",@"Buscando actualizaciones y comprobando tu copia instalada.");
         action=L(@"Checking…",@"Comprobando…");
     } else if (_error || !_plan) {
-        title=L(@"Could not check this edition",@"No se ha podido comprobar");
-        detail=L(@"We cannot confirm that your game is up to date. Check your connection and try again.",@"No podemos confirmar que el juego esté al día. Comprueba la conexión y vuelve a intentarlo.");
+        title=_updateError?L(@"Update interrupted",@"Actualización interrumpida"):L(@"Could not check this edition",@"No se ha podido comprobar");
+        detail=_updateError?[_error.localizedDescription stringByAppendingString:L(@" Your installed copy is preserved.",@" Tu copia instalada se conserva.")]:L(@"We cannot confirm that your game is up to date. Check your connection and try again.",@"No podemos confirmar que el juego esté al día. Comprueba la conexión y vuelve a intentarlo.");
         action=L(@"Try again",@"Reintentar"); enabled=YES;
     } else {
         switch (_installation.state) {
         case TKWoWInstallationMissing:
             title=L(@"Not installed",@"Sin instalar");
-            detail=L(@"This edition is not on your device. Full game downloads are still in development.",@"Esta edición no está en tu dispositivo. La descarga del juego completo aún está en desarrollo.");
-            action=L(@"Installation coming later",@"Instalación aún no disponible"); break;
+            detail=L(@"Install this edition on your device. The download may require several gigabytes.",@"Instala esta edición en tu dispositivo. La descarga puede ocupar varios gigabytes.");
+            action=L(@"Install",@"Instalar"); enabled=YES; break;
         case TKWoWInstallationOutdated:
             title=L(@"Update required",@"Actualización pendiente");
-            detail=L(@"A newer build is available. Update your copy from the Mac for now; automatic installation is not ready yet.",@"Hay una nueva versión. Por ahora, actualiza la copia desde el Mac; la instalación automática aún no está lista.");
+            detail=L(@"A newer build is available. The update starts automatically.",@"Hay una nueva versión. La actualización comienza automáticamente.");
             action=L(@"Update needed to play",@"Actualiza para jugar"); break;
         case TKWoWInstallationNeedsRepair:
             title=L(@"Your copy needs attention",@"Revisa tu instalación");
-            detail=L(@"We found the game but could not verify its files. Use the advanced library to check or replace your copy.",@"Encontramos el juego, pero no pudimos verificar sus archivos. Revisa o sustituye la copia desde la biblioteca avanzada.");
-            action=L(@"Installation not verified",@"Instalación sin verificar"); break;
+            detail=L(@"We could not verify all game files. Repair downloads the original files and keeps your settings and addons.",@"No pudimos verificar todos los archivos. Reparar descarga los originales y conserva tus ajustes y addons.");
+            action=L(@"Repair installation",@"Reparar instalación"); enabled=YES; break;
         case TKWoWInstallationReady:
             title=L(@"Ready for your next adventure",@"Tu próxima aventura te espera");
             detail=L(@"Your game is up to date.",@"Tu juego está al día.");
@@ -295,8 +363,8 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
 }
 - (void)settings {
     UIAlertController *sheet=[UIAlertController alertControllerWithTitle:L(@"Settings",@"Ajustes")
-        message:L(@"This preview checks updates but does not install them yet. Automatic startup without preparation is also still under investigation.",
-            @"Este prototipo comprueba actualizaciones, pero todavía no las instala. El inicio automático sin preparación también sigue en investigación.") preferredStyle:UIAlertControllerStyleActionSheet];
+        message:L(@"Updates install automatically while this app is open. Settings and addons are preserved. Startup preparation is separate from downloading updates.",
+            @"Las actualizaciones se instalan automáticamente con la app abierta. Se conservan los ajustes y addons. La preparación del arranque es independiente de la descarga.") preferredStyle:UIAlertControllerStyleActionSheet];
     [sheet addAction:[UIAlertAction actionWithTitle:L(@"Startup options",@"Opciones de inicio") style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
         (void)a; if (self.showStartupOptions) self.showStartupOptions();
     }]];

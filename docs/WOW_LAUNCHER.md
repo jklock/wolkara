@@ -7,110 +7,112 @@ modes are unchanged. No game files, signing identities or accounts are bundled.
 
 ## Available now
 
-Normal launches now open a **WoW home screen directly**, with a dark navy and
-gold interface, edition selector and one primary action. The design uses native
-UIKit controls and typography, not bundled Blizzard artwork. The old general
-library, diagnostics and execution-mode chooser remain under **Settings**.
-English and Spanish interface text follows the device language. Landscape uses
-two columns; narrow screens and accessibility text sizes use a scrolling column.
+The app opens directly into a native WoW home screen with edition selection,
+automatic updates and one primary action. General tools and execution modes
+remain under Settings. English and Spanish follow the device language. The
+“Tolkara / In development” heading has been removed.
 
-- Remembers Forever Beta, Classic Era, Classic, Retail or Retail Beta, plus region
-  and download language. Forever currently maps to `wow_classic_beta`; this is
-  not assumed to be a permanent product ID. Listing a product does not prove
-  runtime compatibility.
-- Checks automatically on opening, returning to the screen and returning to the
-  foreground. The refresh control also checks on demand. Failed checks remain
-  errors and never count as “up to date”.
-- Shows distinct checking, not installed, update required, installation needs
-  attention, ready and failed-check states, with installed/available versions
-  and the last successful check time. It explicitly says updates are currently
-  **checked automatically but installed manually**.
-- **Play** repeats the current-build check, requires one valid active product in
-  `.build.info`, matching build/CDN/version keys, and verifies the original
-  executable's size and hash against the verified installation manifest.
-  A missing installation, patch, bad metadata, network failure or executable
-  mismatch blocks this launch. An unconfigured execution mode offers setup.
-- Leaving the screen, switching edition or backgrounding invalidates pending
-  results, including a pending Play request. A consumed runtime session cannot
-  start another game. No request automatically starts a game on opening.
-- Keeps startup preparation visible: Developer service still takes several
-  minutes on each opening. Changing the home screen does not cache an executable
-  arena or remove that work.
+- Remembers Forever Beta, Classic Era, Classic, Retail or Retail Beta, region
+  and language. Forever currently maps to `wow_classic_beta`; a listed edition
+  is not a claim of runtime compatibility.
+- Checks at opening, foregrounding and before Play. An outdated installed copy
+  **starts updating automatically**. A missing edition offers Install; an
+  unverifiable installation offers Repair. Interrupted explicit installations
+  are remembered and resumed, including after reopening the process.
+- Shows preparation, existing-data verification, downloading, file installation
+  and activation progress. Play stays disabled until the current published build
+  and its original executable pass verification. A failed check never counts as
+  up to date. No game starts automatically unless the user requested Play.
+- Keeps settings and addons. The updater writes into a private APFS clone and
+  switches the whole installation in one filesystem operation only after all
+  required content is present and verified. An interrupted update leaves the
+  active installation in place.
+- Downloads while the app is open. Backgrounding cancels the current transfer;
+  verified objects are checkpointed and reused next time. The same applies to
+  returning after a network failure. This is not an iOS background-download
+  service. Keep the app open while updating.
+- Developer service still prepares executable memory at each launch. Updating
+  files does not remove or cache that separate runtime operation.
 
-The imported installation must already exist in Tolkara's library, with the
-usual `World of Warcraft/_<edition>_/…` layout and `.build.info` in its parent.
-“Ready” checks metadata and the original executable, not every CASC data block.
-The advanced library retains its original launch behaviour; its manual launch
-path is not covered by the WoW home screen's update gate.
+Play checks `.build.info` and the selected executable on ordinary launches.
+Full CASC verification runs during updates/repair, not every time Play is tapped.
+The advanced library still has its original manual launch path, outside the
+WoW home screen's mandatory-update gate.
 
-The underlying CDN tools query Blizzard's public HTTPS services without an
-account, verify configuration and installation manifests, decode BLTE and
-filter macOS/ARM64/region/language tags. The developer CLI can stage an original
-file using the encoding manifest and verify its bytes. Staging a file is **not
-a game installation**. These developer operations are no longer primary UI
-buttons, and no Download or Install action pretends a full installer exists.
+## Update implementation
 
-Only English (`enUS`) and Spanish (`esES`) are exposed in the prototype UI.
-Download preferences do not edit `WTF/Config.wtf`, the portal, account data,
-addons or existing game files. Errors and cancellation leave the installation
-alone. Temporary, verified metadata may remain cached after cancellation.
+`Manifest.m` reads text metadata, BLTE, install and encoding manifests with
+bounds, decompression limits and content checksums. `CASC.m` adds download
+manifests, CDN archive indexes and local v7 CASC index/container storage. It
+selects standard macOS ARM64 content for the region/language, excluding optional
+HighRes/Alternate/feature packs. Encrypted assets are retained as opaque original
+bytes; encrypted loose-file extraction is rejected. No content keys, login
+credentials or game code are supplied by Tolkara.
 
-## Implementation
+`Client.m` uses Blizzard's public HTTPS services, bounded responses and verified
+Range requests. It reuses a connection pool and groups adjacent archive objects
+into requests of up to 16 MiB (larger individual objects remain bounded at
+256 MiB). Every selected object is checked before being passed to storage.
+Metadata caches are content-addressed and reverified. Protocol sources and
+licences from TACTSharp, CascLib and lookup3 are recorded in `NOTICE.md`;
+no .NET runtime is embedded.
 
-`launcher/WoW/Manifest.m` reads the text metadata, BLTE, install and encoding
-formats. It bounds lengths and decompression, checks encoded/chunk/content
-hashes, rejects unsafe paths and unsupported encrypted extraction, and does
-not inspect application code. `Client.m` provides bounded HTTPS transfers with
-timeouts, cancellation, no credentials/cookies, no redirects and no HTTP
-fallback. A changed published build invalidates an extraction plan. Encoding
-metadata is cached by content hash and reverified before reuse.
+`Updater.m`:
 
-`Installation.m` performs the read-only installed-build/executable check.
-`WoWViewController.m` is the UIKit home screen, integrated in `launcher/App/main.m`.
-A generation counter prevents
-late responses for a previously selected edition from updating the current
-screen. Background transfers do not run UIKit or start a guest. The public
-protocol source reference is [TACTSharp](https://github.com/wowdev/TACTSharp);
-its adapted format readers and MIT licence are acknowledged in `NOTICE.md`.
-The app uses Foundation and system zlib, with no embedded .NET runtime.
+1. Locks the updater and records a snapshot keyed by product, build and locale
+   under `.tolkara-updates` beside `World of Warcraft`. APFS clones share old
+   blocks without permitting writes to alter the old installation. Symlinks
+   outside the installation and unsupported files fail the update.
+2. Verifies existing content and computes missing objects. It checks space for
+   missing objects, loose files and a 1 GiB margin; filesystem write errors also
+   stop activation. Bootstrap manifests and the root manifest are included.
+3. Appends new encoded objects to new CASC segments and checkpoints local indexes
+   every 64 MiB and on a handled interruption. The latest two index generations
+   are retained. A forced process kill may lose the current uncheckpointed batch;
+   it cannot activate a partial installation. Resume rechecks stored content.
+4. Installs original loose files with exact size/content hashes. It never
+   patches or re-signs the game's executable. Existing WTF and Interface folders
+   are refreshed from the old root immediately before activation, preserving
+   edits made while paused. Only when Config.wtf is absent, initial portal and
+   locale settings are created to avoid the unsupported region picker.
+5. Rechecks the published version and unchanged source metadata, then uses an
+   atomic directory swap to activate metadata, executable and data together.
+   Its own replaced snapshot is removed after success. Other editions and
+   existing unreferenced data are retained; data compaction is not implemented.
 
-## What is not implemented
+`Installation.m` checks the installed product and original executable.
+`WoWViewController.m` serializes update jobs, discards stale UI/launch callbacks
+when the screen or edition changes, and registers newly installed executables
+with the existing library. Its normal flow needs no running Battle.net on a Mac
+for downloading patches. It does not automate login or gameplay.
 
-1. **Complete installations and patching.** The install manifest describes
-   loose client files, not the tens of gigabytes of game data. Download-manifest
-   selection, CDN archive/range lookup, local CASC index/container construction,
-   resumable downloads, storage budgeting and atomic installation switching
-   are still required. A successful manifest or executable download never sets
-   an installation to complete. Some files may require archive lookup;
-   the tested Info.plist request returned HTTP 403 and is reported as a failure.
-   Archive lookup is not implemented yet, so its availability through an archive
-   was not established by this test.
-2. **Automatic mandatory updates.** The new Play action blocks outdated copies,
-   but cannot yet repair them. No old files are removed. Existing Mac-to-iPhone
-   copying remains necessary to update a playable installation.
-3. **Removing per-launch memory preparation.** Developer service still prepares
-   a fresh executable arena for each process. Caching downloads cannot eliminate
-   this. Local signing remains the candidate route for reusing prepared code.
-4. **Self-contained Local signing on iPhone.** The existing local signer compiles
-   for iOS ARM64, but that is not a device signing test. Tolkara still needs a
-   supported way to produce final code pages during loading, securely provision
-   the user's signing identity, construct/sign its own private page container,
-   and verify that iOS accepts it. The executable must remain unchanged. No keys
-   were exported, no debugger attached, and no game memory captured in this work.
+## Remaining validation and limits
 
-The next implementation milestone is archive-backed extraction and a complete
-CASC installation in an isolated staging directory. Updates should be keyed by
-product and build hashes, preserve WTF/Interface, resume verified content, and
-switch the active installation only after every required file is verified.
-Executable preparation must be a separate recorded stage, invalidated when the
-executable or signing requirements change. It must never reuse an incompatible
-container or silently fall back to a partially installed build.
+- The new updater has **not yet updated the physical iPhone**. Real-data tests
+  use isolated APFS clones on the Mac, with the same native updater sources.
+  Those tests prove file installation and integrity, not WoW accepting a newly
+  constructed CASC store on iOS. Physical update, interruption and subsequent
+  gameplay need manual validation.
+- Fresh installation is implemented and tested with synthetic data, but a full
+  fresh real-game download has not been validated. Other listed editions have
+  metadata checks, not complete update/runtime coverage.
+- Existing game language preferences are preserved; changing the download
+  language is not a WoW settings editor. Download only a language matching the
+  installation until switching languages is tested. Optional packs are not
+  part of this standard-content updater.
+- Transfers stop on protocol/storage errors and offer Retry. Oversized objects,
+  unsupported local-index layouts and encrypted loose files fail explicitly.
+  New upstream formats may require code changes. Obsolete data/abandoned build
+  snapshots are not globally compacted automatically.
+- Preparation time is unchanged. Local signing and the required final-page
+  capture/signing workflow remain a separate investigation. A container for an
+  old executable must never be reused for an updated one.
 
 ## AltStore PAL feasibility
 
 The intended public distribution channel is **AltStore PAL**, not Classic.
 There is currently **no demonstrated PAL-compatible native execution path** for
-this launcher. The home screen and an eventual downloader do not solve that.
+this launcher. The home screen and downloader do not solve that.
 
 [AltStore's PAL distribution documentation](https://faq.altstore.io/developers/distribute-with-altstore-pal)
 requires Apple notarization. [Apple's code-signing documentation](https://support.apple.com/guide/security/app-code-signing-process-sec7c917bf14/web)
@@ -135,9 +137,19 @@ not a deliverable promised by this branch.
 
 ## Validation — 2026-10-03
 
-All real CDN requests below were run on the Mac using the **same native client
-code** compiled into the iOS app. They do not establish downloads on a physical
-iPhone or gameplay with the downloaded copy.
+All real CDN operations below were run on the Mac using the **same native
+client/updater code** compiled into the iOS app. They do not establish downloads
+on a physical iPhone or gameplay with the downloaded copy.
+
+Two isolated Forever 1.60.1.70205 transactions completed. Both verified
+1,215,567 selected objects (67,079,188,425 encoded bytes), reused existing valid
+content, downloaded 248,252,461 missing asset bytes and verified all 143 loose
+files after activation. A deliberately absent Info.plist in each **test clone**
+was restored through a verified archive range. The original Mac installation's
+metadata and executable remained unchanged. No game was run. The second
+transaction exercised batched range downloads and connection reuse. A final
+transaction also verified the required root manifest and reused every selected
+asset (zero missing asset bytes downloaded).
 
 | Product | Published version observed | Result |
 | --- | --- | --- |
@@ -153,22 +165,26 @@ cached-encoding executable extraction used **464,437,248 bytes maximum RSS**
 on the Mac (about 443 MiB), versus about 27 GB before. This is a Mac process
 measurement, not an iPhone memory budget or a guarantee for larger builds.
 
-- Focused manifest, client and installation tests: **PASS**,
+- Focused manifest, client, installation and updater tests: **PASS**,
   `-Wall -Wextra -Werror`, ASan and UBSan. Synthetic fixtures cover truncation, bounds, decompression limits,
   checksums, unsafe paths, multi-chunk decoding, tag filtering, cache corruption,
   missing/changed/ambiguous build metadata, read-only inspection, changed original
   bytes, protocol failures and HTTPS-only selection. No third-party application
-  data is in the tests.
+  data is in the tests. Updater fixtures also cover grouped archive downloads,
+  corrupt ranges, pause/resume, source preservation, late upstream build changes,
+  external symlinks, protected user paths, optional packs and fresh installs.
 - UIKit fixture: **PASS** on iPhone 17 Pro / iOS 26.5 Simulator. Synthetic
-  responses exercise automatic checks, rapid edition changes, missing/outdated
-  installation launch gates, initial startup configuration, offline retry,
+  responses exercise automatic checks and installation of a detected patch
+  without a Play tap, rapid edition changes, missing-install action, initial startup configuration, offline retry,
   pending launch cancellation in the background, verified launch callback and
   session-end blocking. No game code executes. The Spanish landscape layout was
   visually inspected using the fixture, with the Play button visible.
 - Full integrated Tolkara build for generic iOS ARM64: **BUILD SUCCEEDED**.
   This was an unsigned compile check, with public system roots disabled for this
-  test output. It was **not installed on the user's phone**; a private build for
-  gameplay still needs the usual signing and system-root settings.
+  test output. A separate private build with the existing development identity
+  and `TOLKARA_SYSTEM_ROOTS=YES` also **BUILD SUCCEEDED**; its strict signature,
+  unchanged keychain groups and 158 public root certificates were verified.
+  Neither build was installed on the phone during this update.
 - Full `tools/test_emulation.sh`: **FAIL**, at the previously documented
   `tests.test_sign_guest_local.AdhocTests.test_matches_codesign_byte_for_byte`
   comparison (`sgl-fixture.dylib` differs from `codesign -s -`). This same failure
