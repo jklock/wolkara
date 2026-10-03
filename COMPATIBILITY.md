@@ -16,10 +16,13 @@ pull request; say what you tested, on what hardware, with which execution mode
 
 ## iPhone validation (2026-10-01)
 
-The separate [WoW launcher prototype](docs/WOW_LAUNCHER.md) was compiled for iOS
-on 2026-10-03. Its CDN extraction was validated on the Mac and its UI with
-synthetic data in the simulator. It has not been installed or tested on this
-physical iPhone and does not extend the gameplay results recorded below.
+The [WoW launcher branch](docs/WOW_LAUNCHER.md) was compiled for iOS on 2026-10-03.
+The user opened the earlier prototype through Xcode and reported a confusing
+entry flow and the unchanged startup delay. The revised WoW home screen has
+synthetic simulator coverage; it has not yet been tested on this physical
+iPhone. CDN extraction was validated on the Mac. Automatic full installation,
+patching and AltStore PAL execution remain unimplemented or unproven. These
+launcher checks do not extend the gameplay results recorded below.
 
 Results updated on 2026-10-02 with the Forever gameplay report below.
 

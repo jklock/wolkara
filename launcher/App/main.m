@@ -7,6 +7,7 @@
 #import "DiagnosticsViewController.h"
 #import "ExecutionMode.h"
 #import "LibraryViewController.h"
+#import "../WoW/WoWViewController.h"
 #import "LaunchProgressView.h"
 #import "NativeGuest.h"
 #import "SignedFileProbe.h"
@@ -30,6 +31,7 @@
 @property(nonatomic, strong) UIButton *diagnosticsButton;
 @property(nonatomic, strong) UINavigationController *navigation;
 @property(nonatomic, strong) TKLibraryViewController *libraryController;
+@property(nonatomic, strong) TKWoWViewController *wowController;
 @property(nonatomic, strong) TKAppLibrary *library;
 @property(nonatomic, strong, nullable) TKApp *launchingApp;
 // iPadOS allows one guest startup per process; some checks also end it.
@@ -203,7 +205,7 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
         name:TKLocalArenaDidPrepare object:nil];
 #endif
     // A plain launch (no arguments, or only a per-launch --execution-mode)
-    // shows the app library. Any other launch is a development run from
+    // shows the WoW home. Any other launch is a development run from
     // tools/: keep its plain status screen and behaviour.
     BOOL plain=YES;
     for(NSUInteger i=1;i<arguments.count;i++) if(![arguments[i] hasPrefix:TKExecutionModeArgumentPrefix]) plain=NO;
@@ -214,10 +216,23 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
         // An unusable per-launch mode or preselection never falls back; say so.
         if (TKExecutionModeSourceIsInvalid(source))
             self.libraryController.notice=[NSString stringWithFormat:@"Execution mode not set: %@. Choose one with Execution Mode before starting an app.",source];
-        self.navigation=[[UINavigationController alloc] initWithRootViewController:self.libraryController];
+        self.wowController=[[TKWoWViewController alloc] initWithLibrary:self.library];
+        self.wowController.executionMode=self.executionMode;
+        __weak AKHostSceneDelegate *weakSelf=self;
+        self.wowController.startApp=^(TKApp *app) {
+            AKHostSceneDelegate *host=weakSelf;
+            [host libraryViewController:host.libraryController startApp:app];
+        };
+        self.wowController.showTools=^{
+            AKHostSceneDelegate *host=weakSelf;
+            [host.navigation pushViewController:host.libraryController animated:YES];
+        };
+        self.wowController.showStartupOptions=^{ [weakSelf changeExecutionMode]; };
+        self.navigation=[[UINavigationController alloc] initWithRootViewController:self.wowController];
         self.window.rootViewController=self.navigation;
         [self.window makeKeyAndVisible];
-        [self performSelector:@selector(askExecutionModeIfNeeded) withObject:nil afterDelay:0];
+        // Browsing editions needs no execution-mode choice. Configuration is
+        // offered from Settings or when a verified installation is ready to play.
         return;
     }
     self.window.rootViewController = [self statusController];
@@ -281,18 +296,11 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
 - (void)endSession:(NSString *)reason {
     self.sessionUsed=YES;
     self.libraryController.notice=reason;
+    self.wowController.sessionUsed=YES;
 }
 
 #pragma mark Execution mode
 
-// First launch with no chosen, saved or preselected mode: ask before any app
-// starts; the choice cannot be skipped. TolkaraDiagnostics asks only when an
-// app starts.
-- (void)askExecutionModeIfNeeded {
-#if TOLKARA_INTEGRATED_AUTH
-    if (!self.executionMode) [self chooseExecutionMode:NO forApp:nil];
-#endif
-}
 // The mode chooser over whatever is showing. When app is given, its start
 // continues once the mode is chosen.
 - (void)chooseExecutionMode:(BOOL)cancellable forApp:(TKApp *)app {
@@ -302,6 +310,7 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
         current:self.executionMode cancellable:cancellable chosen:^(TKExecutionMode mode) {
         TKExecutionModeSave(NSUserDefaults.standardUserDefaults,mode);
         weakSelf.executionMode=mode;weakSelf.executionModeSource=@"chosen";
+        weakSelf.wowController.executionMode=mode;
         fprintf(stderr,"[host] execution mode=%s source=chosen\n",ModeIdentifier(mode));
         weakSelf.libraryController.notice=nil;
         if (mode==TKExecutionModeLocalSigning) PrepareLocalSigningFolder();

@@ -12,6 +12,11 @@ xcrun clang -fobjc-arc -Wall -Wextra -Werror -O1 -g \
     launcher/WoW/Manifest.m launcher/WoW/Client.m tests/test_wow_client.m \
     -o build/wow-launcher/test_wow_client
 build/wow-launcher/test_wow_client
+xcrun clang -fobjc-arc -Wall -Wextra -Werror -O1 -g \
+    -fsanitize=address,undefined -fno-omit-frame-pointer -framework Foundation -lz \
+    launcher/WoW/Manifest.m launcher/WoW/Installation.m tests/test_wow_installation.m \
+    -o build/wow-launcher/test_wow_installation
+build/wow-launcher/test_wow_installation
 xcrun clang -fobjc-arc -Wall -Wextra -Werror -O2 -framework Foundation -lz \
     launcher/WoW/Manifest.m launcher/WoW/Client.m tools/wow_cdn.m \
     -o build/wow-launcher/wow_cdn
