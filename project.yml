@@ -39,6 +39,8 @@ targetTemplates:
   AppBase:
     type: application
     platform: iOS
+    dependencies:
+      - sdk: libz.tbd
     sources:
       - path: launcher
         excludes: [Info.plist]
