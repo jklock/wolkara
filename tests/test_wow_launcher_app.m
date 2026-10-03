@@ -4,13 +4,14 @@
 #include <stdatomic.h>
 #import "../launcher/WoW/WoWViewController.h"
 #import "../launcher/WoW/Client.h"
+#import "../launcher/WoW/Updater.h"
 #import "wow_installation_fixture.h"
 
 @interface TKWoWViewController (Fixture)
 - (void)selectProduct:(NSDictionary *)product;
 - (void)refresh;
 @end
-static atomic_uint requests, revision;
+static atomic_uint requests, revision, updates;
 static atomic_bool failure, slow;
 static TKFixtureLibrary *fixture;
 static NSDictionary *Plan(id self, SEL selector, NSString *product, NSString *region, NSString *locale, NSError **error) {
@@ -19,6 +20,14 @@ static NSDictionary *Plan(id self, SEL selector, NSString *product, NSString *re
     [NSThread sleepForTimeInterval:(request==0 || atomic_load(&slow))?0.5:0.02];
     if (atomic_load(&failure)) { if (error) *error=TKWoWError(@"Synthetic offline response"); return nil; }
     return [fixture planForProduct:product revision:atomic_load(&revision)];
+}
+static BOOL Update(id self, SEL selector, NSDictionary *plan, NSString *root,
+                   void (^progress)(NSString *,uint64_t,uint64_t), NSError **error) {
+    (void)self; (void)selector; (void)plan; (void)error;
+    assert([root isEqual:fixture.root]);
+    atomic_fetch_add(&updates,1); progress(@"download",50,100);
+    [fixture writeMetadata:atomic_load(&revision) duplicate:NO];
+    progress(@"complete",1,1); return YES;
 }
 static UIView *Find(UIView *view, NSString *identifier) {
     if ([view.accessibilityIdentifier isEqual:identifier]) return view;
@@ -37,6 +46,7 @@ static UIView *Find(UIView *view, NSString *identifier) {
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)options {
     (void)application; (void)options;
     method_setImplementation(class_getInstanceMethod(TKWoWClient.class,@selector(planForProduct:region:locale:error:)),(IMP)Plan);
+    method_setImplementation(class_getInstanceMethod(TKWoWUpdater.class,@selector(updatePlan:root:progress:error:)),(IMP)Update);
     [NSUserDefaults.standardUserDefaults setObject:@"wow_classic_beta" forKey:@"WoWProduct"];
     fixture=[TKFixtureLibrary new];
     self.window=[[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
@@ -54,7 +64,7 @@ static UIView *Find(UIView *view, NSString *identifier) {
     [self performSelector:@selector(checkSelection) withObject:nil afterDelay:0.8];
 }
 - (void)checkSelection {
-    assert(![self primary].enabled);
+    assert([self primary].enabled);
     assert([[(UIButton *)Find(self.controller.view,@"wow.edition") configuration].title containsString:@"Classic Era"]);
     assert([[(UILabel *)Find(self.controller.view,@"wow.version") text] containsString:@"demo"]);
     [self.controller selectProduct:TKWoWProducts()[0]];
@@ -63,17 +73,17 @@ static UIView *Find(UIView *view, NSString *identifier) {
 - (void)checkReady {
     assert([self primary].enabled);
     [self tap]; assert(self.setups==1 && self.launches==0);
-    atomic_store(&revision,1); [self tap];
+    atomic_store(&revision,1); [self.controller refresh];
     [self performSelector:@selector(checkOutdated) withObject:nil afterDelay:0.3];
 }
 - (void)checkOutdated {
-    assert(![self primary].enabled && self.launches==0);
+    assert([self primary].enabled && self.launches==0 && atomic_load(&updates)==1);
     atomic_store(&failure,true); [self.controller refresh];
     [self performSelector:@selector(checkOffline) withObject:nil afterDelay:0.3];
 }
 - (void)checkOffline {
     assert([self primary].enabled && self.launches==0);
-    atomic_store(&failure,false); atomic_store(&revision,0); [self tap];
+    atomic_store(&failure,false); [self tap];
     [self performSelector:@selector(startThenBackground) withObject:nil afterDelay:0.3];
 }
 - (void)startThenBackground {
@@ -102,7 +112,7 @@ static UIView *Find(UIView *view, NSString *identifier) {
 - (void)checkLaunch {
     assert(self.launches==1); self.controller.sessionUsed=YES;
     assert(![self primary].enabled);
-    puts("WoW UIKit PASS: automatic check, edition race, missing/outdated launch blocked, startup choice, offline retry, background cancellation, verified launch and session end."); fflush(stdout);
+    puts("WoW UIKit PASS: automatic check, edition race, missing install action, automatic update without launch, startup choice, offline retry, background cancellation, verified launch and session end."); fflush(stdout);
     if (![NSProcessInfo.processInfo.arguments containsObject:@"--preview"]) exit(0);
 }
 @end

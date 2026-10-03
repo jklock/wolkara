@@ -27,10 +27,13 @@ or assets.
 ## Status
 
 This branch opens directly into a themed [WoW home screen](docs/WOW_LAUNCHER.md),
-with edition selection, automatic update checks and a verified Play action for
-an already imported installation. General tools are under Settings. Full game
-installation and automatic patching are not implemented; updates still require
-the Mac. Developer service still prepares memory each opening. Distribution and
+with edition selection, automatic installation of updates, download progress and
+a verified Play action. The native updater reuses verified CASC data, downloads
+missing content from Blizzard's CDN, preserves settings/addons and activates a
+complete installation atomically. General tools are under Settings. The updater
+passes synthetic tests and real-data tests on isolated Mac copies; its physical
+iPhone update and subsequent gameplay still need validation. Developer service
+still prepares memory each opening. Distribution and
 native WoW execution through **AltStore PAL are not established**; installing
 from that marketplace does not automatically enable the current execution modes.
 
