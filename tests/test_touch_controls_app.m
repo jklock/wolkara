@@ -66,6 +66,11 @@
 }
 @end
 
+static void AKDrainFixtureEvents(void) {
+    NSEvent *event;
+    while ((event = [NSApp nextEventMatchingMask:UINT64_MAX untilDate:NSDate.distantPast inMode:NSDefaultRunLoopMode dequeue:YES])) [NSApp sendEvent:event];
+}
+
 @interface AKInputFixtureScene : UIResponder <UIWindowSceneDelegate>
 @property NSWindow *guest;
 @property NSTimer *pump;
@@ -85,11 +90,20 @@
         while ((event = [NSApp nextEventMatchingMask:UINT64_MAX untilDate:NSDate.distantPast inMode:NSDefaultRunLoopMode dequeue:YES])) [NSApp sendEvent:event];
     }];
     BOOL selfTest = [NSProcessInfo.processInfo.arguments containsObject:@"--self-test"];
-    if (selfTest || [NSProcessInfo.processInfo.arguments containsObject:@"--show-keyboard"]) {
+    BOOL nativeReference = [NSProcessInfo.processInfo.arguments containsObject:@"--native-keyboard-reference"];
+    if (selfTest || nativeReference || [NSProcessInfo.processInfo.arguments containsObject:@"--show-keyboard"]) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{
             UIView *host = [self.guest valueForKey:@"_host"];
             AKTouchControls *controls = [host valueForKey:@"_touchControls"];
             CGSize originalSize = host.bounds.size;
+            if (nativeReference) {
+                UITextView *reference = [[UITextView alloc] initWithFrame:CGRectMake(48, 130, 360, 70)];
+                reference.backgroundColor = UIColor.whiteColor;
+                reference.accessibilityIdentifier = @"tolkara.reference-input";
+                [host addSubview:reference];
+                [reference becomeFirstResponder];
+                return;
+            }
             [controls toggleKeyboard];
             if (!selfTest) return;
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{
@@ -98,16 +112,64 @@
                 assert(host.keyboardLayoutGuide.layoutFrame.size.height > 100);
                 assert(CGRectGetMaxY(controls.frame) <= CGRectGetMinY(host.keyboardLayoutGuide.layoutFrame));
                 assert(CGRectGetMinY(controls.frame) >= 0);
-                [controls insertText:@"Fixture @ñ🙂"];
-                [controls deleteBackward];
-                // A committed dictation phrase uses the same input path as typing.
-                // Deliver it as one chunk; it must not duplicate text or send Return.
-                [controls insertText:@" ¡Hola equipo, vamos a la mazmorra!"];
+                UITextView *input = nil;
+                for (UIView *view in controls.subviews) if ([view isKindOfClass:UITextView.class]) input = (UITextView *)view;
+                assert(input.isFirstResponder && [input conformsToProtocol:@protocol(UITextInput)]);
+                AKInputFixtureView *fixture = (AKInputFixtureView *)self.guest.contentView;
+                [input insertText:@"Fixture @ñ🙂"];
+                assert(input.text.length == 0);
+                [input deleteBackward];
+                AKDrainFixtureEvents();
+                assert([fixture.text isEqual:@"Fixture @ñ"]);
+                // Provisional recognition/composition must not reach the game.
+                [input setMarkedText:@" provisional" selectedRange:NSMakeRange(12, 0)];
+                assert(input.markedTextRange != nil);
+                [input setMarkedText:@" ¡Hola equipo, vamos a la mazmorra!" selectedRange:NSMakeRange(33, 0)];
+                AKDrainFixtureEvents();
+                assert([fixture.text isEqual:@"Fixture @ñ"]);
+                [input unmarkText];
+                AKDrainFixtureEvents();
+                assert([fixture.text isEqual:@"Fixture @ñ ¡Hola equipo, vamos a la mazmorra!"]);
+                assert(input.text.length == 0 && input.markedTextRange == nil);
+                // Exercise UITextInput replacement, not just UIKeyInput injection.
+                [input replaceRange:input.selectedTextRange withText:@" Otra frase."];
+                AKDrainFixtureEvents();
+                assert([fixture.text isEqual:@"Fixture @ñ ¡Hola equipo, vamos a la mazmorra! Otra frase."]);
+                assert(input.text.length == 0);
+                // UIKit's pending dictation placeholder must not leak into input.
+                id placeholder = [input insertDictationResultPlaceholder];
+                assert(placeholder != nil);
+                AKDrainFixtureEvents();
+                assert([fixture.text hasSuffix:@" Otra frase."]);
+                [input removeDictationResultPlaceholder:placeholder willInsertResult:YES];
+                [input insertText:@" Dictado."];
+                AKDrainFixtureEvents();
+                assert([fixture.text isEqual:@"Fixture @ñ ¡Hola equipo, vamos a la mazmorra! Otra frase. Dictado."]);
+                [input setMarkedText:@" failed recognition" selectedRange:NSMakeRange(19, 0)];
+                [input dictationRecognitionFailed];
+                assert(input.text.length == 0);
+                // Hiding the keyboard cancels provisional text and late results.
+                [input setMarkedText:@" discard me" selectedRange:NSMakeRange(11, 0)];
+                [controls dismissKeyboard];
+                [input insertText:@" late result"];
+                [input removeDictationResultPlaceholder:placeholder willInsertResult:NO];
+                [input unmarkText];
+                assert(input.text.length == 0);
+                [controls toggleKeyboard];
+                assert(input.isFirstResponder && input.text.length == 0);
+                [input setMarkedText:@" cancelled on background" selectedRange:NSMakeRange(24, 0)];
+                [NSNotificationCenter.defaultCenter postNotificationName:UIApplicationWillResignActiveNotification object:nil];
+                assert(controls.keyboardVisible && input.markedTextRange != nil);
+                [NSNotificationCenter.defaultCenter postNotificationName:UIWindowDidResignKeyNotification object:input.window];
+                assert(controls.keyboardVisible);
+                [NSNotificationCenter.defaultCenter postNotificationName:UIApplicationDidEnterBackgroundNotification object:nil];
+                assert(!controls.keyboardVisible && input.text.length == 0);
+                [input insertText:@" background result"];
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-                    assert([((AKInputFixtureView *)self.guest.contentView).text isEqual:@"Fixture @ñ ¡Hola equipo, vamos a la mazmorra!"]);
+                    assert([fixture.text isEqual:@"Fixture @ñ ¡Hola equipo, vamos a la mazmorra! Otra frase. Dictado."]);
                     [controls dismissKeyboard];
                     assert(!controls.keyboardVisible && host.isFirstResponder);
-                    NSLog(@"TOUCH_UI_SELF_TEST_PASS: keyboard layout, typed/phrase text delivery without auto-submit, delete and focus restoration");
+                    NSLog(@"TOUCH_UI_SELF_TEST_PASS: native UITextInput, provisional/final text, replacement, no duplicate/auto-submit, delete, cancellation and focus restoration");
                     exit(EXIT_SUCCESS);
                 });
             });
