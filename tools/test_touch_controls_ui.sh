@@ -38,4 +38,11 @@ cat > "$APP/Info.plist" <<'PLIST'
 PLIST
 codesign --force --sign - "$APP" > /dev/null
 xcrun simctl install "$SIM_ID" "$APP"
-xcrun simctl launch --terminate-running-process --console "$SIM_ID" org.tolkara.tests.touch-controls "$@"
+if [[ " $* " == *" --self-test "* ]]; then
+    # simctl may report success even when the app aborts an assertion.
+    LOG=build/touch-controls-fixture/self-test.log
+    xcrun simctl launch --terminate-running-process --console "$SIM_ID" org.tolkara.tests.touch-controls "$@" 2>&1 | tee "$LOG"
+    grep -q 'TOUCH_UI_SELF_TEST_PASS:' "$LOG"
+else
+    xcrun simctl launch --terminate-running-process --console "$SIM_ID" org.tolkara.tests.touch-controls "$@"
+fi

@@ -23,6 +23,8 @@ button for a menu with left, right and middle clicks.
 
 Finger-count changes do not jump the cursor. Cancelled gestures, mode changes,
 window changes and app interruptions release a held touch-generated button.
+Temporary loss of focus keeps the keyboard open for system dictation panels;
+entering the background or removing the host view dismisses it.
 Touch input has a software cursor; physical mouse events retain their own
 path. Opening the keyboard cancels a current trackpad gesture.
 
@@ -31,14 +33,18 @@ There is no automatic detection of guest text fields. The bridge forwards
 committed text, composed Unicode characters and paired key events; it does
 not read the guest's text or selection. Autocorrection and smart substitutions
 are disabled, and neither entered text nor key codes are written to the adapter's
-keyboard diagnostics. Rich composition,
-selection and predictive editing through `UITextInput` are not implemented.
+keyboard diagnostics. A native `UITextView` receives keyboard input and keeps
+provisional composition locally until UIKit commits it. Committed text is
+forwarded once and the native document and undo history are cleared. This is
+not a mirror of the guest's text: selection and predictive editing of existing
+guest text remain unsupported.
 
 ## System keyboard dictation
 
-The keyboard now requests normal text entry instead of treating every guest
-field as a password. This removes the secure-input restriction on iOS keyboard
-dictation. Select the game's chat field, open our keyboard and use its system
+The keyboard requests normal text entry instead of treating every guest
+field as a password. A native UIKit text view is the first responder, providing
+the `UITextInput` contract used by system dictation instead of only `UIKeyInput`.
+Select the game's chat field, open our keyboard and use its system
 microphone button. Dictated text follows the same input path as typed text;
 press Return yourself to send it. Tolkara adds no speech engine or recording UI.
 
@@ -47,17 +53,37 @@ use Apple's keyboard with a supported language. iOS controls microphone
 availability and recognition. Because Tolkara does not inspect guest fields,
 it cannot automatically switch back to secure keyboard traits for passwords;
 the guest still controls its own text display and masking. The bridge does not
-retain entered text or record audio itself.
+retain committed text or record audio itself. Uncommitted composition is
+discarded when the keyboard closes or the app enters the background.
 
 The `feature/keyboard-dictation` branch starts at `9483e1a`, before the native
 mouse experiment; `feature/native-mouse` remains separate. On 2026-10-04,
-the simulator phrase-delivery test passed with a synthetic multiword result,
-Unicode, backspace and focus restoration. The system microphone button was
-visible in the Spanish keyboard on the iPhone 17 Pro / iOS 26.5 simulator.
-The signed arm64 device build and strict signature verification also passed.
-Actual microphone availability, recognition and game audio during dictation
-still require an iPhone test; injecting text in the simulator does not validate
-speech recognition.
+the first change (`72d7468`) made the microphone visible, but the user reported
+that tapping it did not start dictation on the iPhone, while other apps worked.
+Button visibility and injected phrases were insufficient validation.
+
+The follow-up replaces the simple key-input responder with the native text
+view and stops dismissing it on temporary window/app deactivation. The system
+dictation panel itself can trigger those notifications; dismissing the first
+responder cancels it. An A/B simulator check showed no panel with the original
+`UIKeyInput` responder even with the focus fix, and no panel with the native
+responder alone. With both changes, tapping the microphone opened iOS's
+"Enable Dictation" prompt, also seen with an unmodified UIKit reference field.
+The prompt was cancelled without granting permission or recording audio.
+
+Simulator checks exercise actual `UITextInput` marked-text updates,
+commit/replacement, dictation placeholders, Unicode, backspace, cancelled
+composition, late results after closing, and focus restoration. They verify
+no duplicate text or automatic Return, preserve the keyboard through temporary
+focus loss, and close it on background entry. The test runner also requires its
+success marker, because `simctl launch` can return zero after an assertion.
+These are synthetic input tests: real speech recognition and game audio during
+dictation still require a new iPhone test. No microphone audio was captured
+as part of validation.
+
+For manual comparison, `tools/test_touch_controls_ui.sh
+--native-keyboard-reference` opens an ordinary UIKit text view in the synthetic
+fixture, without the keyboard adapter.
 
 ## Validation
 
