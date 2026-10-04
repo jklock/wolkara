@@ -100,11 +100,14 @@
                 assert(CGRectGetMinY(controls.frame) >= 0);
                 [controls insertText:@"Fixture @ñ🙂"];
                 [controls deleteBackward];
+                // A committed dictation phrase uses the same input path as typing.
+                // Deliver it as one chunk; it must not duplicate text or send Return.
+                [controls insertText:@" ¡Hola equipo, vamos a la mazmorra!"];
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-                    assert([((AKInputFixtureView *)self.guest.contentView).text isEqual:@"Fixture @ñ"]);
+                    assert([((AKInputFixtureView *)self.guest.contentView).text isEqual:@"Fixture @ñ ¡Hola equipo, vamos a la mazmorra!"]);
                     [controls dismissKeyboard];
                     assert(!controls.keyboardVisible && host.isFirstResponder);
-                    NSLog(@"TOUCH_UI_SELF_TEST_PASS: keyboard layout, text delivery, delete and focus restoration");
+                    NSLog(@"TOUCH_UI_SELF_TEST_PASS: keyboard layout, typed/phrase text delivery without auto-submit, delete and focus restoration");
                     exit(EXIT_SUCCESS);
                 });
             });
