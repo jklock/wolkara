@@ -30,9 +30,34 @@ Select a text field in the application, then open the keyboard manually.
 There is no automatic detection of guest text fields. The bridge forwards
 committed text, composed Unicode characters and paired key events; it does
 not read the guest's text or selection. Autocorrection and smart substitutions
-are disabled, secure input traits are requested, and neither entered text nor
-key codes are written to the adapter's keyboard diagnostics. Rich composition,
+are disabled, and neither entered text nor key codes are written to the adapter's
+keyboard diagnostics. Rich composition,
 selection and predictive editing through `UITextInput` are not implemented.
+
+## System keyboard dictation
+
+The keyboard now requests normal text entry instead of treating every guest
+field as a password. This removes the secure-input restriction on iOS keyboard
+dictation. Select the game's chat field, open our keyboard and use its system
+microphone button. Dictated text follows the same input path as typed text;
+press Return yourself to send it. Tolkara adds no speech engine or recording UI.
+
+Enable **Settings > General > Keyboard > Enable Dictation** on the iPhone and
+use Apple's keyboard with a supported language. iOS controls microphone
+availability and recognition. Because Tolkara does not inspect guest fields,
+it cannot automatically switch back to secure keyboard traits for passwords;
+the guest still controls its own text display and masking. The bridge does not
+retain entered text or record audio itself.
+
+The `feature/keyboard-dictation` branch starts at `9483e1a`, before the native
+mouse experiment; `feature/native-mouse` remains separate. On 2026-10-04,
+the simulator phrase-delivery test passed with a synthetic multiword result,
+Unicode, backspace and focus restoration. The system microphone button was
+visible in the Spanish keyboard on the iPhone 17 Pro / iOS 26.5 simulator.
+The signed arm64 device build and strict signature verification also passed.
+Actual microphone availability, recognition and game audio during dictation
+still require an iPhone test; injecting text in the simulator does not validate
+speech recognition.
 
 ## Validation
 

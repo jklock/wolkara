@@ -118,7 +118,9 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
 - (UITextSmartInsertDeleteType)smartInsertDeleteType { return UITextSmartInsertDeleteTypeNo; }
 - (UIKeyboardType)keyboardType { return UIKeyboardTypeDefault; }
 - (UIReturnKeyType)returnKeyType { return UIReturnKeyDefault; }
-- (BOOL)isSecureTextEntry { return YES; }
+// This bridge also serves chat: marking every field as a password suppresses
+// the system keyboard's dictation. UIKit delivers committed text via insertText:.
+- (BOOL)isSecureTextEntry { return NO; }
 
 - (UIView *)inputAccessoryView {
     if (!_accessory) {
