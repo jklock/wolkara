@@ -40,6 +40,14 @@ Experimental support was tested on an iPhone 16 Pro Max / iOS 27.0 with
 Developer service. The generic arm64 build installed successfully. Trusted USB
 enrollment and the local authenticated tunnel/capability probe passed. The user
 confirmed a cold launch after reboot with the iPhone disconnected from the Mac.
+On 2026-10-04 the first reported launch using cellular data, with Wi-Fi enabled
+but unassociated, failed before preparation: the local route was running but
+the TCP connection to the on-device developer service failed. Disconnected-Mac
+launches do not establish cellular-only startup support. The branch now keeps
+the local route alive and retries initial connection failures for up to two
+minutes, with instructions to temporarily disable mobile data and restore it
+after preparation. Synthetic recovery tests and compilation are separate from
+physical evidence: **this recovery sequence is not yet validated on the iPhone**.
 See [the iPhone guide](docs/IPHONE.md) for a reproducible setup.
 
 The user confirmed that both Classic Era and Forever start and work through

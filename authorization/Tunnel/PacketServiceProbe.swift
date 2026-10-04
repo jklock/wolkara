@@ -23,6 +23,8 @@ import Network
     private var makeTunnel = false
     private var retainAuthorization = false
     @objc private(set) var authorizationReady = false
+    @objc private(set) var serviceUnavailable = false
+    private var serviceConnected = false
     private var proxy: LocalPacketTCPProxy?
     private var manager: TunnelConnectionManager?
     private var discovery: TunnelDiscoveryClient?
@@ -121,6 +123,7 @@ import Network
             guard !finished, let tcp else { return }
             switch event {
             case .connected:
+                serviceConnected = true
                 do {
                     if let authentication {
                         process(try tcp.write(PairingFrameDecoder.encode(authentication.begin()),now:clock));continue
@@ -177,7 +180,11 @@ import Network
                         }
                     }
                 } catch { finish(authentication == nil ? "Packet-flow service response was invalid." : "Authenticated packet-flow pairing failed verification or protocol validation.") }
-            case .failed: finish("Packet-flow TCP connection failed.")
+            case .failed(let reason):
+                // Only a failed initial TCP connection is eligible for a fresh
+                // probe. Never repeat pairing, capability or memory operations.
+                serviceUnavailable = !serviceConnected && (reason == .reset || reason == .timeout)
+                finish("Packet-flow TCP connection failed (\(reason)).")
             case .peerClosed, .closed: finish("Packet-flow service closed before the handshake completed.")
             default: break
             }
@@ -273,9 +280,11 @@ import Network
         } }
         tcp = nil; output = nil; ephemeral = nil; authentication?.close(); authentication = nil;enrollment = nil
         let detail = proxy.map { " \($0.diagnostic)." } ?? ""
+#if os(iOS)
         let directory = URL(fileURLWithPath:NSHomeDirectory()).appendingPathComponent("Documents")
         try? FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true)
         try? (report+detail).write(to:directory.appendingPathComponent("local-tunnel-progress.txt"),atomically:true,encoding:.utf8)
+#endif
         let callback = completion; completion = nil; callback?(report+detail)
     }
     deinit { timer?.cancel(); if reservedPortFD >= 0 { Darwin.close(reservedPortFD) } }

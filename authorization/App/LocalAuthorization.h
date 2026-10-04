@@ -6,6 +6,8 @@
 // The former carries only the requested byte count, never addresses or keys.
 FOUNDATION_EXPORT NSNotificationName const TKLocalArenaWillPrepare;
 FOUNDATION_EXPORT NSNotificationName const TKLocalArenaDidPrepare;
+// Initial TCP connection failed; no pairing or memory preparation is retried.
+FOUNDATION_EXPORT NSNotificationName const TKLocalServiceWaiting;
 
 @interface TKLocalAuthorization : NSObject
 @property(nonatomic,readonly) BOOL localSessionReady;

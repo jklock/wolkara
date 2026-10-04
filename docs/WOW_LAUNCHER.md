@@ -88,6 +88,13 @@ for downloading patches. It does not automate login or gameplay.
 
 ## Remaining validation and limits
 
+- Cellular-only startup failed on the user's first outdoor test (2026-10-04)
+  before executable-memory preparation. This branch adds a bounded pre-auth TCP
+  retry while preserving the route, so a temporary Mobile Data off/on sequence
+  can be tested. It has **not yet been confirmed on the physical iPhone**. See
+  [mobile-data recovery](IPHONE.md#starting-with-mobile-data-experimental-recovery).
+  Playing anywhere remains an unmet requirement until cold startup and returning
+  to mobile data both pass; testing without a Mac was not sufficient evidence.
 - The user completed the pending patch on the physical iPhone. Readback verified
   the 1.60.1.70205 original executable against the Mac copy. Startup then stopped
   at a loader compatibility issue described below. Startup/gameplay after that
