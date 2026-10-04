@@ -12,6 +12,7 @@
 @property(atomic) NSUInteger generation;
 @property(atomic,strong) TKArenaPreparationService *arenaService;
 @property(atomic,strong) TKPacketServiceProbe *packetProbe;
+@property(atomic,strong) NSArray<TKPacketServiceProbe *> *retiredProbes;
 @end
 
 @implementation TKLocalPacketProvider
@@ -32,6 +33,7 @@
             [provider.arenaService invalidate];
             [provider.packetProbe cancel];
             provider.packetProbe=[TKPacketServiceProbe new];
+            provider.retiredProbes=@[];
             provider.arenaService=provider.packetProbe.arenaService;
             provider.generation++;provider.running=YES;provider.reflected=0;provider.dropped=0;[provider receivePackets];
         }
@@ -50,6 +52,9 @@
         for(NSUInteger i=0;i<packets.count;i++) {
             if(i>=protocols.count || protocols[i].intValue!=AF_INET) {self.dropped++;continue;}
             if([self.packetProbe consume:packets[i]])continue;
+            BOOL retired=NO;
+            for(TKPacketServiceProbe *probe in self.retiredProbes) if([probe consume:packets[i]]) {retired=YES;break;}
+            if(retired)continue;
             NSMutableData *data=[packets[i] mutableCopy];
             if(lr_reflect(&route,data.mutableBytes,data.length)!=LR_REFLECTED) {self.dropped++;continue;}
             [output addObject:data];[families addObject:@AF_INET];self.reflected++;
@@ -78,6 +83,23 @@
        ([request[@"operation"] isEqual:@"verifyPairing"] || [request[@"operation"] isEqual:@"verifyTunnel"] || [request[@"operation"] isEqual:@"prepareAuthorization"])) {
         NSString *device=request[@"deviceIdentifier"];
         if(![device isKindOfClass:NSString.class] || !device.length || device.length>1024) {completion(nil);return;}
+        // A mobile-network transition can make the local service available.
+        // Recreate only a probe that failed before its first TCP connection;
+        // its failure path has already invalidated and closed every resource.
+        if([request[@"operation"] isEqual:@"prepareAuthorization"] && self.packetProbe.serviceUnavailable) {
+            // Keep the old tuple reserved and discard its delayed packets for
+            // this route's lifetime. Never let them reach the reflector.
+            if(self.retiredProbes.count>=64) {
+                NSMutableDictionary *response=[TKRouteStatus(self.running,self.reflected,self.dropped) mutableCopy];
+                response[@"helperProbe"]=@"Local service retry limit reached.";
+                response[@"readyForPreparation"]=@NO;
+                completion([NSJSONSerialization dataWithJSONObject:response options:0 error:NULL]);return;
+            }
+            self.retiredProbes=[self.retiredProbes arrayByAddingObject:self.packetProbe];
+            self.packetProbe=[TKPacketServiceProbe new];
+            self.arenaService=self.packetProbe.arenaService;
+        }
+        TKPacketServiceProbe *probe=self.packetProbe;
         __weak TKLocalPacketProvider *weakSelf=self;
         BOOL (^output)(NSData *)=^BOOL(NSData *packet) {
             TKLocalPacketProvider *provider=weakSelf;
@@ -86,14 +108,15 @@
         void (^reply)(NSString *)=^(NSString *report) {
             NSMutableDictionary *response=[TKRouteStatus(self.running,self.reflected,self.dropped) mutableCopy];
             response[@"helperProbe"]=report;
-            response[@"readyForPreparation"]=@(self.packetProbe.authorizationReady);
+            response[@"readyForPreparation"]=@(probe.authorizationReady);
+            response[@"serviceUnavailable"]=@(probe.serviceUnavailable);
             completion([NSJSONSerialization dataWithJSONObject:response options:0 error:NULL]);
         };
         if([request[@"operation"] isEqual:@"prepareAuthorization"])
-            [self.packetProbe startAuthorizationWithDeviceIdentifier:device output:output completion:reply];
+            [probe startAuthorizationWithDeviceIdentifier:device output:output completion:reply];
         else if([request[@"operation"] isEqual:@"verifyTunnel"])
-            [self.packetProbe startVerifiedTunnelWithDeviceIdentifier:device output:output completion:reply];
-        else [self.packetProbe startAuthenticatedWithDeviceIdentifier:device output:output completion:reply];
+            [probe startVerifiedTunnelWithDeviceIdentifier:device output:output completion:reply];
+        else [probe startAuthenticatedWithDeviceIdentifier:device output:output completion:reply];
         return;
     }
     if([request isKindOfClass:NSDictionary.class] && [request[@"version"] isEqual:@TK_AUTH_PROTOCOL_VERSION] && [request[@"operation"] isEqual:@"probeService"]) {

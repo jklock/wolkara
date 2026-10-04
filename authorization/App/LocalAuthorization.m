@@ -3,6 +3,7 @@
 #import "Protocol.h"
 #import "LocalArenaPublisher.h"
 #import "LocalArenaPoller.h"
+#import "LocalServiceRetry.h"
 #include "Control/ArenaControl.h"
 #import <NetworkExtension/NetworkExtension.h>
 #import <QuartzCore/QuartzCore.h>
@@ -12,6 +13,8 @@
 #include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
+
+NSNotificationName const TKLocalServiceWaiting = @"TKLocalServiceWaiting";
 
 NSNotificationName const TKLocalArenaWillPrepare = @"TKLocalArenaWillPrepare";
 NSNotificationName const TKLocalArenaDidPrepare = @"TKLocalArenaDidPrepare";
@@ -28,6 +31,8 @@ static void announceArena(NSNotificationName name, NSDictionary *info) {
 @interface TKLocalAuthorization ()
 @property(nonatomic,strong) NETunnelProviderManager *manager;
 @property(nonatomic,readwrite) BOOL localSessionReady;
+@property(nonatomic,strong) TKLocalServiceRetry *serviceRetry;
+@property(nonatomic) NSUInteger serviceGeneration;
 @end
 
 static void TKWaitForRoute(NETunnelProviderManager *manager,CFTimeInterval deadline,void (^completion)(BOOL)) {
@@ -59,43 +64,56 @@ static void TKWaitForStoppedRoute(NETunnelProviderManager *manager,CFTimeInterva
     [self startAndProbeLocalRoute:3 completion:completion];
 }
 - (void)startAndProbeLocalRoute:(NSUInteger)mode completion:(void (^)(NSString *))completion {
+    [self.serviceRetry cancel];
+    NSUInteger generation=++self.serviceGeneration;
     self.localSessionReady=NO;
     [self startLocalRoute:^(NSString *startResult) {
+        if(self.serviceGeneration!=generation) {completion(@"Local service setup cancelled.");return;}
         TKWaitForRoute(self.manager,CACurrentMediaTime()+10,^(BOOL connected) {
+            if(self.serviceGeneration!=generation) {completion(@"Local service setup cancelled.");return;}
             if(!connected) {
                 completion([NSString stringWithFormat:@"Route did not connect (status %ld). %@",(long)self.manager.connection.status,startResult]);return;
             }
-            [TKLocalAuthorization probeLocalRouteService:^(NSString *result) {
-                __block BOOL delivered=NO;
-                void (^finish)(NSString *,BOOL)=^(NSString *report,BOOL ready) {
-                    void (^deliver)(void)=^{
-                        if(delivered)return;delivered=YES;
-                        self.localSessionReady=ready;completion(report);
-                    };
-                    if(NSThread.isMainThread)deliver();else dispatch_async(dispatch_get_main_queue(),deliver);
-                };
-                dispatch_after(dispatch_time(DISPATCH_TIME_NOW,60*NSEC_PER_SEC),dispatch_get_main_queue(),^{
-                    if(delivered)return;
-                    finish(@"Local service setup timed out. Close and reopen the app to retry.",NO);
-                    [self.manager.connection stopVPNTunnel];
-                });
-                NSString *device=[NSUserDefaults.standardUserDefaults stringForKey:@"TKEnrolledDeviceIdentifier"]?:@"";
-                NSData *request=[NSJSONSerialization dataWithJSONObject:@{@"version":@TK_AUTH_PROTOCOL_VERSION,
-                    @"operation":mode==3?@"prepareAuthorization":mode==2?@"verifyTunnel":mode==1?@"verifyPairing":@"probeService",@"deviceIdentifier":device} options:0 error:NULL];
-                NSError *error=nil;
-                BOOL sent=[(NETunnelProviderSession *)self.manager.connection sendProviderMessage:request returnError:&error responseHandler:^(NSData *data) {
-                    // The provider replies nil when it declines or fails; nil.length is 0,
-                    // and JSON parsing of nil data raises inside this handler.
-                    id state=data && data.length<=4096?[NSJSONSerialization JSONObjectWithData:data options:0 error:NULL]:nil;
-                    NSString *report=result;
-                    NSString *helper=[state isKindOfClass:NSDictionary.class]?state[@"helperProbe"]:nil;
-                    if([helper isKindOfClass:NSString.class] && helper.length<=1024)report=[report stringByAppendingFormat:@" Helper: %@",helper];
-                    if([state isKindOfClass:NSDictionary.class])
-                        report=[report stringByAppendingFormat:@" Route status: running=%d, reflected=%llu, dropped=%llu.",[state[@"routeRunning"] boolValue],[state[@"reflectedPackets"] unsignedLongLongValue],[state[@"droppedPackets"] unsignedLongLongValue]];
-                    BOOL ready=[state isKindOfClass:NSDictionary.class] && [state[@"readyForPreparation"] isEqual:@YES];
-                    finish(report,ready);
+            __weak TKLocalAuthorization *weakSelf=self;
+            __block __weak TKLocalServiceRetry *weakRetry;
+            self.serviceRetry=[[TKLocalServiceRetry alloc] initWithTimeout:mode==3?120:60 interval:2 attempt:^(TKLocalServiceReply reply) {
+                TKLocalAuthorization *self=weakSelf;
+                if(!self) {reply(TKLocalServiceFailed,@"Local authorization owner unavailable.");return;}
+                [TKLocalAuthorization probeLocalRouteService:^(NSString *result) {
+                    if(!weakRetry || self.serviceRetry!=weakRetry || self.serviceGeneration!=generation)return;
+                    if(self.manager.connection.status!=NEVPNStatusConnected) {
+                        reply(TKLocalServiceFailed,@"Local route disconnected before service setup.");return;
+                    }
+                    NSString *device=[NSUserDefaults.standardUserDefaults stringForKey:@"TKEnrolledDeviceIdentifier"]?:@"";
+                    NSData *request=[NSJSONSerialization dataWithJSONObject:@{@"version":@TK_AUTH_PROTOCOL_VERSION,
+                        @"operation":mode==3?@"prepareAuthorization":mode==2?@"verifyTunnel":mode==1?@"verifyPairing":@"probeService",@"deviceIdentifier":device} options:0 error:NULL];
+                    NSError *error=nil;
+                    BOOL sent=[(NETunnelProviderSession *)self.manager.connection sendProviderMessage:request returnError:&error responseHandler:^(NSData *data) {
+                        id state=data && data.length<=4096?[NSJSONSerialization JSONObjectWithData:data options:0 error:NULL]:nil;
+                        BOOL valid=[state isKindOfClass:NSDictionary.class] && [state[@"version"] isEqual:@TK_AUTH_PROTOCOL_VERSION];
+                        NSString *report=result;
+                        NSString *helper=valid?state[@"helperProbe"]:nil;
+                        if([helper isKindOfClass:NSString.class] && helper.length<=1024)report=[report stringByAppendingFormat:@" Helper: %@",helper];
+                        if(valid) report=[report stringByAppendingFormat:@" Route status: running=%d, reflected=%llu, dropped=%llu.",[state[@"routeRunning"] boolValue],[state[@"reflectedPackets"] unsignedLongLongValue],[state[@"droppedPackets"] unsignedLongLongValue]];
+                        BOOL ready=valid && [state[@"readyForPreparation"] isEqual:@YES];
+                        // Only the helper can classify a failed initial TCP
+                        // connection. Never infer retryability from report text.
+                        BOOL retry=mode==3 && valid && !ready && [state[@"serviceUnavailable"] isEqual:@YES];
+                        reply(ready || (mode!=3 && valid)?TKLocalServiceReady:retry?TKLocalServiceUnavailable:TKLocalServiceFailed,report);
+                    }];
+                    if(!sent)reply(TKLocalServiceFailed,[result stringByAppendingString:@" Provider status unavailable."]);
                 }];
-                if(!sent)finish([result stringByAppendingString:@" Provider status unavailable."],NO);
+            }];
+            weakRetry=self.serviceRetry;
+            [self.serviceRetry startWithWaiting:^{
+                [NSNotificationCenter.defaultCenter postNotificationName:TKLocalServiceWaiting object:weakSelf];
+            } completion:^(BOOL ready,NSString *report) {
+                TKLocalAuthorization *self=weakSelf;
+                if(!self)return;
+                self.localSessionReady=mode==3 && ready;
+                self.serviceRetry=nil;
+                if(!ready)[self.manager.connection stopVPNTunnel];
+                completion(report);
             }];
         });
     }];
@@ -167,7 +185,7 @@ static void TKWaitForStoppedRoute(NETunnelProviderManager *manager,CFTimeInterva
         }];
     }];
 }
-- (void)stopLocalRoute { [self.manager.connection stopVPNTunnel]; }
+- (void)stopLocalRoute { self.serviceGeneration++; [self.serviceRetry cancel]; self.localSessionReady=NO; [self.manager.connection stopVPNTunnel]; }
 @end
 
 NCPreparation TKPrepareLocalArena(void *address,size_t size,void *context) {

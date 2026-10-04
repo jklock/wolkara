@@ -47,6 +47,7 @@
 @property(nonatomic,strong) TKLocalAuthorization *localAuthorization;
 // A development run's startup kind, kept while this iPad's Developer service prepares.
 @property(nonatomic) BOOL nativeFullStartup;
+@property(nonatomic) BOOL waitedForLocalService;
 #endif
 @end
 
@@ -203,6 +204,8 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
         name:TKLocalArenaWillPrepare object:nil];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(arenaDidPrepare:)
         name:TKLocalArenaDidPrepare object:nil];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(localServiceWaiting:)
+        name:TKLocalServiceWaiting object:nil];
 #endif
     // A plain launch (no arguments, or only a per-launch --execution-mode)
     // shows the WoW home. Any other launch is a development run from
@@ -688,9 +691,19 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     }];
 }
 - (void)startPreparedNativeDiagnostic { [self runNativeGame:self.nativeFullStartup app:self.launchingApp container:nil]; }
+- (void)localServiceWaiting:(NSNotification *)notification {
+    if(notification.object!=self.localAuthorization)return;
+    self.waitedForLocalService=YES;
+    BOOL spanish=[NSLocale.preferredLanguages.firstObject hasPrefix:@"es"];
+    self.status.text=spanish ? @"Esperando la conexión local…\nSi estás usando datos móviles, desactívalos temporalmente desde el Centro de control y vuelve aquí. Reintentaremos durante dos minutos sin cerrar la app.\nCuando termine la preparación, vuelve a activar los datos para entrar al juego." :
+        @"Waiting for the local connection…\nIf using mobile data, temporarily turn it off in Control Centre and return here. We will retry for two minutes without closing the app.\nAfter preparation finishes, turn mobile data back on to connect to the game.";
+    [self.status.superview layoutIfNeeded];
+}
 - (void)arenaWillPrepare:(NSNotification *)notification {
     double mib = [notification.userInfo[@"bytes"] unsignedLongLongValue] / (1024.0 * 1024.0);
     self.status.text=[NSString stringWithFormat:@"Preparing %@\nSetting up %.0f MiB of execution memory.\nThis step can take a few minutes. Keep Tolkara open.", self.launchingApp.name ?: @"app", mib];
+    if(self.waitedForLocalService) self.status.text=[self.status.text stringByAppendingString:
+        [NSLocale.preferredLanguages.firstObject hasPrefix:@"es"] ? @"\nSi desactivaste los datos móviles, espera a que termine este paso antes de reactivarlos." : @"\nIf you turned off mobile data, wait until this step finishes before turning it back on."];
     [self.launchProgress start];
     [self.status.superview layoutIfNeeded];
 }
@@ -698,6 +711,8 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     if ([notification.userInfo[@"prepared"] boolValue] && self.launchingApp)
         self.status.text=[NSString stringWithFormat:@"Loading %@…\nMemory preparation is complete. Starting the app.",self.launchingApp.name ?: @"app"];
     else [self.launchProgress stop];
+    if(self.waitedForLocalService) self.status.text=[self.status.text stringByAppendingString:
+        [NSLocale.preferredLanguages.firstObject hasPrefix:@"es"] ? @"\nYa puedes volver a activar los datos móviles." : @"\nYou can now turn mobile data back on."];
     [self.status.superview layoutIfNeeded];
 }
 #endif
