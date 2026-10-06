@@ -126,9 +126,12 @@ unchanged and whose clone has the same content size/mtime. It saves receipts
 after planning, before activation and on handled interruptions, only for durable
 indexed content. New downloads still pass their original encoded checksums.
 Reading bytes for loose-file extraction still verifies them, and the original
-executable is still checked against the current manifest. Changes detected
-during the transaction prevent activation rather than refreshing trust in
-previous planning decisions. WTF and Interface preservation is unchanged.
+executable is still checked against the current manifest. If a segment's
+metadata changes during the transaction, the updater rechecks every previously
+trusted extent in that segment against its full encoded key and chunk checksums.
+Only a successful check with stable metadata can refresh its receipts; missing,
+unstable or checksum-invalid data still prevents activation. Other segments keep
+their receipts. WTF and Interface preservation is unchanged.
 
 The inventory is a performance cache, not protection against deliberate local
 cache forgery or storage corruption that leaves all filesystem metadata intact.
@@ -143,6 +146,18 @@ fixture reads 16,781,056 payload/envelope bytes cold and **zero** on the warm
 planning pass (metadata reads are excluded). ASan/UBSan checks, the simulator
 home/repair flow and a signed arm64 device build pass. This optimization has
 not yet been measured against the full game installation on the physical iPhone.
+
+The first device trial reported repeated **CASC data changed during the update**
+while resuming the 70235 → 70245 patch. The original guard aborted on any metadata
+difference, including in its own append segment, without checking whether the
+stored content was still valid. Metadata-only recovery now avoids that false
+positive without discarding staging or disabling checksum validation. Synthetic
+tests reproduce the old failure and cover recovery during resume/activation,
+appending across a 64 MiB checkpoint, retained warm receipts after reopening,
+and refusal of actual corruption. Xcode now logs update phase transitions,
+errors and verification byte counters; segment rechecks log the segment number.
+The specific source of the device's metadata change and the fix's behavior on
+that pending download still need a physical-device retry.
 
 `Installation.m` checks the installed product and original executable.
 `WoWViewController.m` serializes update jobs, discards stale UI/launch callbacks

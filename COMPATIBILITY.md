@@ -40,7 +40,12 @@ The first update without receipts still checks existing content; Settings →
 **Verify and repair game files** always forces a complete check. Synthetic
 patch/resume/corruption tests, the simulator repair flow and the signed device
 build pass. A 16 MiB synthetic warm planning pass reads zero payload bytes;
-speed and behavior on the physical iPhone's full installation remain untested.
+speed on the physical iPhone's full installation remains unmeasured. The first
+device trial reported repeated **CASC data changed during the update** while
+resuming 70235 → 70245. A follow-up revalidates only a changed segment's trusted
+objects before allowing metadata-only recovery; checksum failures still block
+activation. Synthetic metadata-change/resume and 64 MiB checkpoint tests pass;
+retrying the pending patch on the physical iPhone remains unverified.
 See [persistent verification](docs/WOW_LAUNCHER.md#persistent-verification-2026-10-07).
 
 On 2026-10-06, the follow-up adds an [automatic touch controller](docs/TOUCH_CONTROLLER_PROPOSAL.md)

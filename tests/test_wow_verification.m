@@ -35,6 +35,11 @@ static void FlipAndRestoreMtime(NSString *path) {
     assert(before.st_ctimespec.tv_sec!=after.st_ctimespec.tv_sec || before.st_ctimespec.tv_nsec!=after.st_ctimespec.tv_nsec);
     close(fd);
 }
+static void ChangeMetadata(NSString *path) {
+    struct stat s;assert(!stat(path.fileSystemRepresentation,&s));
+    struct timespec times[2]={s.st_atimespec,s.st_mtimespec};times[1].tv_sec++;
+    assert(!utimensat(AT_FDCWD,path.fileSystemRepresentation,times,0));
+}
 static NSData *ReceiptFile(NSDictionary *receipt) {
     NSData *body=[NSPropertyListSerialization dataWithPropertyList:receipt format:NSPropertyListBinaryFormat_v1_0 options:0 error:NULL];assert(body);
     NSMutableData *data=[NSMutableData dataWithBytes:"WKVERIFY" length:8];uint8_t digest[16];
@@ -124,6 +129,46 @@ int main(void) {@autoreleasepool {
     FlipAndRestoreMtime([concurrent stringByAppendingPathComponent:@"data.000"]);
     assert([[store readKey:ka size:a.length] isEqual:a]);
     assert(![store saveVerification:NULL]);assert(![store saveVerification:NULL]);store=nil;
+    // A metadata-only change is not corruption. Recheck only the affected
+    // segment, retaining warm receipts for other segments and across restart.
+    NSString *metadata=[base stringByAppendingPathComponent:@"metadata"];
+    store=Open(metadata);assert([store addData:a key:ka error:NULL]);Persist(store);store=nil;
+    store=Open(metadata);assert([store addData:b key:kb error:NULL]);Persist(store);store=nil;
+    store=Open(metadata);assert([store verifyKey:ka size:a.length] && [store verifyKey:kb size:b.length]);
+    ChangeMetadata([metadata stringByAppendingPathComponent:@"data.000"]);
+    Persist(store);assert(store.verificationBytesRead==a.length+30);store=nil;
+    store=Open(metadata);assert([store verifyKey:ka size:a.length] && [store verifyKey:kb size:b.length]);
+    assert(store.verificationBytesRead==0);store=nil;
+    // The append writer used to abort before the next download, even when all
+    // earlier bytes still matched. Cover appends before/after index checkpoints.
+    NSString *writer=[base stringByAppendingPathComponent:@"writer"];
+    NSString *writerSegment=[writer stringByAppendingPathComponent:@"data.000"];
+    store=Open(writer);assert([store addData:a key:ka error:NULL]);
+    ChangeMetadata(writerSegment);assert([store addData:b key:kb error:NULL]);
+    assert(store.verificationBytesRead==a.length+30);assert([store checkpoint:NULL]);
+    ChangeMetadata(writerSegment);Persist(store);store=nil;
+    store=Open(writer);assert([store verifyKey:ka size:a.length] && [store verifyKey:kb size:b.length]);
+    assert(store.verificationBytesRead==0);store=nil;
+    // Actual corruption in the writer must fail, including on a second append
+    // attempt; neither checkpointing nor rereading an intact neighbour blesses it.
+    NSString *badWriter=[base stringByAppendingPathComponent:@"bad-writer"];
+    store=Open(badWriter);assert([store addData:a key:ka error:NULL]);
+    FlipAndRestoreMtime([badWriter stringByAppendingPathComponent:@"data.000"]);
+    error=nil;assert(![store addData:b key:kb error:&error]);
+    assert([error.localizedDescription containsString:@"data.000"]);
+    assert(![store addData:b key:kb error:NULL]);assert(![store saveVerification:NULL]);store=nil;
+    // Checkpoint-size downloads followed by more appends remain resumable.
+    NSString *checkpointed=[base stringByAppendingPathComponent:@"checkpointed"];
+    NSMutableArray *checkpointKeys=[NSMutableArray new];store=Open(checkpointed);
+    for(NSUInteger i=0;i<17;i++) { @autoreleasepool {
+        NSMutableData *data=[Object([NSString stringWithFormat:@"checkpoint-%lu",(unsigned long)i]) mutableCopy];data.length=4*1024*1024;
+        NSString *key=TKWoWMD5(data);[checkpointKeys addObject:key];assert([store addData:data key:key error:NULL]);
+        if(i==15) { assert([store checkpoint:NULL]);ChangeMetadata([checkpointed stringByAppendingPathComponent:@"data.000"]); }
+    }}
+    assert(store.verificationBytesRead==16*(4*1024*1024+30));Persist(store);store=nil;
+    store=Open(checkpointed);
+    for(NSString *key in checkpointKeys)assert([store verifyKey:key size:4*1024*1024]);
+    assert(store.verificationBytesRead==0);store=nil;
     // A larger fixture proves the fast path avoids payload I/O, not merely
     // network requests. Timings are informational; byte counts are assertions.
     NSString *large=[base stringByAppendingPathComponent:@"large"];
@@ -145,5 +190,5 @@ int main(void) {@autoreleasepool {
     printf("Synthetic 16 MiB: cold read=%llu bytes (%.4fs), warm read=0 bytes (%.4fs).\n",largeRead,coldTime,warmTime);
     store=nil;
     assert([fm removeItemAtPath:base error:NULL]);
-    printf("WoW verification PASS: cold payload reads=%llu; warm payload reads=0; clone rebinding, full keys/extents, repair, changed/deleted/truncated/symlink data, malformed records.\n",cold);
+    printf("WoW verification PASS: cold payload reads=%llu; warm payload reads=0; clone rebinding, full keys/extents, repair, changed/deleted/truncated/symlink data, malformed records, metadata-only recovery, append corruption, 64 MiB checkpoint/resume.\n",cold);
 }return 0;}
