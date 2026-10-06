@@ -44,6 +44,10 @@ targetTemplates:
     sources:
       - path: launcher
         excludes: [Info.plist]
+      - path: LICENSE
+        buildPhase: resources
+      - path: NOTICE.md
+        buildPhase: resources
       - path: runtime
       # The shader-container rewrap, for the Diagnostics menu's captured-shader check.
       - path: translation/Metal/LibraryContainer.m

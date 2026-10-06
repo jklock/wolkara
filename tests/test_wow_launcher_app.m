@@ -5,11 +5,13 @@
 #import "../launcher/WoW/WoWViewController.h"
 #import "../launcher/WoW/Client.h"
 #import "../launcher/WoW/Updater.h"
+#import "../launcher/App/LaunchProgressView.h"
 #import "wow_installation_fixture.h"
 
 @interface TKWoWViewController (Fixture)
 - (void)selectProduct:(NSDictionary *)product;
 - (void)refresh;
+- (void)about;
 @end
 static atomic_uint requests, revision, updates;
 static atomic_bool failure, slow;
@@ -34,7 +36,7 @@ static UIView *Find(UIView *view, NSString *identifier) {
     for (UIView *child in view.subviews) { UIView *match=Find(child,identifier); if (match) return match; }
     return nil;
 }
-@interface TKWoWFixtureDelegate : UIResponder <UIApplicationDelegate>
+@interface TKWoWFixtureDelegate : UIResponder <UIWindowSceneDelegate>
 @property(nonatomic) UIWindow *window;
 @property(nonatomic) TKWoWViewController *controller;
 @property(nonatomic) NSUInteger launches, setups;
@@ -43,13 +45,18 @@ static UIView *Find(UIView *view, NSString *identifier) {
 - (UIButton *)primary { return (id)Find(self.controller.view,@"wow.primary"); }
 - (NSString *)status { return [(UILabel *)Find(self.controller.view,@"wow.status") text]; }
 - (void)tap { [[self primary] sendActionsForControlEvents:UIControlEventTouchUpInside]; }
-- (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)options {
-    (void)application; (void)options;
+- (void)scene:(UIScene *)scene willConnectToSession:(UISceneSession *)session options:(UISceneConnectionOptions *)options {
+    (void)session; (void)options;
     method_setImplementation(class_getInstanceMethod(TKWoWClient.class,@selector(planForProduct:region:locale:error:)),(IMP)Plan);
     method_setImplementation(class_getInstanceMethod(TKWoWUpdater.class,@selector(updatePlan:root:progress:error:)),(IMP)Update);
     [NSUserDefaults.standardUserDefaults setObject:@"wow_classic_beta" forKey:@"WoWProduct"];
+    // Device language must not change this fork's English launcher UI.
+    [NSUserDefaults.standardUserDefaults setObject:@[@"es-ES"] forKey:@"AppleLanguages"];
+    if (![NSProcessInfo.processInfo.arguments containsObject:@"--preview"]) dispatch_after(dispatch_time(DISPATCH_TIME_NOW,30*NSEC_PER_SEC),dispatch_get_global_queue(QOS_CLASS_UTILITY,0), ^{
+        fprintf(stderr,"WoW UIKit TIMEOUT\n"); _Exit(1);
+    });
     fixture=[TKFixtureLibrary new];
-    self.window=[[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
+    self.window=[[UIWindow alloc] initWithWindowScene:(UIWindowScene *)scene];
     self.controller=[[TKWoWViewController alloc] initWithLibrary:(id)fixture];
     __weak TKWoWFixtureDelegate *weakSelf=self;
     self.controller.startApp=^(TKApp *app) { assert(app==(id)fixture.apps[0]); weakSelf.launches++; };
@@ -57,7 +64,6 @@ static UIView *Find(UIView *view, NSString *identifier) {
     self.window.rootViewController=[[UINavigationController alloc] initWithRootViewController:self.controller];
     [self.window makeKeyAndVisible];
     [self performSelector:@selector(changeSelection) withObject:nil afterDelay:0.1];
-    return YES;
 }
 - (void)changeSelection {
     [self.controller selectProduct:TKWoWProducts()[1]];
@@ -72,6 +78,7 @@ static UIView *Find(UIView *view, NSString *identifier) {
 }
 - (void)checkReady {
     assert([self primary].enabled);
+    assert([[self status] isEqual:@"Ready to play"] && self.controller.title.length==0);
     [self tap]; assert(self.setups==1 && self.launches==0);
     atomic_store(&revision,1); [self.controller refresh];
     [self performSelector:@selector(checkOutdated) withObject:nil afterDelay:0.3];
@@ -101,21 +108,63 @@ static UIView *Find(UIView *view, NSString *identifier) {
     [self.window layoutIfNeeded];
     CGRect button=[[self primary] convertRect:[self primary].bounds toView:self.window];
     assert(CGRectContainsRect(self.window.bounds,button));
+    [self capture:@"wow-home.png"];
+    [self tap]; [self performSelector:@selector(checkLaunch) withObject:nil afterDelay:0.3];
+}
+- (void)capture:(NSString *)name {
+    [self.window layoutIfNeeded];
     UIGraphicsImageRenderer *renderer=[[UIGraphicsImageRenderer alloc] initWithBounds:self.window.bounds];
     UIImage *image=[renderer imageWithActions:^(UIGraphicsImageRendererContext *context) {
         (void)context; [self.window drawViewHierarchyInRect:self.window.bounds afterScreenUpdates:YES];
     }];
     NSString *documents=NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject;
-    assert([UIImagePNGRepresentation(image) writeToFile:[documents stringByAppendingPathComponent:@"wow-home.png"] atomically:YES]);
-    [self tap]; [self performSelector:@selector(checkLaunch) withObject:nil afterDelay:0.3];
+    assert([UIImagePNGRepresentation(image) writeToFile:[documents stringByAppendingPathComponent:name] atomically:YES]);
 }
 - (void)checkLaunch {
     assert(self.launches==1); self.controller.sessionUsed=YES;
-    assert(![self primary].enabled);
-    puts("WoW UIKit PASS: automatic check, edition race, missing install action, automatic update without launch, startup choice, offline retry, background cancellation, verified launch and session end."); fflush(stdout);
+    [self.controller beginStartup];
+    self.controller.startupStatusLabel.text=@"Preparing to run. This can take a few minutes. Keep this app open.";
+    assert(![self primary].enabled && !self.controller.launchProgress.hidden);
+    assert([[self status] isEqual:@"Starting…"]);
+    assert(self.controller.navigationController.viewControllers.count==1);
+    unsigned before=atomic_load(&requests);
+    [self.controller refresh]; [self tap];
+    [NSNotificationCenter.defaultCenter postNotificationName:UIApplicationDidBecomeActiveNotification object:nil];
+    assert(atomic_load(&requests)==before && self.launches==1);
+    [self capture:@"wow-starting.png"];
+    [self.controller finishStartupWithMessage:@"Synthetic startup failure" failed:YES];
+    assert([[self status] isEqual:@"Could not start"] && ![self primary].enabled);
+    assert(self.controller.launchProgress.hidden && !self.controller.diagnosticsButton.hidden);
+    [self capture:@"wow-startup-failed.png"];
+    [self.controller finishStartupWithMessage:@"Session ended" failed:NO];
+    assert(![self primary].enabled && self.controller.diagnosticsButton.hidden);
+    // A recoverable preflight error must leave another attempt possible.
+    self.controller.sessionUsed=NO;
+    [self.controller beginStartup];
+    [self.controller finishStartupWithMessage:@"Synthetic missing container" failed:YES];
+    assert([self primary].enabled);
+    [self.controller about];
+    UITextView *credits=(id)self.controller.navigationController.topViewController.view;
+    assert([credits.text containsString:@"Vasilii Kharitonov"]);
+    assert([credits.text containsString:@"Permission is hereby granted"]);
+    assert([credits.text containsString:@"Martin Benjamins"]);
+    [self.controller.navigationController popToRootViewControllerAnimated:NO];
+    puts("WoW UIKit PASS: automatic check/update, offline retry, edition race, background cancellation, verified launch, inline preparation/failure/session end, no duplicate launches and bundled licenses."); fflush(stdout);
     if (![NSProcessInfo.processInfo.arguments containsObject:@"--preview"]) exit(0);
+    // Leave a ready home for visual inspection; no real download or guest runs.
+    [self.controller refresh];
+}
+
+@end
+@interface TKWoWFixtureApp : UIResponder <UIApplicationDelegate>
+@end
+@implementation TKWoWFixtureApp
+- (UISceneConfiguration *)application:(UIApplication *)app configurationForConnectingSceneSession:(UISceneSession *)session options:(UISceneConnectionOptions *)options {
+    (void)app; (void)options;
+    UISceneConfiguration *config=[[UISceneConfiguration alloc] initWithName:@"WoW fixture" sessionRole:session.role];
+    config.delegateClass=TKWoWFixtureDelegate.class; return config;
 }
 @end
 int main(int argc, char **argv) {
-    @autoreleasepool { return UIApplicationMain(argc,argv,nil,NSStringFromClass(TKWoWFixtureDelegate.class)); }
+    @autoreleasepool { return UIApplicationMain(argc,argv,nil,NSStringFromClass(TKWoWFixtureApp.class)); }
 }

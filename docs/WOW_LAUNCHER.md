@@ -8,9 +8,18 @@ modes are unchanged. No game files, signing identities or accounts are bundled.
 ## Available now
 
 The app opens directly into a native WoW home screen with edition selection,
-automatic updates and one primary action. General tools and execution modes
-remain under Settings. English and Spanish follow the device language. The
-“Tolkara / In development” heading has been removed.
+automatic updates and one primary action. `feature/wow-home` continues from
+`feature/keyboard-dictation` at `e5ecdb6` and makes this the only normal launcher:
+all interface copy is English, with one game heading and no adventure slogans.
+Download language remains independently selectable. Startup preparation, elapsed
+time, failure and session end stay in the same home card; no separate loading
+screen or general application library is exposed. Settings retains startup
+options and diagnostics. About includes the bundled MIT copyright/license and
+third-party notices, plus an independent-project attribution.
+
+Development launches with explicit arguments retain their diagnostic screen.
+The runtime, authorization and per-process preparation requirements are unchanged.
+The keyboard fix remains inherited; native mouse work remains on its own branch.
 
 - Remembers Forever Beta, Classic Era, Classic, Retail or Retail Beta, region
   and language. Forever currently maps to `wow_classic_beta`; a listed edition
@@ -36,8 +45,9 @@ remain under Settings. English and Spanish follow the device language. The
 
 Play checks `.build.info` and the selected executable on ordinary launches.
 Full CASC verification runs during updates/repair, not every time Play is tapped.
-The advanced library still has its original manual launch path, outside the
-WoW home screen's mandatory-update gate.
+The general library is no longer reachable from the user interface, so it no
+longer provides a manual launch path around the home screen's update check.
+The internal library model still resolves installations and profiles.
 
 ## Update implementation
 
@@ -251,3 +261,35 @@ xcrun --sdk iphoneos clang -target arm64-apple-ios17.0 -fobjc-arc \
 
 Generated plans, metadata and original files must stay in ignored `build/`,
 or the app's private cache on a device. Never commit or distribute them.
+
+
+## Unified home validation (2026-10-06)
+
+The isolated UIKit fixture uses synthetic game metadata and never runs a game
+or contacts Blizzard. It verifies English copy on a Spanish device, automatic
+check/update, edition races, offline retry, background cancellation, startup
+configuration, the verified Play gate and one-session restriction. Added cases
+keep preparation and failure in the same navigation root, block repeat launch
+and refresh during startup, preserve recoverable preflight retries, and check
+that About contains the bundled upstream and dependency license notices.
+
+The fixture now uses UIWindowScene for Xcode 27 / iOS 27 and requires its PASS
+marker: simctl may return zero after the app crashes. Home, preparation and
+failure layouts were rendered in an iPhone 16 Pro Max simulator. Physical
+startup after this UI integration still requires a manual test. The new branch
+is not installed while the user tests the separate keyboard correction.
+
+Results with Xcode 27.0:
+- `tools/test_wow_launcher_ui.sh`: PASS on iOS 27.0 Simulator.
+- `tools/test_emulation.sh`: PASS in full. The older signing-test failure
+  recorded above no longer reproduces with this toolchain; no signer changes
+  were needed for this UI work.
+- `tools/generate.sh`: PASS; both `LICENSE` and `NOTICE.md` are app resources.
+- `xcodebuild -project Tolkara.xcodeproj -scheme Tolkara -configuration Debug
+  -sdk iphoneos -destination generic/platform=iOS -derivedDataPath
+  build/iphone-wow-home-signed ARCHS=arm64 TOLKARA_SYSTEM_ROOTS=YES build`:
+  BUILD SUCCEEDED. Strict signature verification passed, and both license
+  resources match the checked-in originals byte for byte.
+
+Touch-controller options are assessed separately in
+[the proposal](TOUCH_CONTROLLER_PROPOSAL.md); this UI branch does not enable one.
