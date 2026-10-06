@@ -1,6 +1,7 @@
 #import "TouchControls.h"
 #import "TouchTrackpad.h"
 #import "TouchGamepadLayout.h"
+#import "TouchHaptics.h"
 
 @interface AKTouchControls (KeyboardState)
 - (void)updateKeyboardButton;
@@ -166,6 +167,7 @@
     NSTimer *_holdTimer;
     AKKeyboardTextView *_keyboardInput;
     AKTrackpad _pad;
+    AKTouchHaptics *_haptics;
 }
 
 static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double y, unsigned button) {
@@ -188,6 +190,7 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
     button.layer.borderColor = [UIColor.whiteColor colorWithAlphaComponent:0.4].CGColor;
     button.accessibilityLabel = label;
     [button addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];
+    [button addTarget:self action:@selector(buttonTouchDown) forControlEvents:UIControlEventTouchDown];
     [self addSubview:button];
     return button;
 }
@@ -195,6 +198,7 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
 - (instancetype)initWithFrame:(CGRect)frame {
     if ((self = [super initWithFrame:frame])) {
         self.layer.zPosition = 100001;
+        _haptics = [AKTouchHaptics new];
         _keyboardInput = [[AKKeyboardTextView alloc] initWithFrame:CGRectMake(0, 0, 1, 1) textContainer:nil];
         _keyboardInput.inputOwner = self;
         [self addSubview:_keyboardInput];
@@ -241,8 +245,10 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
 - (void)controlAppearanceChanged:(NSNotification *)notification {
     (void)notification;
     AKGamepadLayout *layout = [[AKGamepadLayout alloc] initWithDefaults:NSUserDefaults.standardUserDefaults];
+    _haptics.enabled = layout.hapticsEnabled;
     for (UIButton *button in @[_trackpadButton, _keyboardButton, _gamepadButton, _settingsButton]) button.alpha = layout.opacity;
 }
+- (void)buttonTouchDown { [_haptics buttonPressed]; }
 
 - (void)layoutSubviews {
     [super layoutSubviews];

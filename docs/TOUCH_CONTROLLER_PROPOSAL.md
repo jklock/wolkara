@@ -42,9 +42,16 @@ buttons remain pinned at the bottom. The pointer icon toggles the trackpad.
 - **Shoulder button size:** 80–150%, default 100%.
 - **Sticks and face button size:** 65–140%, default 100%, subject to available
   safe-area space. Each stick and its annular buttons scale together.
+- **Haptic feedback:** on by default, saved on this device. A light tap accompanies
+  each new controller-button press (including the D-pad, shoulders, triggers and
+  `+`) and each of the four toolbar buttons. Each stick gives a firmer cue when
+  it reaches its outer limit. Holding or sliding around the rim stays silent;
+  moving inward or lifting the finger rearms the cue. Turning this off silences
+  both controller and toolbar feedback without changing game input.
 - **Edit layout:** drag either stick/ring group, each rear button, or `+`.
   Done editing exits the editor. Reset to defaults restores all sizes, opacity
-  and positions without changing whether automatic controls are enabled.
+  and positions, and enables haptic feedback, without changing whether automatic
+  controls are enabled.
   A 24-point grid, symmetric about the safe area's center, appears behind the
   controls while editing. Dashed horizontal/vertical center guides help align
   both sides. These are visual references: dragging stays free, saved positions
@@ -56,8 +63,17 @@ recognizers work; their game values are still blocked. Positions are normalized
 to the available safe area, saved locally, and clamped after rotation/resizing.
 The toolbar and editor exit remain fixed, so moved controls cannot strand the UI.
 Preferences use `WolkaraTouchLayoutV1` and contain no game or account data.
+Older saved layouts keep their positions and sizes and default to haptics on.
 The pointer symbol has a small optical offset to the right inside its existing
 button; the button's size, position and touch target are unchanged.
+
+Haptics use UIKit's public `UIImpactFeedbackGenerator` on the phone. They do not
+produce controller rumble, inspect the game or generate additional inputs.
+Controller feedback is suspended with input while configuring, hiding controls
+or losing focus. Each stick has an independent radial latch (99.5% normalized
+output to engage, 85% or less to rearm) so small edge jitter cannot repeat the
+pulse. UIKit controls availability on devices without supported haptic hardware;
+the keyboard's own system feedback and audio/dictation settings are unchanged.
 
 ## Controller API
 
@@ -100,6 +116,11 @@ snapshot filtering, keyboard/focus suspension, late replies, error/retry and
 teardown. Additional checks cover malformed preferences, clamped sizes,
 persistence, resized bounds, all four rear buttons and `+` being hit-testable
 and draggable in edit mode, suppressed game input while editing, and reset.
+The haptics follow-up checks button press/release deduplication, both stick
+edges, edge jitter, inward rearming, cancellation, disabled feedback, preference
+persistence and reset, while checking the same real GameController values.
+These tests count requested pulses with an original fixture; the simulator
+cannot establish the feel or strength of vibration on the physical iPhone.
 The launcher fixture checks that status text fits at normal and large
 accessibility font sizes.
 

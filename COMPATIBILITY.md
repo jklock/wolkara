@@ -62,8 +62,13 @@ by an `isLowPower` Objective-C exception on the native iOS Metal device during
 initialization. Xcode's launch record enabled `MTL_DEBUG_LAYER=1`; the shared
 scheme now disables Metal API Validation to match an ordinary icon launch.
 A synthetic Metal-property probe passes in the simulator with validation both
-on and off, so it does not reproduce the device failure. **The first Xcode
-launch with validation disabled still needs a physical-device retest.**
+on and off, so it does not reproduce the device failure. The user subsequently
+reported that it now works after this correction (2026-10-07).
+
+The subsequent haptics change adds optional phone feedback for controller and
+toolbar buttons, plus one cue per stick-edge crossing with independent radial
+hysteresis. Synthetic tests check pulse requests and unchanged controller input;
+the physical feel and strength still need testing on the iPhone.
 
 Results updated on 2026-10-02 with the Forever gameplay report below.
 
