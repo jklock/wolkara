@@ -40,6 +40,14 @@ Real GameController input and connection lifecycle are covered by synthetic
 simulator fixtures. This touch-controller revision has **not yet been tested
 in WoW on the physical iPhone** and does not extend the gameplay report below.
 
+The subsequent Wolkara revision adds saved control opacity, separate rear/front
+sizes, draggable groups/buttons and reset. Its original UIKit fixture verifies
+preferences, bounds, all button/axis events and input suppression during editing;
+the settings and editor were also inspected in the simulator. The app now has
+its own name/icon and selects the build's startup route without a public picker.
+The signed arm64 iOS build and strict signature check pass. This revision has
+not been installed or validated in a physical-device WoW session yet.
+
 Results updated on 2026-10-02 with the Forever gameplay report below.
 
 Experimental support was tested on an iPhone 16 Pro Max / iOS 27.0 with

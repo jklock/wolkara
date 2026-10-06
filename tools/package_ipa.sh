@@ -23,7 +23,7 @@ tools/generate.sh
 xcodebuild -project Tolkara.xcodeproj -target TolkaraDiagnostics -configuration Release \
     -sdk iphoneos -arch arm64 SYMROOT=build/unsigned NATIVE_GUEST_SHIMS=GENERIC TOLKARA_MODE=external-jit \
     TOLKARA_SYSTEM_ROOTS="${TOLKARA_SYSTEM_ROOTS:-YES}" \
-    INFOPLIST_KEY_CFBundleDisplayName=Tolkara \
+    INFOPLIST_KEY_CFBundleDisplayName=Wolkara \
     CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
     build > "$LOG" 2>&1 \
     || { grep -E "error:" "$LOG" | head -20; echo "BUILD FAILED -> $LOG"; exit 1; }

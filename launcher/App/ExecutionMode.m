@@ -165,3 +165,13 @@ NSString *TKHomeDisplayPath(NSString *path, NSString *home) {
     if([standard hasPrefix:prefix]) return [@"~/" stringByAppendingString:[standard substringFromIndex:prefix.length]];
     return standard.lastPathComponent;
 }
+
+TKExecutionMode TKWolkaraExecutionMode(NSArray<NSString *> *arguments, NSUserDefaults *defaults, NSString *preselected, NSString **source) {
+    if (arguments.count > 1) return TKExecutionModeResolve(arguments,defaults,preselected,source);
+    if (source) *source = @"wolkara-build";
+#if TOLKARA_INTEGRATED_AUTH
+    return TKExecutionModeDeveloperService;
+#else
+    return TKExecutionModeExternalJIT;
+#endif
+}

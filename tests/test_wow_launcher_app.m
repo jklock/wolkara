@@ -60,7 +60,7 @@ static UIView *Find(UIView *view, NSString *identifier) {
     self.controller=[[TKWoWViewController alloc] initWithLibrary:(id)fixture];
     __weak TKWoWFixtureDelegate *weakSelf=self;
     self.controller.startApp=^(TKApp *app) { assert(app==(id)fixture.apps[0]); weakSelf.launches++; };
-    self.controller.showStartupOptions=^{ weakSelf.setups++; weakSelf.controller.executionMode=TKExecutionModeDeveloperService; };
+    self.controller.executionMode=TKExecutionModeDeveloperService;
     self.window.rootViewController=[[UINavigationController alloc] initWithRootViewController:self.controller];
     [self.window makeKeyAndVisible];
     [self performSelector:@selector(changeSelection) withObject:nil afterDelay:0.1];
@@ -79,7 +79,10 @@ static UIView *Find(UIView *view, NSString *identifier) {
 - (void)checkReady {
     assert([self primary].enabled);
     assert([[self status] isEqual:@"Ready to play"] && self.controller.title.length==0);
-    [self tap]; assert(self.setups==1 && self.launches==0);
+    assert([[(UILabel *)Find(self.controller.view,@"wow.title") text] isEqual:@"WOLKARA"]);
+    self.controller.executionMode=TKExecutionModeNone;
+    assert(![self primary].enabled);
+    self.controller.executionMode=TKExecutionModeDeveloperService;
     atomic_store(&revision,1); [self.controller refresh];
     [self performSelector:@selector(checkOutdated) withObject:nil afterDelay:0.3];
 }

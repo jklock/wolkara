@@ -1,4 +1,10 @@
-# Experimental WoW launcher
+# Wolkara launcher
+
+Current branch: `feature/wolkara`, based on the touch-controller implementation
+at `b55084a` (2026-10-06). The name, original W/portal icon and home heading are
+now Wolkara. The engine, Xcode targets and bundle IDs retain their existing names
+to preserve signing configuration and installed data. The development history
+and validation below distinguish tested results from pending device checks.
 
 Branch: `feature/wow-launcher`, based on `feature/iphone-support` at
 `05035ccbbf33565ab36abdb1d5e43a6b53cc816b`. This is an early, working prototype,
@@ -13,13 +19,19 @@ automatic updates and one primary action. `feature/wow-home` continues from
 all interface copy is English, with one game heading and no adventure slogans.
 Download language remains independently selectable. Startup preparation, elapsed
 time, failure and session end stay in the same home card; no separate loading
-screen or general application library is exposed. Settings retains startup
-options and diagnostics. About includes the bundled MIT copyright/license and
+screen or general application library is exposed. Settings retains diagnostics;
+there is no startup-mode picker. About includes the bundled MIT copyright/license and
 third-party notices, plus an independent-project attribution.
 
 Development launches with explicit arguments retain their diagnostic screen.
 The runtime, authorization and per-process preparation requirements are unchanged.
 The keyboard fix remains inherited; native mouse work remains on its own branch.
+Ordinary icon launches select Developer service in the integrated target and
+External JIT in the diagnostics/sideload target, before memory reservation.
+An old saved Local signing selection cannot accidentally block an ordinary
+launch. Explicit development arguments retain the previous resolver and can
+still select another mode. Hiding the selector does not remove enrolment, JIT
+or memory requirements; see [the distribution plan](WOLKARA_DISTRIBUTION.md).
 
 - Remembers Forever Beta, Classic Era, Classic, Retail or Retail Beta, region
   and language. Forever currently maps to `wow_classic_beta`; a listed edition
