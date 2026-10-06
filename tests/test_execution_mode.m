@@ -58,6 +58,15 @@ int main(void) {
         NSUserDefaults *defaults=[[NSUserDefaults alloc] initWithSuiteName:suite]; assert(defaults);
         [defaults removePersistentDomainForName:suite];
         assert(TKExecutionModeLoad(defaults)==TKExecutionModeNone);
+        NSString *wowSource=nil;
+        TKExecutionMode wowMode=TKWolkaraExecutionMode(@[@"Wolkara"],defaults,@"local-signing",&wowSource);
+        assert([wowSource isEqual:@"wolkara-build"]);
+#if TOLKARA_INTEGRATED_AUTH
+        assert(wowMode==TKExecutionModeDeveloperService);
+#else
+        assert(wowMode==TKExecutionModeExternalJIT);
+#endif
+        assert(TKWolkaraExecutionMode(@[@"Wolkara",@"--execution-mode=local-signing"],defaults,nil,&wowSource)==TKExecutionModeLocalSigning);
         TKExecutionModeSave(defaults,TKExecutionModeLocalSigning);
         assert([[defaults stringForKey:@"TolkaraExecutionMode"] isEqualToString:@"local-signing"]);
         assert(TKExecutionModeLoad(defaults)==TKExecutionModeLocalSigning);

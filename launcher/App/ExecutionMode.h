@@ -62,3 +62,7 @@ NSString *TKSignedImagePath(NSArray<NSString *> *arguments, NSString *home, NSSt
 // "~" or "~/..." for a path inside home; only the last component otherwise, so
 // logs never carry an absolute path.
 NSString *TKHomeDisplayPath(NSString *path, NSString *home);
+
+// Wolkara chooses the route included in the build for an ordinary app launch.
+// Explicit tool/development arguments retain the original resolver semantics.
+TKExecutionMode TKWolkaraExecutionMode(NSArray<NSString *> *arguments, NSUserDefaults *defaults, NSString *preselected, NSString **source);

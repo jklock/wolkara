@@ -185,9 +185,10 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     if (started) return;
     started = YES;
     NSArray<NSString *> *arguments=NSProcessInfo.processInfo.arguments;
-    // --execution-mode=<id> > saved choice > TOLKARA_MODE preselection > ask.
+    // Normal Wolkara launches use the route included in this build. Development
+    // arguments retain the original explicit mode selection.
     NSString *source=nil;
-    self.executionMode=TKExecutionModeResolve(arguments,NSUserDefaults.standardUserDefaults,
+    self.executionMode=TKWolkaraExecutionMode(arguments,NSUserDefaults.standardUserDefaults,
         [NSBundle.mainBundle objectForInfoDictionaryKey:TKExecutionModePreselectionKey],&source);
     self.executionModeSource=source;
     fprintf(stderr,"[host] execution mode=%s source=%s\n",ModeIdentifier(self.executionMode),source.UTF8String);
@@ -227,12 +228,10 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
             [host libraryViewController:host.libraryController startApp:app];
         };
         self.wowController.showDiagnostics=^{ [weakSelf showDiagnostics]; };
-        self.wowController.showStartupOptions=^{ [weakSelf changeExecutionMode]; };
         self.navigation=[[UINavigationController alloc] initWithRootViewController:self.wowController];
         self.window.rootViewController=self.navigation;
         [self.window makeKeyAndVisible];
-        // Browsing editions needs no execution-mode choice. Configuration is
-        // offered from Settings or when a verified installation is ready to play.
+        // The public home has one startup route and no execution-mode chooser.
         return;
     }
     self.window.rootViewController = [self statusController];

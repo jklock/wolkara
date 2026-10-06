@@ -1,4 +1,19 @@
-# Tolkara
+# Wolkara
+
+Wolkara is an independent World of Warcraft launcher for iPhone and iPad,
+built on [Tolkara](https://github.com/tolkara/tolkara). It combines edition
+selection, an automatic game updater, the iOS keyboard, a touch trackpad and
+customizable touch gamepad controls. It is not affiliated with Blizzard.
+The original MIT license and upstream notices are retained.
+
+This fork is still a developer build. See the [distribution plan and its
+unverified requirements](docs/WOLKARA_DISTRIBUTION.md) before sharing it as
+an install-and-play app. There is no published Wolkara source or public IPA yet.
+
+The app name and original icon are Wolkara; internal targets and existing bundle
+identifiers remain unchanged so an update can preserve the installed game data.
+
+## Compatibility engine
 
 Tolkara runs **unmodified** arm64 macOS applications on an iPad, with
 experimental iPhone support. It loads the original executable as data,
@@ -31,7 +46,8 @@ with edition selection, automatic installation of updates, download progress and
 a verified Play action. The native updater reuses verified CASC data, downloads
 missing content from Blizzard's CDN, preserves settings/addons and activates a
 complete installation atomically. Preparation stays on the same English home
-screen; Settings contains startup options, diagnostics and open-source notices. The updater
+screen; Settings contains diagnostics and open-source notices. Startup uses the
+route included in the build, without a public mode selector. The updater
 passes synthetic tests and real-data tests on isolated Mac copies; its physical
 iPhone update and subsequent gameplay still need validation. Developer service
 still prepares memory each opening. Distribution and
@@ -76,9 +92,10 @@ Helper processes that an app launches separately
 iPadOS executes only code whose pages are covered by a valid code signature,
 with one exception for development: memory that a debugger has prepared, either
 the device's own developer service or a JIT enabler: your sideloading tool, or a
-separate one such as StikDebug. Tolkara supports three routes. On this WoW branch,
-choose one under **Settings → Startup options** or when a verified installation
-is ready to play. Browsing editions does not require choosing a mode.
+separate one such as StikDebug. Tolkara supports three routes internally.
+Normal Wolkara launches use Developer service in the integrated target, or
+External JIT in the diagnostics/sideload target. The alternative routes below
+remain development tools, not choices in the public interface.
 
 | | Developer service | Local signing | External JIT |
 | --- | --- | --- | --- |
@@ -87,7 +104,7 @@ is ready to play. Browsing editions does not require choosing a mode.
 | Which build | The Tolkara app (`tools/install.sh`). | Either build. | The TolkaraDiagnostics app, unsigned (`tools/package_ipa.sh`). |
 | What it does with the application's code | Runs the original code unchanged. Nothing of the application is ever signed. | Leaves the executable unchanged, but keeps a derived copy of its final code pages on your iPad (and in your build folder), signed under your identity. Tolkara refuses to start if the container does not match the executable or what the application's own startup code produces. | Runs the original code unchanged. Nothing of the application is ever signed. |
 
-Choose one. [COMPATIBILITY.md](COMPATIBILITY.md) says which mode each result
+[COMPATIBILITY.md](COMPATIBILITY.md) says which mode each result
 was obtained with.
 
 ## How it works
@@ -97,7 +114,7 @@ was obtained with.
 | [`runtime/`](runtime) | Mach-O loader: maps the original image and the libraries it carries in its own bundle, applies dyld rebases and binds (including chained fixups), sets up TLS and Objective-C metadata, and enters the original initializers and `main`. For Local signing it validates the page container against the executable and maps its signed pages (`SignedImage`). Also a software MMU and a small interpreter used for testing. |
 | [`translation/`](translation) | The macOS API layer: AppKit on UIKit, Metal device/shader-library adaptation, CoreAudio/AudioToolbox, Carbon keyboard, CoreGraphics displays, Security. One library per macOS framework; anything not hand-written gets a generated logging stub. |
 | [`authorization/`](authorization) | Developer service. iPadOS only lets a development-signed app run code it did not sign after a debugger has prepared that memory. This module does that on the iPad itself: a bundled packet-tunnel extension reaches the device's own developer service, prepares the memory, and detaches before any application code runs. No Mac is needed after the one-time enrollment. |
-| [`launcher/`](launcher) | The UIKit app: the app library, the execution-mode choice, starting apps, and a separate Diagnostics menu. |
+| [`launcher/`](launcher) | Wolkara's WoW home, edition installation/updates, launch progress, diagnostics and notices. General library and mode-selection tools remain internal. |
 | [`profiles/`](profiles) | Small data files that describe a tested application: its name and where its files live. No code. |
 
 More detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and the protocol notes
@@ -116,8 +133,8 @@ cp local.env.example local.env
 ```
 
 Fill in your team ID, a bundle ID unique to you, your iPad's UDID and the path
-of the macOS executable, and optionally `TOLKARA_MODE` (`developer-service` or
-`local-signing`; without it the app asks). Then:
+of the macOS executable. The standard integrated build uses Developer service.
+`TOLKARA_MODE` remains available for explicit development runs. Then:
 
 ```bash
 tools/install.sh

@@ -79,7 +79,7 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     _refreshItem.accessibilityIdentifier=@"wow.refresh";
     self.navigationItem.leftBarButtonItem=_refreshItem;
 
-    UILabel *title=Label(37,UIFontWeightBold,Gold()); title.text=@"WORLD OF\nWARCRAFT";
+    UILabel *title=Label(37,UIFontWeightBold,Gold()); title.text=@"WOLKARA";
     UIFontDescriptor *serif=[[UIFont systemFontOfSize:37 weight:UIFontWeightBold].fontDescriptor fontDescriptorWithDesign:UIFontDescriptorSystemDesignSerif];
     if (serif) title.font=[[UIFontMetrics metricsForTextStyle:UIFontTextStyleLargeTitle] scaledFontForFont:[UIFont fontWithDescriptor:serif size:37]];
     title.accessibilityIdentifier=@"wow.title";
@@ -248,7 +248,7 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
         [self checkForUpdatesAndLaunch:NO install:YES];return;
     }
     if (_installation.state!=TKWoWInstallationReady) return;
-    if (_executionMode==TKExecutionModeNone) { if (self.showStartupOptions) self.showStartupOptions(); return; }
+    if (_executionMode==TKExecutionModeNone) return;
     [self checkForUpdatesAndLaunch:YES];
 }
 - (void)configureButton:(UIButton *)button title:(NSString *)title filled:(BOOL)filled {
@@ -285,7 +285,7 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
         action=@"Starting…";
     } else if (_startupFailure) {
         title=@"Could not start";
-        detail=_sessionUsed?@"Close this app from the app switcher, then reopen it to try again. Details are available in Diagnostics and logs.":@"Check your startup settings and try again. Details are available in Settings.";
+        detail=_sessionUsed?@"Close this app from the app switcher, then reopen it to try again. Details are available in Diagnostics and logs.":@"Try again. Details are available in Diagnostics and logs.";
         action=_sessionUsed?@"Reopen to retry":@"Try again"; enabled=!_sessionUsed;
     } else if (_sessionUsed) {
         title=@"Reopen to start again";
@@ -334,7 +334,7 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
         case TKWoWInstallationReady:
             title=@"Ready to play";
             detail=@"Your game is up to date.";
-            action=_executionMode==TKExecutionModeNone?@"Set up startup":@"Play"; enabled=YES; break;
+            action=_executionMode==TKExecutionModeNone?@"Startup unavailable":@"Play"; enabled=_executionMode!=TKExecutionModeNone; break;
         }
     }
     _stateLabel.text=title; _detailLabel.text=detail;
@@ -357,7 +357,7 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     case TKExecutionModeExternalJIT:
         _startupLabel.text=@"Enable JIT before starting a new session."; break;
     case TKExecutionModeNone:
-        _startupLabel.text=@"Set up startup once before playing."; break;
+        _startupLabel.text=@"This build cannot start the game. See Diagnostics and logs."; break;
     }
 }
 - (void)presentSheet:(UIAlertController *)sheet anchor:(UIView *)anchor {
@@ -393,9 +393,6 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
 - (void)settings {
     UIAlertController *sheet=[UIAlertController alertControllerWithTitle:@"Settings"
         message:@"Updates install automatically while this app is open. Settings and addons are preserved. Startup preparation is separate from downloading updates." preferredStyle:UIAlertControllerStyleActionSheet];
-    [sheet addAction:[UIAlertAction actionWithTitle:@"Startup options" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-        (void)a; if (self.showStartupOptions) self.showStartupOptions();
-    }]];
     [sheet addAction:[UIAlertAction actionWithTitle:@"Diagnostics and logs" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
         (void)a; [self diagnostics];
     }]];
@@ -431,7 +428,7 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     UITextView *text=[UITextView new]; text.editable=NO;
     text.font=[UIFont preferredFontForTextStyle:UIFontTextStyleBody]; text.adjustsFontForContentSizeCategory=YES;
     text.textContainerInset=UIEdgeInsetsMake(20,20,20,20);
-    NSMutableString *credits=[@"An independent launcher built on Tolkara. Not affiliated with or endorsed by Blizzard Entertainment. World of Warcraft belongs to Blizzard Entertainment.\n\n" mutableCopy];
+    NSMutableString *credits=[@"Wolkara — an independent World of Warcraft launcher built on Tolkara. Not affiliated with or endorsed by Blizzard Entertainment. World of Warcraft belongs to Blizzard Entertainment.\n\n" mutableCopy];
     for (NSString *name in @[@"LICENSE",@"NOTICE.md"]) {
         NSString *path=[NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:name];
         NSString *notice=[NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:NULL];

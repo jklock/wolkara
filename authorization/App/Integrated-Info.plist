@@ -15,6 +15,6 @@
 	<key>TKPairingKeychainGroup</key>
 	<string>$(AppIdentifierPrefix)$(TOLKARA_KEYCHAIN_GROUP)</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Allow the app you run in Tolkara to use the microphone, for example for in-game voice chat.</string>
+	<string>Allow World of Warcraft in Wolkara to use the microphone for in-game voice chat.</string>
 </dict>
 </plist>
