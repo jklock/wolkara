@@ -35,7 +35,10 @@ not read the guest's text or selection. Autocorrection and smart substitutions
 are disabled, and neither entered text nor key codes are written to the adapter's
 keyboard diagnostics. A native `UITextView` receives keyboard input and keeps
 provisional composition locally until UIKit commits it. Committed text is
-forwarded once and the native document and undo history are cleared. This is
+forwarded once and the native document and undo history are cleared on a later
+main-queue turn, after UIKit's edit callback returns. A close or accessory key
+first flushes completed input so it cannot overtake the last typed character.
+Pending callbacks from a closed keyboard cannot affect a reopened session. This is
 not a mirror of the guest's text: selection and predictive editing of existing
 guest text remain unsupported.
 
@@ -77,9 +80,35 @@ composition, late results after closing, and focus restoration. They verify
 no duplicate text or automatic Return, preserve the keyboard through temporary
 focus loss, and close it on background entry. The test runner also requires its
 success marker, because `simctl launch` can return zero after an assertion.
-These are synthetic input tests: real speech recognition and game audio during
-dictation still require a new iPhone test. No microphone audio was captured
-as part of validation.
+These are synthetic input tests. On 2026-10-06 the user confirmed that the
+microphone works on the iPhone, but reported long stalls after a few ordinary
+keystrokes even without using dictation. The bridge previously reset UIKit's
+document, selection and undo history synchronously inside text-edit callbacks.
+The follow-up defers that reset and text delivery until the callback returns,
+and preserves ordering for immediate Return, backspace and keyboard close.
+The minutes-long stall has not been reproduced in the simulator; this is a
+candidate fix requiring another physical-device typing/dictation check.
+No microphone audio was captured as part of automated validation.
+
+The expanded fixture can run inside the same timer-entered, nonblocking desktop
+event loop as the runtime (`--guest-poll-loop`). It covers 64 repeated groups of
+typing and deletion, delayed text delivery, immediate Return/close, cancelled
+callbacks after reopen and the existing composition/dictation cases. A separate
+watchdog makes a blocked main thread fail instead of waiting indefinitely.
+
+Validation for this follow-up on Xcode 27.0 / iOS 27.0:
+- `tools/test_touch_controls_ui.sh --self-test --guest-poll-loop`: passed.
+- `tools/test_emulation.sh`: passed, including the signing test that failed
+  under the previous Xcode installation; no signing code was changed here.
+- Signed arm64 `iphoneos` Debug build and strict code-signature verification:
+  passed.
+- Manual taps on the simulator's software keyboard produced the complete
+  phrase without a stall. This does not establish that the reported iPhone
+  freeze is fixed or validate live speech recognition after this change.
+- Installed in place on the iPhone 16 Pro Max with the game closed. Game-data,
+  settings and addon inventories were preserved, as were the configuration,
+  build metadata and original game executable hashes. Device typing/dictation
+  validation is pending.
 
 For manual comparison, `tools/test_touch_controls_ui.sh
 --native-keyboard-reference` opens an ordinary UIKit text view in the synthetic

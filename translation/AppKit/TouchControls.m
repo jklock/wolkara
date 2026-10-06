@@ -9,12 +9,14 @@
 // document local to the current composition; never mirror the guest's text.
 @interface AKKeyboardTextView : UITextView <UITextViewDelegate>
 @property (nonatomic, weak) AKTouchControls *inputOwner;
+- (void)forwardCommittedText;
 @end
 
 @implementation AKKeyboardTextView {
     NSUInteger _editingDepth;
+    NSUInteger _inputGeneration;
     NSMutableSet *_dictationPlaceholders;
-    BOOL _acceptingInput, _clearing;
+    BOOL _acceptingInput, _clearing, _forwardScheduled;
 }
 - (instancetype)initWithFrame:(CGRect)frame textContainer:(NSTextContainer *)container {
     if ((self = [super initWithFrame:frame textContainer:container])) {
@@ -54,6 +56,22 @@
     [self clearComposition];
     [self.inputOwner insertText:text];
 }
+- (void)scheduleCommittedText {
+    if (_editingDepth || _clearing || !_acceptingInput || _forwardScheduled) return;
+    _forwardScheduled = YES;
+    NSUInteger generation = _inputGeneration;
+    __weak AKKeyboardTextView *weakSelf = self;
+    // UIKit is still completing its keyboard edit when insertText:/delegate
+    // callbacks return. Resetting its document/selection/undo stack inside
+    // that transaction can invalidate the input service's pending text context.
+    // Drain only after the callback has returned, coalescing nested callbacks.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        AKKeyboardTextView *input = weakSelf;
+        if (!input || generation != input->_inputGeneration) return;
+        input->_forwardScheduled = NO;
+        [input forwardCommittedText];
+    });
+}
 - (BOOL)becomeFirstResponder {
     _acceptingInput = YES;
     BOOL accepted = [super becomeFirstResponder];
@@ -62,7 +80,12 @@
     return accepted;
 }
 - (BOOL)resignFirstResponder {
+    // Preserve a completed edit if the user immediately closes the keyboard.
+    // Marked text and pending dictation remain provisional and are discarded.
+    [self forwardCommittedText];
     _acceptingInput = NO;
+    _inputGeneration++;
+    _forwardScheduled = NO;
     [_dictationPlaceholders removeAllObjects];
     [self clearComposition];
     BOOL accepted = [super resignFirstResponder];
@@ -73,34 +96,34 @@
 }
 - (void)textViewDidChange:(UITextView *)textView {
     (void)textView;
-    [self forwardCommittedText];
+    [self scheduleCommittedText];
 }
 - (void)insertText:(NSString *)text {
     if (!_acceptingInput) return;
     _editingDepth++;
     [super insertText:text];
     _editingDepth--;
-    [self forwardCommittedText];
+    [self scheduleCommittedText];
 }
 - (void)replaceRange:(UITextRange *)range withText:(NSString *)text {
     if (!_acceptingInput) return;
     _editingDepth++;
     [super replaceRange:range withText:text];
     _editingDepth--;
-    [self forwardCommittedText];
+    [self scheduleCommittedText];
 }
 - (void)setMarkedText:(NSString *)text selectedRange:(NSRange)range {
     if (!_acceptingInput) return;
     _editingDepth++;
     [super setMarkedText:text selectedRange:range];
     _editingDepth--;
-    [self forwardCommittedText];
+    [self scheduleCommittedText];
 }
 - (void)unmarkText {
     _editingDepth++;
     [super unmarkText];
     _editingDepth--;
-    [self forwardCommittedText];
+    [self scheduleCommittedText];
 }
 - (void)deleteBackward {
     if (!_acceptingInput) return;
@@ -108,7 +131,7 @@
     _editingDepth++;
     [super deleteBackward];
     _editingDepth--;
-    [self forwardCommittedText];
+    [self scheduleCommittedText];
 }
 - (id)insertDictationResultPlaceholder {
     if (!_acceptingInput) return nil;
@@ -124,7 +147,7 @@
     [super removeDictationResultPlaceholder:placeholder willInsertResult:willInsert];
     [_dictationPlaceholders removeObject:placeholder];
     _editingDepth--;
-    [self forwardCommittedText];
+    [self scheduleCommittedText];
 }
 - (void)dictationRecognitionFailed {
     // This is an optional UITextInput callback, not implemented by UITextView.
@@ -272,6 +295,8 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
 }
 - (void)accessoryKey:(UIButton *)button {
     if (button.tag == 5) { [self dismissKeyboard]; return; }
+    // A fast tap on Return/Tab must follow the last completed text edit.
+    [_keyboardInput forwardCommittedText];
     const unsigned short codes[] = {53, 48, 123, 124, 36};
     NSArray<NSString *> *characters = @[@"\x1b", @"\t", @"\uF702", @"\uF703", @"\r"];
     if (button.tag >= 0 && button.tag < 5) [self.delegate touchSpecialKey:codes[button.tag] characters:characters[button.tag]];

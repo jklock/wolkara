@@ -67,6 +67,9 @@
 @end
 
 static void AKDrainFixtureEvents(void) {
+    // Let UIKit finish its asynchronous text transaction before observing the
+    // translated events. The fixture is entered from a timer, like the guest.
+    CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.02, false);
     NSEvent *event;
     while ((event = [NSApp nextEventMatchingMask:UINT64_MAX untilDate:NSDate.distantPast inMode:NSDefaultRunLoopMode dequeue:YES])) [NSApp sendEvent:event];
 }
@@ -91,8 +94,31 @@ static void AKDrainFixtureEvents(void) {
     }];
     BOOL selfTest = [NSProcessInfo.processInfo.arguments containsObject:@"--self-test"];
     BOOL nativeReference = [NSProcessInfo.processInfo.arguments containsObject:@"--native-keyboard-reference"];
+    if (selfTest) {
+        // A blocked main thread must fail instead of leaving simctl waiting.
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 30 * NSEC_PER_SEC),
+            dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+                fprintf(stderr, "TOUCH_UI_SELF_TEST_TIMEOUT\n");
+                _Exit(EXIT_FAILURE);
+            });
+    }
+    if ([NSProcessInfo.processInfo.arguments containsObject:@"--guest-poll-loop"]) {
+        // Exercise UIKit inside the timer-entered desktop loop used by the
+        // runtime, rather than only returning to UIApplicationMain each turn.
+        [NSTimer scheduledTimerWithTimeInterval:2 repeats:NO block:^(NSTimer *timer) {
+            (void)timer;
+            [self.pump invalidate];
+            self.pump = nil;
+            while (YES) { @autoreleasepool {
+                NSEvent *event = [NSApp nextEventMatchingMask:UINT64_MAX untilDate:NSDate.distantPast
+                    inMode:NSDefaultRunLoopMode dequeue:YES];
+                if (event) [NSApp sendEvent:event];
+            } }
+        }];
+    }
     if (selfTest || nativeReference || [NSProcessInfo.processInfo.arguments containsObject:@"--show-keyboard"]) {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        [NSTimer scheduledTimerWithTimeInterval:1 repeats:NO block:^(NSTimer *timer) {
+            (void)timer;
             UIView *host = [self.guest valueForKey:@"_host"];
             AKTouchControls *controls = [host valueForKey:@"_touchControls"];
             CGSize originalSize = host.bounds.size;
@@ -106,7 +132,8 @@ static void AKDrainFixtureEvents(void) {
             }
             [controls toggleKeyboard];
             if (!selfTest) return;
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+            [NSTimer scheduledTimerWithTimeInterval:1 repeats:NO block:^(NSTimer *timer) {
+                (void)timer;
                 [host layoutIfNeeded];
                 assert(controls.keyboardVisible && CGSizeEqualToSize(originalSize, host.bounds.size));
                 assert(host.keyboardLayoutGuide.layoutFrame.size.height > 100);
@@ -117,6 +144,10 @@ static void AKDrainFixtureEvents(void) {
                 assert(input.isFirstResponder && [input conformsToProtocol:@protocol(UITextInput)]);
                 AKInputFixtureView *fixture = (AKInputFixtureView *)self.guest.contentView;
                 [input insertText:@"Fixture @ñ🙂"];
+                // Do not reset UIKit's document or deliver keys from within
+                // its edit transaction; both happen on the next main turn.
+                assert([input.text isEqual:@"Fixture @ñ🙂"] && fixture.text.length == 0);
+                AKDrainFixtureEvents();
                 assert(input.text.length == 0);
                 [input deleteBackward];
                 AKDrainFixtureEvents();
@@ -148,6 +179,32 @@ static void AKDrainFixtureEvents(void) {
                 [input setMarkedText:@" failed recognition" selectedRange:NSMakeRange(19, 0)];
                 [input dictationRecognitionFailed];
                 assert(input.text.length == 0);
+                NSMutableString *expected = [@"Fixture @ñ ¡Hola equipo, vamos a la mazmorra! Otra frase. Dictado." mutableCopy];
+                // Repeated edits and an immediate backspace before the queued
+                // commit must stay responsive, ordered and free of duplicates.
+                for (NSUInteger i = 0; i < 64; i++) {
+                    NSTimeInterval start = NSProcessInfo.processInfo.systemUptime;
+                    [input insertText:@"a"];
+                    [input insertText:@"b"];
+                    [input deleteBackward];
+                    assert([input.text isEqual:@"a"]);
+                    AKDrainFixtureEvents();
+                    [expected appendString:@"a"];
+                    assert([fixture.text isEqual:expected] && input.text.length == 0);
+                    assert(NSProcessInfo.processInfo.systemUptime - start < 1);
+                }
+                [input insertText:@" fast"];
+                UIStackView *accessory = (UIStackView *)controls.inputAccessoryView;
+                [(UIButton *)accessory.arrangedSubviews[4] sendActionsForControlEvents:UIControlEventTouchUpInside];
+                AKDrainFixtureEvents();
+                [expected appendString:@" fast\r"];
+                assert([fixture.text isEqual:expected]);
+                [input insertText:@" close"];
+                [controls dismissKeyboard];
+                [controls toggleKeyboard];
+                AKDrainFixtureEvents();
+                [expected appendString:@" close"];
+                assert([fixture.text isEqual:expected] && input.text.length == 0);
                 // Hiding the keyboard cancels provisional text and late results.
                 [input setMarkedText:@" discard me" selectedRange:NSMakeRange(11, 0)];
                 [controls dismissKeyboard];
@@ -165,15 +222,16 @@ static void AKDrainFixtureEvents(void) {
                 [NSNotificationCenter.defaultCenter postNotificationName:UIApplicationDidEnterBackgroundNotification object:nil];
                 assert(!controls.keyboardVisible && input.text.length == 0);
                 [input insertText:@" background result"];
-                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-                    assert([fixture.text isEqual:@"Fixture @ñ ¡Hola equipo, vamos a la mazmorra! Otra frase. Dictado."]);
+                [NSTimer scheduledTimerWithTimeInterval:1 repeats:NO block:^(NSTimer *timer) {
+                    (void)timer;
+                    assert([fixture.text isEqual:expected]);
                     [controls dismissKeyboard];
                     assert(!controls.keyboardVisible && host.isFirstResponder);
-                    NSLog(@"TOUCH_UI_SELF_TEST_PASS: native UITextInput, provisional/final text, replacement, no duplicate/auto-submit, delete, cancellation and focus restoration");
+                    NSLog(@"TOUCH_UI_SELF_TEST_PASS: deferred native edits, repeated typing/deletion, immediate Return/close, dictation, cancellation and focus restoration");
                     exit(EXIT_SUCCESS);
-                });
-            });
-        });
+                }];
+            }];
+        }];
     }
 }
 @end
