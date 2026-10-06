@@ -1,5 +1,6 @@
 #import "TouchGamepad.h"
 #import "TouchGamepadLayout.h"
+#import "TouchHaptics.h"
 #include <math.h>
 
 CGPoint AKTouchGamepadStickPosition(CGPoint point, CGSize size) {
@@ -135,7 +136,7 @@ CGPoint AKTouchGamepadStickPosition(CGPoint point, CGSize size) {
     UIView *_settings;
     UIButton *_editDone;
     UILabel *_hint;
-    UISwitch *_editSwitch;
+    UISwitch *_editSwitch, *_hapticsSwitch;
     NSArray<UISlider *> *_sliders;
     NSArray<UILabel *> *_values;
     CAShapeLayer *_editGrid, *_editAxes;
@@ -338,6 +339,13 @@ CGPoint AKTouchGamepadStickPosition(CGPoint point, CGSize size) {
         [sliders addObject:slider]; [stack addArrangedSubview:slider];
     }
     _sliders = sliders; _values = values; [self updateValues];
+    _hapticsSwitch = [UISwitch new]; _hapticsSwitch.on = _preferences.hapticsEnabled;
+    _hapticsSwitch.accessibilityLabel = @"Haptic feedback";
+    _hapticsSwitch.accessibilityIdentifier = @"wolkara.controls.haptics";
+    [_hapticsSwitch addTarget:self action:@selector(hapticsChanged:) forControlEvents:UIControlEventValueChanged];
+    UIStackView *hapticsRow = [[UIStackView alloc] initWithArrangedSubviews:@[[self label:@"Haptic feedback"],_hapticsSwitch]];
+    hapticsRow.axis = UILayoutConstraintAxisHorizontal; hapticsRow.alignment = UIStackViewAlignmentCenter;
+    [stack addArrangedSubview:hapticsRow];
     _editSwitch = [UISwitch new]; _editSwitch.accessibilityLabel = @"Edit layout";
     _editSwitch.accessibilityIdentifier = @"wolkara.controls.edit";
     [_editSwitch addTarget:self action:@selector(beginEditing:) forControlEvents:UIControlEventValueChanged];
@@ -376,20 +384,25 @@ CGPoint AKTouchGamepadStickPosition(CGPoint point, CGSize size) {
     else if (slider.tag == 2) _preferences.frontScale = slider.value;
     [_preferences save]; [self updateValues]; [self updateAppearance];
 }
+- (void)hapticsChanged:(UISwitch *)sender {
+    _preferences.hapticsEnabled = sender.on; [_preferences save];
+    if (self.configurationChanged) self.configurationChanged();
+}
 - (void)beginEditing:(UISwitch *)sender {
     if (!sender.on) return;
     [self reset]; _editing = YES; [_settings removeFromSuperview]; _settings = nil;
-    _sliders = nil; _values = nil; _editSwitch = nil;
+    _sliders = nil; _values = nil; _editSwitch = nil; _hapticsSwitch = nil;
     [self updateAppearance]; if (self.configurationChanged) self.configurationChanged();
 }
 - (void)resetLayout {
     [self reset]; [_preferences reset];
     _sliders[0].value = 1-_preferences.opacity; _sliders[1].value = _preferences.rearScale; _sliders[2].value = _preferences.frontScale;
+    _hapticsSwitch.on = _preferences.hapticsEnabled;
     [self updateValues]; [self updateAppearance];
 }
 - (void)finishConfiguration {
     [self reset]; [_preferences save]; _editing = NO; [_dragOrigins removeAllObjects];
-    [_settings removeFromSuperview]; _settings = nil; _sliders = nil; _values = nil; _editSwitch = nil;
+    [_settings removeFromSuperview]; _settings = nil; _sliders = nil; _values = nil; _editSwitch = nil; _hapticsSwitch = nil;
     [self updateAppearance]; if (self.configurationChanged) self.configurationChanged();
 }
 - (void)reset {
@@ -402,17 +415,20 @@ CGPoint AKTouchGamepadStickPosition(CGPoint point, CGSize size) {
     __weak UIView *_host;
     GCVirtualController *_virtualController;
     AKGamepadOverlay *_overlay;
+    AKTouchHaptics *_haptics;
     BOOL _active, _connecting, _cancelConnect, _failed, _invalidated;
 }
 - (instancetype)initWithHostView:(UIView *)host {
     if ((self = [super init])) {
         _host = host; _enabled = YES;
+        _haptics = [self makeHaptics];
         _overlay = [[AKGamepadOverlay alloc] initWithFrame:host.bounds];
         _overlay.autoresizingMask = UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
         [host addSubview:_overlay];
         __weak AKTouchGamepad *weakSelf = self;
         _overlay.configurationChanged = ^{
             AKTouchGamepad *self = weakSelf;
+            [self updateHaptics];
             if (self.visibilityChanged) self.visibilityChanged(self.visible);
         };
         for (AKGamepadButton *button in _overlay.buttons.allValues)
@@ -431,6 +447,8 @@ CGPoint AKTouchGamepadStickPosition(CGPoint point, CGSize size) {
     return self;
 }
 - (NSArray<GCController *> *)connectedControllers { return GCController.controllers; }
+- (AKTouchHaptics *)makeHaptics { return [AKTouchHaptics new]; }
+- (void)updateHaptics { _haptics.enabled = _visible && !_overlay.configuring && _overlay.preferences.hapticsEnabled; }
 - (GCVirtualController *)makeController {
     GCVirtualControllerConfiguration *configuration = [GCVirtualControllerConfiguration new];
     configuration.hidden = YES;
@@ -463,10 +481,12 @@ CGPoint AKTouchGamepadStickPosition(CGPoint point, CGSize size) {
 - (void)setVisible:(BOOL)visible {
     if (_visible == visible) return;
     _visible = visible; _overlay.controlsVisible = visible;
+    [self updateHaptics];
     if (self.visibilityChanged) self.visibilityChanged(visible);
 }
 - (void)buttonChanged:(AKGamepadButton *)button {
     if (!_visible || _overlay.configuring) return;
+    if (button.pressed) [_haptics buttonPressed];
     if ([button.element hasPrefix:@"dpad."]) {
         CGPoint value = CGPointMake(_overlay.buttons[@"dpad.right"].pressed - _overlay.buttons[@"dpad.left"].pressed,
                                     _overlay.buttons[@"dpad.up"].pressed - _overlay.buttons[@"dpad.down"].pressed);
@@ -474,7 +494,10 @@ CGPoint AKTouchGamepadStickPosition(CGPoint point, CGSize size) {
     } else [_virtualController setValue:button.pressed ? 1 : 0 forButtonElement:button.element];
 }
 - (void)stickChanged:(AKGamepadStick *)stick {
-    if (_visible && !_overlay.configuring) [_virtualController setPosition:stick.position forDirectionPadElement:stick.element];
+    if (_visible && !_overlay.configuring) {
+        [_haptics stickMoved:stick.position left:stick == _overlay.leftStick];
+        [_virtualController setPosition:stick.position forDirectionPadElement:stick.element];
+    }
 }
 - (void)disconnectController {
     GCVirtualController *controller = _virtualController;
