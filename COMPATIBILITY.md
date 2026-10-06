@@ -34,6 +34,15 @@ this fix still need manual confirmation.** Fresh installation is covered only by
 fixtures. AltStore PAL execution remains unproven. These launcher checks do not
 extend the gameplay results recorded below.
 
+The 2026-10-07 updater optimization persists verification receipts so ordinary
+patches can reuse unchanged CASC segments without rereading all their payload.
+The first update without receipts still checks existing content; Settings →
+**Verify and repair game files** always forces a complete check. Synthetic
+patch/resume/corruption tests, the simulator repair flow and the signed device
+build pass. A 16 MiB synthetic warm planning pass reads zero payload bytes;
+speed and behavior on the physical iPhone's full installation remain untested.
+See [persistent verification](docs/WOW_LAUNCHER.md#persistent-verification-2026-10-07).
+
 On 2026-10-06, the follow-up adds an [automatic touch controller](docs/TOUCH_CONTROLLER_PROPOSAL.md)
 with a custom UIKit layout, and fixes clipped descenders in the home status.
 Real GameController input and connection lifecycle are covered by synthetic

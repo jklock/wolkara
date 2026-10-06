@@ -185,8 +185,12 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
 - (void)checkForUpdatesAndLaunch:(BOOL)launch install:(BOOL)install {
     if (_starting || _sessionUsed) return;
     NSString *installKey=[@"WoWInstallRequested." stringByAppendingString:_product[@"id"]];
+    NSString *repairKey=[@"WoWRepairRequested." stringByAppendingString:_product[@"id"]];
+    if(install && _installation.state==TKWoWInstallationNeedsRepair)
+        [NSUserDefaults.standardUserDefaults setBool:YES forKey:repairKey];
     if(install)[NSUserDefaults.standardUserDefaults setBool:YES forKey:installKey];
     install=install || [NSUserDefaults.standardUserDefaults boolForKey:installKey];
+    BOOL repair=[NSUserDefaults.standardUserDefaults boolForKey:repairKey];
     [self cancel]; _plan=nil; _installation=nil; _error=nil; _checkedAt=nil; _startupFailure=nil;
     _updating=NO; _updateError=NO; _updatePhase=nil; _updateDone=0; _updateTotal=0;
     _client=[TKWoWClient new]; _busy=YES; [self render];
@@ -213,6 +217,7 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
             NSString *root=directory?directory.stringByDeletingLastPathComponent:
                 [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject stringByAppendingPathComponent:@"World of Warcraft"];
             TKWoWUpdater *updater=[[TKWoWUpdater alloc] initWithClient:client];
+            updater.fullVerification=repair;
             if([updater updatePlan:plan root:root progress:progress error:&error]) {
                 [self->_library discover];installation=TKWoWInspectInstallation(self->_library,product,plan);error=nil;
                 // Editions without a bundled compatibility profile still need a
@@ -225,7 +230,10 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
                     if(executables.count==1 && [self->_library importExecutable:executables[0] copy:NO error:&error])
                         installation=TKWoWInspectInstallation(self->_library,product,plan);
                 }
-                if(installation.state==TKWoWInstallationReady)[NSUserDefaults.standardUserDefaults removeObjectForKey:installKey];
+                if(installation.state==TKWoWInstallationReady) {
+                    [NSUserDefaults.standardUserDefaults removeObjectForKey:installKey];
+                    [NSUserDefaults.standardUserDefaults removeObjectForKey:repairKey];
+                }
                 else error=error?:installation.error?:TKWoWError(@"The downloaded installation could not be registered in the library.");
             }
         }
@@ -250,6 +258,11 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     if (_installation.state!=TKWoWInstallationReady) return;
     if (_executionMode==TKExecutionModeNone) return;
     [self checkForUpdatesAndLaunch:YES];
+}
+- (void)repairInstallation {
+    if(_busy || _starting || _sessionUsed || !_installation.app)return;
+    [NSUserDefaults.standardUserDefaults setBool:YES forKey:[@"WoWRepairRequested." stringByAppendingString:_product[@"id"]]];
+    [self checkForUpdatesAndLaunch:NO install:YES];
 }
 - (void)configureButton:(UIButton *)button title:(NSString *)title filled:(BOOL)filled {
     UIButtonConfiguration *configuration=filled?UIButtonConfiguration.filledButtonConfiguration:UIButtonConfiguration.plainButtonConfiguration;
@@ -296,6 +309,7 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
         NSDictionary *phases=@{@"snapshot":@"Preparing the installation",
             @"manifests":@"Reading the update",
             @"verify":@"Checking existing data",
+            @"reuse":@"Comparing installed content",
             @"indices":@"Locating download files",
             @"download":@"Downloading new data",
             @"files":@"Installing game files",
@@ -393,6 +407,11 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
 - (void)settings {
     UIAlertController *sheet=[UIAlertController alertControllerWithTitle:@"Settings"
         message:@"Updates install automatically while this app is open. Settings and addons are preserved. Startup preparation is separate from downloading updates." preferredStyle:UIAlertControllerStyleActionSheet];
+    if(!_busy && !_starting && !_sessionUsed && _installation.app) {
+        [sheet addAction:[UIAlertAction actionWithTitle:@"Verify and repair game files" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+            (void)a; [self repairInstallation];
+        }]];
+    }
     [sheet addAction:[UIAlertAction actionWithTitle:@"Diagnostics and logs" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
         (void)a; [self diagnostics];
     }]];

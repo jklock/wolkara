@@ -12,9 +12,10 @@
 - (void)selectProduct:(NSDictionary *)product;
 - (void)refresh;
 - (void)about;
+- (void)repairInstallation;
 @end
-static atomic_uint requests, revision, updates;
-static atomic_bool failure, slow;
+static atomic_uint requests, revision, updates, repairs;
+static atomic_bool failure, slow, interruptRepair;
 static TKFixtureLibrary *fixture;
 static NSDictionary *Plan(id self, SEL selector, NSString *product, NSString *region, NSString *locale, NSError **error) {
     (void)self; (void)selector; (void)region; (void)locale;
@@ -25,8 +26,12 @@ static NSDictionary *Plan(id self, SEL selector, NSString *product, NSString *re
 }
 static BOOL Update(id self, SEL selector, NSDictionary *plan, NSString *root,
                    void (^progress)(NSString *,uint64_t,uint64_t), NSError **error) {
-    (void)self; (void)selector; (void)plan; (void)error;
+    (void)selector; (void)plan;
     assert([root isEqual:fixture.root]);
+    if([(TKWoWUpdater *)self fullVerification]) {
+        atomic_fetch_add(&repairs,1);
+        if(atomic_exchange(&interruptRepair,false)) { if(error)*error=TKWoWError(@"Synthetic repair interruption");return NO; }
+    }
     atomic_fetch_add(&updates,1); progress(@"download",50,100);
     [fixture writeMetadata:atomic_load(&revision) duplicate:NO];
     progress(@"complete",1,1); return YES;
@@ -50,6 +55,8 @@ static UIView *Find(UIView *view, NSString *identifier) {
     method_setImplementation(class_getInstanceMethod(TKWoWClient.class,@selector(planForProduct:region:locale:error:)),(IMP)Plan);
     method_setImplementation(class_getInstanceMethod(TKWoWUpdater.class,@selector(updatePlan:root:progress:error:)),(IMP)Update);
     [NSUserDefaults.standardUserDefaults setObject:@"wow_classic_beta" forKey:@"WoWProduct"];
+    [NSUserDefaults.standardUserDefaults removeObjectForKey:@"WoWRepairRequested.wow_classic_beta"];
+    [NSUserDefaults.standardUserDefaults removeObjectForKey:@"WoWInstallRequested.wow_classic_beta"];
     // Device language must not change this fork's English launcher UI.
     [NSUserDefaults.standardUserDefaults setObject:@[@"es-ES"] forKey:@"AppleLanguages"];
     if (![NSProcessInfo.processInfo.arguments containsObject:@"--preview"]) dispatch_after(dispatch_time(DISPATCH_TIME_NOW,30*NSEC_PER_SEC),dispatch_get_global_queue(QOS_CLASS_UTILITY,0), ^{
@@ -88,6 +95,19 @@ static UIView *Find(UIView *view, NSString *identifier) {
 }
 - (void)checkOutdated {
     assert([self primary].enabled && self.launches==0 && atomic_load(&updates)==1);
+    assert(atomic_load(&repairs)==0);
+    atomic_store(&interruptRepair,true);[self.controller repairInstallation];
+    [self performSelector:@selector(checkRepairPaused) withObject:nil afterDelay:0.3];
+}
+- (void)checkRepairPaused {
+    assert(atomic_load(&repairs)==1);
+    assert([NSUserDefaults.standardUserDefaults boolForKey:@"WoWRepairRequested.wow_classic_beta"]);
+    [self.controller refresh];
+    [self performSelector:@selector(checkRepairComplete) withObject:nil afterDelay:0.3];
+}
+- (void)checkRepairComplete {
+    assert(atomic_load(&repairs)==2 && [self primary].enabled && self.launches==0);
+    assert(![NSUserDefaults.standardUserDefaults boolForKey:@"WoWRepairRequested.wow_classic_beta"]);
     atomic_store(&failure,true); [self.controller refresh];
     [self performSelector:@selector(checkOffline) withObject:nil afterDelay:0.3];
 }

@@ -43,10 +43,11 @@ or assets.
 
 This branch opens directly into a themed [WoW home screen](docs/WOW_LAUNCHER.md),
 with edition selection, automatic installation of updates, download progress and
-a verified Play action. The native updater reuses verified CASC data, downloads
+a verified Play action. The native updater remembers verified CASC data to avoid
+rereading unchanged content on every patch, downloads
 missing content from Blizzard's CDN, preserves settings/addons and activates a
 complete installation atomically. Preparation stays on the same English home
-screen; Settings contains diagnostics and open-source notices. Startup uses the
+screen; Settings contains full verification/repair, diagnostics and open-source notices. Startup uses the
 route included in the build, without a public mode selector. The updater
 passes synthetic tests and real-data tests on isolated Mac copies; its physical
 iPhone update and subsequent gameplay still need validation. Developer service

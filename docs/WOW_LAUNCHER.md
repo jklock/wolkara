@@ -56,7 +56,12 @@ or memory requirements; see [the distribution plan](WOLKARA_DISTRIBUTION.md).
   files does not remove or cache that separate runtime operation.
 
 Play checks `.build.info` and the selected executable on ordinary launches.
-Full CASC verification runs during updates/repair, not every time Play is tapped.
+Updates compare required objects against a persistent verification inventory;
+unchanged verified CASC payload is not reread. Installing this launcher revision
+does not create that inventory retroactively: the first update of an imported
+copy still scans its required content. Settings → **Verify and repair game files**
+forces a complete check, including when the installed build is current. Repair
+requests survive interruption and never silently resume as a cached update.
 The general library is no longer reachable from the user interface, so it no
 longer provides a manual launch path around the home screen's update check.
 The internal library model still resolves installations and profiles.
@@ -85,13 +90,15 @@ no .NET runtime is embedded.
    under `.tolkara-updates` beside `World of Warcraft`. APFS clones share old
    blocks without permitting writes to alter the old installation. Symlinks
    outside the installation and unsupported files fail the update.
-2. Verifies existing content and computes missing objects. It checks space for
+2. Reuses receipts for unchanged content and verifies objects without a valid
+   receipt, then computes missing objects. It checks space for
    missing objects, loose files and a 1 GiB margin; filesystem write errors also
    stop activation. Bootstrap manifests and the root manifest are included.
 3. Appends new encoded objects to new CASC segments and checkpoints local indexes
    every 64 MiB and on a handled interruption. The latest two index generations
    are retained. A forced process kill may lose the current uncheckpointed batch;
-   it cannot activate a partial installation. Resume rechecks stored content.
+   it cannot activate a partial installation. Resume reuses valid receipts and
+   checks objects whose receipt is absent or invalid.
 4. Installs original loose files with exact size/content hashes. It never
    patches or re-signs the game's executable. Existing WTF and Interface folders
    are refreshed from the old root immediately before activation, preserving
@@ -101,6 +108,41 @@ no .NET runtime is embedded.
    atomic directory swap to activate metadata, executable and data together.
    Its own replaced snapshot is removed after success. Other editions and
    existing unreferenced data are retained; data compaction is not implemented.
+
+### Persistent verification (2026-10-07)
+
+`Data/data/.wolkara-verified` is a local, versioned, checksummed inventory with
+compact 25-byte records: the full encoded key, indexed location and encoded
+size. A record is reusable only if its current local index entry still matches
+and its segment's filesystem identity, size, nanosecond mtime and nanosecond
+ctime match. Same-size writes with restored mtime, replacement files, deletion,
+truncation and symlinks do not authorize cached reuse. The cache reader bounds
+its file size and record count and rejects malformed/checksum-invalid records;
+a missing or rejected cache falls back to normal payload verification.
+
+Cloning changes inode identity. Before cloning, the updater captures validated
+receipts; after its APFS clone it rebinds only segments whose source stayed
+unchanged and whose clone has the same content size/mtime. It saves receipts
+after planning, before activation and on handled interruptions, only for durable
+indexed content. New downloads still pass their original encoded checksums.
+Reading bytes for loose-file extraction still verifies them, and the original
+executable is still checked against the current manifest. Changes detected
+during the transaction prevent activation rather than refreshing trust in
+previous planning decisions. WTF and Interface preservation is unchanged.
+
+The inventory is a performance cache, not protection against deliberate local
+cache forgery or storage corruption that leaves all filesystem metadata intact.
+Use **Verify and repair game files** to force payload checks. Normal updates
+still read manifests, indexes and the small inventory and visit required keys;
+they do not promise constant-time planning or eliminate startup memory preparation.
+
+Validation uses our own synthetic fixtures: cold adoption, warm reuse, a new
+patch, cancellation/resume, clone/swap, changed segments, corrupt/missing
+receipts, malformed metadata, full repair and interrupted repair. A 16 MiB
+fixture reads 16,781,056 payload/envelope bytes cold and **zero** on the warm
+planning pass (metadata reads are excluded). ASan/UBSan checks, the simulator
+home/repair flow and a signed arm64 device build pass. This optimization has
+not yet been measured against the full game installation on the physical iPhone.
 
 `Installation.m` checks the installed product and original executable.
 `WoWViewController.m` serializes update jobs, discards stale UI/launch callbacks
