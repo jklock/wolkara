@@ -69,8 +69,20 @@ int main(void){@autoreleasepool{
     assert(!result && paused);assert([[NSData dataWithContentsOfFile:exe] isEqual:old]);assert([[NSData dataWithContentsOfFile:[root stringByAppendingPathComponent:@".build.info"]] isEqual:info]);
     assert([Text(@"settings edited while paused") writeToFile:settings atomically:YES]);
     TKUpdateClient *resume=[TKUpdateClient new];resume.responses=client.responses;resume.archive=archive;
-    result=[[[TKWoWUpdater alloc] initWithClient:resume] updatePlan:plan root:root progress:^(NSString *phase,uint64_t done,uint64_t total){(void)phase;(void)done;(void)total;} error:&error];
+    __block BOOL changedMetadata=NO;
+    result=[[[TKWoWUpdater alloc] initWithClient:resume] updatePlan:plan root:root progress:^(NSString *phase,uint64_t done,uint64_t total){
+        (void)done;(void)total;
+        if([phase isEqual:@"download"] && !changedMetadata) {
+            // The resumed job has already reused the downloaded asset's receipt.
+            // Changing metadata must recheck it, not restart or lose the patch.
+            NSString *segment=[base stringByAppendingPathComponent:[NSString stringWithFormat:
+                @".tolkara-updates/wow_classic_beta-%@-enUS/installation/Data/data/data.001",build]];
+            assert([fm setAttributes:@{NSFileModificationDate:[NSDate dateWithTimeIntervalSinceNow:10]}
+                ofItemAtPath:segment error:NULL]);changedMetadata=YES;
+        }
+    } error:&error];
     if(!result)fprintf(stderr,"%s\n",error.localizedDescription.UTF8String);assert(result);
+    assert(changedMetadata);
     assert([[NSData dataWithContentsOfFile:exe] isEqual:original]);assert([[NSData dataWithContentsOfFile:addon] isEqual:Text(@"keep me")]);assert([[NSData dataWithContentsOfFile:settings] isEqual:Text(@"settings edited while paused")]);
     assert(!resume.counts[TKWoWMD5(asset)] && !resume.counts[TKWoWMD5(present)]);assert([resume.counts[@"range"] unsignedIntegerValue]==1);
     NSArray *rows=TKWoWTable([NSData dataWithContentsOfFile:[root stringByAppendingPathComponent:@".build.info"]],&error);assert(TKWoWBuildCurrent(rows,@"wow_classic_beta",plan[@"version"]));

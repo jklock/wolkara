@@ -149,6 +149,19 @@ static NSArray *Stamp(const struct stat *s) {
 static NSArray *SegmentStamp(NSString *directory,uint64_t segment) {
     struct stat s;return lstat(SegmentPath(directory,segment).fileSystemRepresentation,&s)?nil:Stamp(&s);
 }
+static NSData *ReadEnvelope(int fd,uint64_t packed,uint64_t size,uint64_t fileSize,const uint8_t *key,uint64_t *bytesRead) {
+    uint64_t offset=packed&0x3fffffff;
+    if(size<39 || size>256*1024*1024+30 || offset+size>fileSize)return nil;
+    NSMutableData *raw=[NSMutableData dataWithLength:(NSUInteger)size];uint8_t *p=raw.mutableBytes;size_t done=0;
+    while(done<size) { ssize_t n=pread(fd,p+done,(size_t)size-done,(off_t)(offset+done));if(n<0 && errno==EINTR)continue;if(n<=0)break;done+=(size_t)n; }
+    *bytesRead+=done;
+    if(done!=size || LE(p+16,4)!=size)return nil;
+    // Agent may zero the seven unindexed hash bytes in this envelope.
+    // The complete EKey and chunk checksums are independently verified below.
+    for(int i=0;i<9;i++)if(p[15-i]!=key[i])return nil;
+    NSData *encoded=[NSData dataWithBytesNoCopy:p+30 length:(NSUInteger)size-30 freeWhenDone:NO];
+    return TKWoWEncodedValid(encoded,TKWoWHex(key,16),NULL)?raw:nil;
+}
 static int CompareReceipt(const void *a,const void *b) { return memcmp(a,b,ReceiptSize); }
 static NSArray *EmptyReceipts(void) {
     NSMutableArray *buckets=[NSMutableArray new];for(unsigned i=0;i<16;i++)[buckets addObject:[NSMutableData new]];return buckets;
@@ -292,13 +305,36 @@ BOOL TKWoWCASCCloneVerification(NSDictionary *snapshot,NSString *source,NSString
 }
 - (void)rememberKey:(const uint8_t *)key entry:(const uint8_t *)entry stamp:(NSArray *)stamp {
     NSString *segment=@(BE(entry+9,5)>>30).stringValue;
-    if(_segmentStamps[segment] && ![_segmentStamps[segment] isEqual:stamp]) {
-        // Earlier planning may already have reused another object in this
-        // segment. Verifying this one cannot authorize that earlier decision.
-        _verificationChanged=YES;[self invalidateSegment:segment];
-    }
-    _segmentStamps[segment]=stamp;
+    // One valid read cannot bless earlier cached decisions for other objects.
+    // Keep the old stamp until all receipts in a changed segment are rechecked.
+    if(!_segmentStamps[segment])_segmentStamps[segment]=stamp;
     NSMutableData *pending=_pendingVerification[Bucket(key)];[pending appendBytes:key length:16];[pending appendBytes:entry+9 length:9];
+}
+- (BOOL)revalidateSegment:(NSString *)segment error:(NSError **)error {
+    if(_verificationChanged)return NO;
+    NSLog(@"[wow-update] Rechecking CASC data.%03u after a metadata change.",segment.intValue);
+    int fd=open(SegmentPath(_directory,segment.integerValue).fileSystemRepresentation,O_RDONLY|O_NOFOLLOW|O_NONBLOCK);
+    struct stat before,after;BOOL valid=fd>=0 && !fstat(fd,&before) && Stamp(&before)!=nil;
+    for(unsigned bucket=0;valid && bucket<16;bucket++)
+        for(NSData *entries in @[_verified[bucket],_pendingVerification[bucket]]) {
+            const uint8_t *p=entries.bytes;
+            for(NSUInteger i=0;valid && i<entries.length;i+=ReceiptSize) { @autoreleasepool {
+                uint64_t packed=BE(p+i+16,5);
+                if((packed>>30)!=(uint64_t)segment.longLongValue)continue;
+                valid=ReadEnvelope(fd,packed,LE(p+i+21,4),(uint64_t)before.st_size,p+i,&_verificationBytesRead)!=nil;
+            }}
+        }
+    // Metadata alone is not evidence of bad content. Rebind only after every
+    // previously trusted extent passes its checksum in the same stable file.
+    valid=valid && !fstat(fd,&after) && [Stamp(&before) isEqual:Stamp(&after)] &&
+        [Stamp(&after) isEqual:SegmentStamp(_directory,segment.integerValue)];
+    if(fd>=0)close(fd);
+    if(!valid) {
+        _verificationChanged=YES;[self invalidateSegment:segment];
+        Fail(error,[NSString stringWithFormat:@"CASC data.%03u changed and could not be verified. Reopen to retry.",segment.intValue]);return NO;
+    }
+    _segmentStamps[segment]=Stamp(&after);
+    return YES;
 }
 - (BOOL)verifyKey:(NSString *)key size:(uint64_t)size {
     uint8_t hash[16];if(!TKWoWUnhex(key,hash) || size>256*1024*1024)return NO;
@@ -322,21 +358,15 @@ BOOL TKWoWCASCCloneVerification(NSDictionary *snapshot,NSString *source,NSString
     struct stat before,after;
     if(fstat(fd,&before) || !S_ISREG(before.st_mode) || before.st_size<0 ||
        (packed&0x3fffffff)+fullSize>(uint64_t)before.st_size) { close(fd);return nil; }
-    NSMutableData *raw=[NSMutableData dataWithLength:(NSUInteger)fullSize]; uint8_t *p=raw.mutableBytes; size_t done=0;
-    while(done<fullSize) { ssize_t n=pread(fd,p+done,(size_t)fullSize-done,(off_t)((packed&0x3fffffff)+done)); if(n<0 && errno==EINTR)continue; if(n<=0)break; done+=(size_t)n; }
+    NSData *raw=ReadEnvelope(fd,packed,fullSize,(uint64_t)before.st_size,hash,&_verificationBytesRead);
     BOOL stable=!fstat(fd,&after) && [Stamp(&before) isEqual:Stamp(&after)];close(fd);
-    _verificationBytesRead+=done;
-    if(!stable || done!=fullSize || LE(p+16,4)!=fullSize)return nil;
-    // Agent may zero the seven unindexed hash bytes in this envelope.
-    // The complete EKey is independently verified against BLTE below.
-    for(int i=0;i<9;i++)if(p[15-i]!=hash[i])return nil;
-    NSData *encoded=[NSData dataWithBytesNoCopy:p+30 length:(NSUInteger)fullSize-30 freeWhenDone:NO];
-    if(!TKWoWEncodedValid(encoded,key,NULL))return nil;
+    if(!stable || !raw)return nil;
     [self rememberKey:hash entry:entry stamp:Stamp(&after)];
     // Keep the parent allocation alive independently of the autorelease pool.
-    return [NSData dataWithBytes:p+30 length:(NSUInteger)fullSize-30];
+    return [NSData dataWithBytes:(const uint8_t *)raw.bytes+30 length:(NSUInteger)fullSize-30];
 }
 - (BOOL)addData:(NSData *)data key:(NSString *)key error:(NSError **)error {
+    if(_verificationChanged) { Fail(error,@"CASC data changed during the update. Reopen to retry.");return NO; }
     uint8_t hash[16]; if(!TKWoWUnhex(key,hash) || !TKWoWEncodedValid(data,key,error))return NO;
     uint64_t size=data.length+30;
     if(_fd>=0 && _offset+size>0x3fffffff) { if(fsync(_fd)) { Fail(error,@"Cannot sync CASC segment.");return NO; } close(_fd);_fd=-1;_segment++;_offset=0; }
@@ -346,10 +376,16 @@ BOOL TKWoWCASCCloneVerification(NSDictionary *snapshot,NSString *source,NSString
         _fd=open(path.fileSystemRepresentation,O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW,0600);
         if(_fd<0) { Fail(error,@"Cannot create CASC segment.");return NO; }
     }
-    struct stat previous;
-    if(fstat(_fd,&previous) || (_segmentStamps[@(_segment).stringValue] &&
-       ![_segmentStamps[@(_segment).stringValue] isEqual:Stamp(&previous)])) {
-        Fail(error,@"CASC data changed during the update.");return NO;
+    struct stat previous;NSString *segment=@(_segment).stringValue;
+    if(fstat(_fd,&previous)) { Fail(error,@"Cannot inspect CASC data before appending.");return NO; }
+    if(_segmentStamps[segment] && ![_segmentStamps[segment] isEqual:Stamp(&previous)]) {
+        if(![self revalidateSegment:segment error:error])return NO;
+        if(fstat(_fd,&previous) || ![_segmentStamps[segment] isEqual:Stamp(&previous)]) {
+            _verificationChanged=YES;Fail(error,@"CASC writer changed while verifying. Reopen to retry.");return NO;
+        }
+    }
+    if(previous.st_size!=(off_t)_offset) {
+        _verificationChanged=YES;Fail(error,@"CASC writer size changed. Reopen to retry.");return NO;
     }
     uint8_t header[30]={0}; for(int i=0;i<16;i++)header[i]=hash[15-i]; PutLE(header+16,size,4);
     // Reserved header bytes remain zero, as in the public CASC storage format.
@@ -368,11 +404,8 @@ BOOL TKWoWCASCCloneVerification(NSDictionary *snapshot,NSString *source,NSString
     if(![self checkpoint:error])return NO;
     // Recheck before persisting: a receipt must never silently bless a change.
     for(NSString *segment in _segmentStamps.allKeys)
-        if(![_segmentStamps[segment] isEqual:SegmentStamp(_directory,segment.integerValue)]) {
-            _verificationChanged=YES;
-            [self invalidateSegment:segment];
-            Fail(error,@"CASC data changed during the update. Reopen to retry.");return NO;
-        }
+        if(![_segmentStamps[segment] isEqual:SegmentStamp(_directory,segment.integerValue)] &&
+           ![self revalidateSegment:segment error:error])return NO;
     NSMutableArray *buckets=[NSMutableArray new];NSUInteger count=0;
     for(unsigned bucket=0;bucket<16;bucket++) {
         NSMutableData *records=[_verified[bucket] mutableCopy];[records appendData:_pendingVerification[bucket]];

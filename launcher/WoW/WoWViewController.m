@@ -205,7 +205,11 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
         TKWoWInstallation *installation=plan?TKWoWInspectInstallation(self->_library,product,plan):nil;
         BOOL updateAttempted=plan && (install || installation.state==TKWoWInstallationOutdated) && !client.cancelled;
         if(updateAttempted) {
+            __block NSString *lastPhase=nil;
             void (^progress)(NSString *,uint64_t,uint64_t)=^(NSString *phase,uint64_t done,uint64_t total) {
+                if(![lastPhase isEqual:phase]) {
+                    lastPhase=phase;NSLog(@"[wow-update] Phase: %@",phase);
+                }
                 dispatch_async(dispatch_get_main_queue(),^{
                     if(generation!=self->_generation)return;
                     self->_plan=plan;self->_installation=installation;self->_updating=YES;
@@ -236,6 +240,9 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
                 }
                 else error=error?:installation.error?:TKWoWError(@"The downloaded installation could not be registered in the library.");
             }
+            if(error)NSLog(@"[wow-update] Interrupted during %@: %@ (%@:%ld)",lastPhase?:@"preparation",
+                error.localizedDescription,error.domain,(long)error.code);
+            NSLog(@"[wow-update] Verification bytes read=%llu reused=%llu",updater.verificationBytesRead,updater.verificationBytesReused);
         }
 
         dispatch_async(dispatch_get_main_queue(),^{
