@@ -837,7 +837,9 @@ static void logLayer(CALayer *layer,unsigned depth) {
 
 #pragma mark - NSApplication
 
-@implementation NSApplication { NSMutableArray<NSEvent *> *_queue; NSMutableArray<NSWindow *> *_windows; NSEvent *_currentEvent; BOOL _launched, _inRun, _active, _terminating, _terminationPending, _terminationApproved; }
+@implementation NSApplication { NSMutableArray<NSEvent *> *_queue; NSMutableArray<NSWindow *> *_windows; NSEvent *_currentEvent; BOOL _launched, _inRun, _active, _terminating, _terminationPending, _terminationApproved;
+    CFTimeInterval _lastUIKitPump;
+}
 + (NSApplication *)sharedApplication {
     if (NSApp) return NSApp; // Super init publishes the singleton before subclass init callbacks.
     static dispatch_once_t once;
@@ -882,13 +884,25 @@ static void logLayer(CALayer *layer,unsigned depth) {
 // timer callout on the UIKit main thread. We never return; we pump the same
 // run loop re-entrantly, which keeps UIKit, CADisplayLink, timers and the main
 // dispatch queue alive underneath the guest's stack frame.
+- (void)ak_pumpUIKitFor:(NSTimeInterval)seconds returnAfterSource:(BOOL)once {
+    // Set the budget before calling out too: a UIKit callback may inspect the
+    // guest queue. A genuinely nested guest loop must still be able to pump.
+    _lastUIKitPump = CACurrentMediaTime();
+    CFRunLoopRunInMode(kCFRunLoopDefaultMode, seconds, once);
+    // The outer UIKit loop never regains control while the guest runs. Publish
+    // pending native control/layout changes after the input callback returns,
+    // including when the inner loop exited early after handling a source.
+    // flush preserves any explicit transaction owned by a caller.
+    if (NSThread.isMainThread) [CATransaction flush];
+    _lastUIKitPump = CACurrentMediaTime();
+}
 - (void)run {
     [self finishLaunching];
     _running = YES; _inRun = YES;
     AKLog(@"-[NSApplication run]: pumping main run loop re-entrantly");
     while (_running) {
         @autoreleasepool {
-            [NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:NSDate.distantFuture];
+            [self ak_pumpUIKitFor:0.25 returnAfterSource:YES];
             [self ak_drain];
         }
     }
@@ -942,6 +956,15 @@ static void logLayer(CALayer *layer,unsigned depth) {
         diagnostics++; nextDiagnostic=now+15; [self.keyWindow ak_logLayers];
     }
     for (BOOL pumped = NO;; pumped = YES) {
+        // A busy guest queue used to bypass UIKit indefinitely. Give native
+        // controls a bounded turn at most once per 1/120 s even while events
+        // remain queued. Do this before inspecting the queue: UIKit callbacks
+        // can post/remove events. Preserve mask/dequeue/atStart semantics.
+        if (_queue.count && NSThread.isMainThread &&
+            CACurrentMediaTime() - _lastUIKitPump >= 1.0 / 120.0) {
+            [self ak_pumpUIKitFor:0.001 returnAfterSource:NO];
+            pumped = YES;
+        }
         for (NSUInteger i = 0; i < _queue.count; i++) {
             NSEvent *e = _queue[i];
             if (mask & (1ULL << e.type)) {
@@ -961,8 +984,8 @@ static void logLayer(CALayer *layer,unsigned depth) {
         // A zero-duration poll can starve UIKit's deferred gesture/key work
         // when the desktop loop polls continuously. Allow a short complete
         // UIKit turn for nonblocking polls; blocking polls still wake on input.
-        if(left<=0) CFRunLoopRunInMode(kCFRunLoopDefaultMode,.001,false);
-        else CFRunLoopRunInMode(kCFRunLoopDefaultMode,MIN(left,.25),true);
+        if(left<=0) [self ak_pumpUIKitFor:0.001 returnAfterSource:NO];
+        else [self ak_pumpUIKitFor:MIN(left,.25) returnAfterSource:YES];
     }
 }
 @end

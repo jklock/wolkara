@@ -121,6 +121,52 @@ For manual comparison, `tools/test_touch_controls_ui.sh
 --native-keyboard-reference` opens an ordinary UIKit text view in the synthetic
 fixture, without the keyboard adapter.
 
+## Native UI stalls while the guest continues (2026-10-06)
+
+The user reported that both software keys and settings sliders can stick while
+WoW keeps animating and responding to the controller. Beginning the deferred
+Control Center gesture releases the native UI. This broadens the issue beyond
+the text bridge; the earlier text-edit change did not establish a device fix.
+
+The adapter returned queued desktop events without ever servicing UIKit while
+that queue stayed nonempty. An original simulator fixture reproduced starvation:
+a native animation failed to complete within two seconds with continuous queued
+events, although the guest polling loop kept running. Empty-queue and
+source-driven polls passed before the correction. This demonstrates a defect in
+the adapter, not proof that it is the only cause of the reported device stall.
+
+`nextEventMatchingMask:` now gives UIKit a short turn even with queued events,
+limited to once per 1/120 second on that path, before inspecting the queue.
+Masks, peeking, priority insertion and delivery order are preserved. The shared
+pump also flushes pending implicit Core Animation transactions after native
+callbacks return; it does not commit a caller's explicit transaction. The same
+pump is used by `NSApplication.run`. No system gesture is synthesized and no
+keyboard text or application memory is inspected.
+
+The input fixture no longer forces a display flush after each translated key
+or mouse event, which could conceal presentation problems. Checks on iOS 27 /
+Xcode 27 passed:
+
+- `tools/test_touch_controls_ui.sh --self-test --ui-progress-test`: native
+  animation completion, main-queue work and timer-driven slider updates under
+  empty polling, source traffic, continuous queued events, non-dequeuing peeks
+  and `NSApplication.run`. The failing queued-event case now passes.
+- `tools/test_touch_controls_ui.sh --self-test --guest-poll-loop --queued-traffic`:
+  existing repeated typing, deletion, composition, dictation-placeholder,
+  immediate Return/close, cancellation and focus checks.
+- `tools/test_translation_sim.sh`: mask/peek/priority behavior, including native
+  callbacks changing the queue while it is being serviced, plus existing adapters.
+- `tools/test_emulation.sh`: required ASan/UBSan regression suite passed.
+- Manual simulator software-key taps produced `hola prueba`; actual drags changed
+  transparency and both size sliders while the synthetic queue stayed occupied,
+  without invoking Control Center. This did not run a game or record dictation.
+- Signed arm64 iOS Debug build and strict/deep signature verification passed.
+
+The corrected build has not been installed on the physical iPhone by this
+validation run. Repeat typing, all three sliders, opening/closing the keyboard,
+and dictation on the device without the Control Center workaround before marking
+the reported stall resolved. Device frame-rate impact is also unmeasured.
+
 ## Validation
 
 On 2026-10-02, the following checks passed:
