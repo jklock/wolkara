@@ -5,6 +5,8 @@
 - (void)touchScrollBy:(CGPoint)delta;
 - (void)touchButton:(unsigned)button pressed:(BOOL)pressed;
 - (void)touchInsertText:(NSString *)text;
+// Explicit user-requested replacement of the focused field; no text is read.
+- (void)touchReplaceText:(NSString *)text;
 - (void)touchSpecialKey:(unsigned short)code characters:(NSString *)characters;
 - (void)touchTrackpadChanged:(BOOL)enabled;
 - (void)touchKeyboardVisibilityChanged:(BOOL)visible;

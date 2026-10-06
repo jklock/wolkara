@@ -6,20 +6,22 @@
 @interface AKTouchControls (KeyboardState)
 - (void)updateKeyboardButton;
 - (void)updateDraftButtons;
+- (void)replaceGameText:(NSString *)text;
 @end
 
 // A normal, visible UIKit document. Editing and dictation stay local until
-// Insert is requested; never reset the text context on every keyboard callback.
+// Replace is requested; never reset the text context on every keyboard callback.
 @interface AKKeyboardTextView : UITextView <UITextViewDelegate>
 @property (nonatomic, weak) AKTouchControls *inputOwner;
 - (BOOL)forwardCommittedText;
 - (void)discardDraft;
 - (BOOL)canModifyDraft;
+- (BOOL)canReplaceField;
 @end
 
 @implementation AKKeyboardTextView {
     NSMutableSet *_dictationPlaceholders;
-    BOOL _acceptingInput;
+    BOOL _acceptingInput, _didSubmitDraft;
     NSUInteger _session;
 }
 - (instancetype)initWithFrame:(CGRect)frame textContainer:(NSTextContainer *)container {
@@ -31,8 +33,8 @@
         self.tintColor = UIColor.systemCyanColor;
         self.font = [UIFont systemFontOfSize:17];
         self.layer.cornerRadius = 8;
-        self.accessibilityLabel = @"Text to insert";
-        self.accessibilityHint = @"Edit your draft, then tap Insert. Existing game text is not shown here.";
+        self.accessibilityLabel = @"Replacement text";
+        self.accessibilityHint = @"Tap Replace to replace the selected game field, or leave this empty to clear it. Existing game text is not shown here.";
         self.accessibilityIdentifier = @"wolkara.keyboard.draft";
         self.autocapitalizationType = UITextAutocapitalizationTypeNone;
         self.autocorrectionType = UITextAutocorrectionTypeNo;
@@ -47,7 +49,12 @@
 }
 - (UIView *)inputAccessoryView { return self.inputOwner.inputAccessoryView; }
 - (BOOL)canModifyDraft { return _acceptingInput && !_dictationPlaceholders.count && !self.markedTextRange; }
-- (void)textViewDidChange:(UITextView *)view { (void)view; [self.inputOwner updateDraftButtons]; }
+- (BOOL)canReplaceField { return [self canModifyDraft] && (self.hasText || !_didSubmitDraft); }
+- (void)textViewDidChange:(UITextView *)view {
+    (void)view;
+    _didSubmitDraft = NO;
+    [self.inputOwner updateDraftButtons];
+}
 - (void)textViewDidChangeSelection:(UITextView *)view { (void)view; [self.inputOwner updateDraftButtons]; }
 - (void)discardDraft {
     [super setText:@""];
@@ -55,16 +62,21 @@
     [self.inputOwner updateDraftButtons];
 }
 - (BOOL)forwardCommittedText {
-    if (![self canModifyDraft]) return NO;
+    if (![self canReplaceField]) return NO;
     // Drafts cannot send Return/Tab or other control keys by pasting text.
     // Those keys remain explicit actions in the accessory bar.
     NSString *text = [[self.text componentsSeparatedByCharactersInSet:NSCharacterSet.controlCharacterSet]
         componentsJoinedByString:@" "];
     [self discardDraft];
-    if (text.length) [self.inputOwner insertText:text];
+    // Once cleared after submission, repeated taps/queued Done callbacks must
+    // not turn a successful replacement into an accidental empty replacement.
+    _didSubmitDraft = YES;
+    [self.inputOwner updateDraftButtons];
+    [self.inputOwner replaceGameText:text];
     return YES;
 }
 - (BOOL)becomeFirstResponder {
+    if (!self.isFirstResponder) _didSubmitDraft = NO;
     _acceptingInput = YES;
     BOOL accepted = [super becomeFirstResponder];
     _acceptingInput = accepted;
@@ -85,7 +97,7 @@
 - (BOOL)textView:(UITextView *)textView shouldChangeTextInRange:(NSRange)range replacementText:(NSString *)text {
     (void)textView; (void)range;
     if ([text isEqual:@"\n"]) {
-        // Done inserts the draft without pressing Return in the game. Defer
+        // Done replaces the field without pressing Return in the game. Defer
         // until UIKit finishes this edit; do not mutate its document here.
         NSUInteger session = _session;
         __weak AKKeyboardTextView *weakSelf = self;
@@ -286,10 +298,11 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
         [self.superview becomeFirstResponder];
     }
 }
-// The guest owns its text/selection. Only explicit Insert forwards the draft.
+// The guest owns its text/selection. Explicit Replace replaces the field.
 // Accessory keys still allow editing existing text directly in the guest.
 - (BOOL)hasText { return YES; }
 - (void)insertText:(NSString *)text { [self.delegate touchInsertText:text]; }
+- (void)replaceGameText:(NSString *)text { [self.delegate touchReplaceText:text]; }
 - (void)deleteBackward { [self.delegate touchSpecialKey:51 characters:@"\x7f"]; }
 
 - (UIView *)inputAccessoryView {
@@ -315,7 +328,7 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
 }
 - (void)accessoryKey:(UIButton *)button {
     if (button.tag == 6) { [self dismissKeyboard]; return; }
-    // Insert and Return/Tab are deliberate separate steps. Do not accidentally
+    // Replace and Return/Tab are deliberate separate steps. Do not accidentally
     // send an unfinished draft or switch the guest field during composition.
     if (_keyboardInput.text.length || ![_keyboardInput canModifyDraft]) return;
     const unsigned short codes[] = {53, 48, 123, 124, 51, 36};
@@ -326,7 +339,8 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
 - (void)clearDraft { if ([_keyboardInput canModifyDraft]) [_keyboardInput discardDraft]; }
 - (void)updateDraftButtons {
     BOOL ready = [_keyboardInput canModifyDraft];
-    _insertDraftButton.enabled = _clearDraftButton.enabled = ready && _keyboardInput.hasText;
+    _insertDraftButton.enabled = [_keyboardInput canReplaceField];
+    _clearDraftButton.enabled = ready && _keyboardInput.hasText;
     for (UIButton *button in ((UIStackView *)_accessory).arrangedSubviews) {
         button.enabled = button.tag == 6 || (ready && !_keyboardInput.hasText);
     }
@@ -339,15 +353,16 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
     _composer.layer.cornerRadius = 12;
     _composer.layer.zPosition = self.layer.zPosition;
     UILabel *label = [UILabel new];
-    label.text = @"Draft · Insert into the selected game field";
+    label.text = @"Draft · Replaces the field; empty clears it";
     label.font = [UIFont systemFontOfSize:12];
     label.textColor = UIColor.lightGrayColor;
     label.adjustsFontSizeToFitWidth = YES;
     label.minimumScaleFactor = 0.75;
     UIButton *insert = _insertDraftButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    [insert setTitle:@"Insert" forState:UIControlStateNormal];
+    [insert setTitle:@"Replace" forState:UIControlStateNormal];
     insert.titleLabel.font = [UIFont boldSystemFontOfSize:17];
     insert.accessibilityIdentifier = @"wolkara.keyboard.insert";
+    insert.accessibilityHint = @"Replaces the whole selected game field. An empty draft clears it. Does not press Return.";
     [insert addTarget:self action:@selector(insertDraft) forControlEvents:UIControlEventTouchUpInside];
     UIButton *clear = _clearDraftButton = [UIButton buttonWithType:UIButtonTypeSystem];
     [clear setImage:[UIImage systemImageNamed:@"xmark.circle"] forState:UIControlStateNormal];
@@ -371,7 +386,7 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
         [clear.heightAnchor constraintEqualToConstant:44],
         [clear.centerYAnchor constraintEqualToAnchor:_keyboardInput.centerYAnchor],
         [clear.trailingAnchor constraintEqualToAnchor:insert.leadingAnchor],
-        [insert.widthAnchor constraintEqualToConstant:64],
+        [insert.widthAnchor constraintEqualToConstant:84],
         [insert.heightAnchor constraintEqualToConstant:44],
         [insert.centerYAnchor constraintEqualToAnchor:_keyboardInput.centerYAnchor],
         [insert.trailingAnchor constraintEqualToAnchor:_composer.trailingAnchor constant:-8],

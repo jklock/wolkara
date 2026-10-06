@@ -8,6 +8,8 @@
 @property CATextLayer *heading, *instructions, *result;
 @property NSMutableString *text;
 @property NSString *lastAction;
+@property NSRange selection;
+@property NSUInteger replacements;
 @end
 @implementation AKInputFixtureView
 - (instancetype)initWithFrame:(NSRect)frame {
@@ -44,10 +46,23 @@
 }
 - (BOOL)acceptsFirstResponder { return YES; }
 - (void)keyDown:(NSEvent *)event {
-    if (event.keyCode == 51 && self.text.length) {
-        [self.text deleteCharactersInRange:[self.text rangeOfComposedCharacterSequenceAtIndex:self.text.length - 1]];
-    } else if (event.keyCode == 53) [self.text setString:@""];
-    else if (event.characters.length && event.keyCode != 51) [self.text appendString:event.characters];
+    if (event.keyCode == 0 && (event.modifierFlags & NSEventModifierFlagCommand)) {
+        self.selection = NSMakeRange(0, self.text.length);
+        self.replacements++;
+        return;
+    }
+    NSRange range = self.selection;
+    assert(NSMaxRange(range) <= self.text.length);
+    if (event.keyCode == 51) {
+        if (!range.length && range.location) range = [self.text rangeOfComposedCharacterSequenceAtIndex:range.location - 1];
+        [self.text deleteCharactersInRange:range];
+        self.selection = NSMakeRange(range.location, 0);
+    } else if (event.keyCode == 53) {
+        [self.text setString:@""]; self.selection = NSMakeRange(0, 0);
+    } else if (event.characters.length) {
+        [self.text replaceCharactersInRange:range withString:event.characters];
+        self.selection = NSMakeRange(range.location + event.characters.length, 0);
+    }
     self.lastAction = @"Keyboard input received";
     [self refresh];
 }
@@ -270,9 +285,19 @@ static void AKFixtureInputSource(void *context) {
                 assert(CGRectGetMaxY(editor) < CGRectGetMinY(host.keyboardLayoutGuide.layoutFrame));
                 assert(CGRectGetMinY(editor) >= CGRectGetMaxY(controls.frame));
                 AKInputFixtureView *fixture = (AKInputFixtureView *)self.guest.contentView;
+                // Reopening with unknown existing text starts an empty draft;
+                // an explicit empty replacement must clear the entire field.
+                [fixture.text setString:@"Previous synthetic value"];
+                fixture.selection = NSMakeRange(4, 0);
+                assert(!input.text.length && insert.enabled);
+                [insert sendActionsForControlEvents:UIControlEventTouchUpInside];
+                AKDrainFixtureEvents();
+                assert(!fixture.text.length && !insert.enabled && fixture.replacements == 1);
+                [fixture.text setString:@"A different old value"];
+                fixture.selection = NSMakeRange(2, 3);
                 [input insertText:@"Fixture @ñ🙂"];
                 AKDrainFixtureEvents();
-                assert([input.text isEqual:@"Fixture @ñ🙂"] && fixture.text.length == 0 && insert.enabled && clear.enabled);
+                assert([input.text isEqual:@"Fixture @ñ🙂"] && [fixture.text isEqual:@"A different old value"] && insert.enabled && clear.enabled);
                 [input deleteBackward];
                 assert([input.text isEqual:@"Fixture @ñ"]);
                 // Editing an earlier range stays local; it must not append to
@@ -283,9 +308,11 @@ static void AKFixtureInputSource(void *context) {
                 [insert sendActionsForControlEvents:UIControlEventTouchUpInside];
                 AKDrainFixtureEvents();
                 assert([fixture.text isEqual:@"Draft @ñ"] && input.text.length == 0 && !insert.enabled && !clear.enabled);
+                NSUInteger replacements = fixture.replacements;
                 [insert sendActionsForControlEvents:UIControlEventTouchUpInside];
+                [input.delegate textView:input shouldChangeTextInRange:NSMakeRange(0, 0) replacementText:@"\n"];
                 AKDrainFixtureEvents();
-                assert([fixture.text isEqual:@"Draft @ñ"]);
+                assert([fixture.text isEqual:@"Draft @ñ"] && fixture.replacements == replacements);
                 // Provisional text and unfinished dictation cannot be inserted.
                 [input setMarkedText:@" provisional" selectedRange:NSMakeRange(12, 0)];
                 [insert sendActionsForControlEvents:UIControlEventTouchUpInside];
@@ -303,7 +330,7 @@ static void AKFixtureInputSource(void *context) {
                 assert([input.text isEqual:@" ¡Hola equipo! Dictado."]);
                 [insert sendActionsForControlEvents:UIControlEventTouchUpInside];
                 AKDrainFixtureEvents();
-                NSMutableString *expected = [@"Draft @ñ ¡Hola equipo! Dictado." mutableCopy];
+                NSMutableString *expected = [@" ¡Hola equipo! Dictado." mutableCopy];
                 assert([fixture.text isEqual:expected]);
                 // Many edits are now one normal document, not 64 resets of
                 // UIKit's selection/undo context and 64 asynchronous forwards.
@@ -314,7 +341,7 @@ static void AKFixtureInputSource(void *context) {
                 }
                 NSString *draft = [input.text copy];
                 [insert sendActionsForControlEvents:UIControlEventTouchUpInside];
-                [expected appendString:draft];
+                [expected setString:draft];
                 AKDrainFixtureEvents();
                 assert([fixture.text isEqual:expected] && !input.text.length);
                 [input insertText:@" discarded"];
@@ -328,7 +355,7 @@ static void AKFixtureInputSource(void *context) {
                 // Pasted controls are text, never implicit game commands.
                 input.text = @"one\ntwo\tthree";
                 [insert sendActionsForControlEvents:UIControlEventTouchUpInside];
-                [expected appendString:@"one two three"];
+                [expected setString:@"one two three"];
                 AKDrainFixtureEvents();
                 assert([fixture.text isEqual:expected]);
                 UIStackView *accessory = (UIStackView *)controls.inputAccessoryView;
@@ -336,10 +363,10 @@ static void AKFixtureInputSource(void *context) {
                 [(UIButton *)accessory.arrangedSubviews[5] sendActionsForControlEvents:UIControlEventTouchUpInside];
                 AKDrainFixtureEvents();
                 assert([fixture.text isEqual:expected]);
-                // The system Done key inserts only; Return stays explicit.
+                // The system Done key replaces only; Return stays explicit.
                 [input.delegate textView:input shouldChangeTextInRange:NSMakeRange(input.text.length, 0) replacementText:@"\n"];
                 AKDrainFixtureEvents();
-                [expected appendString:@" done"];
+                [expected setString:@" done"];
                 assert([fixture.text isEqual:expected] && !input.text.length);
                 [(UIButton *)accessory.arrangedSubviews[5] sendActionsForControlEvents:UIControlEventTouchUpInside];
                 AKDrainFixtureEvents();
@@ -371,7 +398,7 @@ static void AKFixtureInputSource(void *context) {
                     (void)timer;
                     assert([fixture.text isEqual:expected]);
                     assert(!controls.keyboardVisible && host.isFirstResponder);
-                    NSLog(@"TOUCH_UI_SELF_TEST_PASS: visible draft editing, explicit insertion, composition/dictation, cancellation, fixed toolbar and focus");
+                    NSLog(@"TOUCH_UI_SELF_TEST_PASS: whole-field replacement, empty clearing, duplicate suppression, draft editing, dictation, cancellation and fixed toolbar");
                     exit(EXIT_SUCCESS);
                 }];
             }];
