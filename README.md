@@ -30,7 +30,8 @@ This branch opens directly into a themed [WoW home screen](docs/WOW_LAUNCHER.md)
 with edition selection, automatic installation of updates, download progress and
 a verified Play action. The native updater reuses verified CASC data, downloads
 missing content from Blizzard's CDN, preserves settings/addons and activates a
-complete installation atomically. General tools are under Settings. The updater
+complete installation atomically. Preparation stays on the same English home
+screen; Settings contains startup options, diagnostics and open-source notices. The updater
 passes synthetic tests and real-data tests on isolated Mac copies; its physical
 iPhone update and subsequent gameplay still need validation. Developer service
 still prepares memory each opening. Distribution and
@@ -132,8 +133,9 @@ With `TOLKARA_MODE=local-signing`, `tools/install.sh` also builds, signs and
 copies the page container. Copy your application's files to the iPad (for the
 WoW Classic profile,
 [`profiles/wow-classic-era/install.py`](profiles/wow-classic-era)), open Tolkara
-on the device and choose its edition on the WoW home screen. Other applications
-remain accessible under **Settings → Advanced library and diagnostics**.
+on the device and choose its edition on the WoW home screen. This fork exposes
+only WoW in its normal launcher; general application profiles and command-line
+development runs remain internal development tools.
 
 To check a change without a device:
 
