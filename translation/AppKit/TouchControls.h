@@ -9,6 +9,7 @@
 - (void)touchTrackpadChanged:(BOOL)enabled;
 - (void)touchKeyboardVisibilityChanged:(BOOL)visible;
 - (void)touchGamepadPreferenceChanged:(BOOL)enabled;
+- (void)touchControlSettings;
 @end
 
 // Lives above the guest layer, but only the toolbar buttons intercept hit testing.
