@@ -45,8 +45,15 @@ sizes, draggable groups/buttons and reset. Its original UIKit fixture verifies
 preferences, bounds, all button/axis events and input suppression during editing;
 the settings and editor were also inspected in the simulator. The app now has
 its own name/icon and selects the build's startup route without a public picker.
-The signed arm64 iOS build and strict signature check pass. This revision has
-not been installed or validated in a physical-device WoW session yet.
+The signed arm64 iOS build and strict signature check pass. The user subsequently
+reported native keyboard/slider stalls while WoW and the controller continued
+working; beginning the Control Center gesture released the UI. A follow-up fixes
+UIKit starvation reproduced with a busy synthetic desktop-event queue and
+publishes pending native UI changes after event processing. Regression tests,
+manual simulator typing/slider drags and the signed device build pass. The
+[UI-pump correction](docs/TOUCH_INPUT.md#native-ui-stalls-while-the-guest-continues-2026-10-06)
+still needs a physical-device retest; simulator success does not establish that
+the user's stall is resolved or that game performance is unchanged.
 
 Results updated on 2026-10-02 with the Forever gameplay report below.
 

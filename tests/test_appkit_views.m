@@ -150,6 +150,25 @@ int main(void) { @autoreleasepool {
     }
     assert(responder.downs==1 && responder.ups==1 && responder.lastCode==49);
 
+    // Servicing UIKit with a busy queue must preserve masks, peeking and
+    // priority insertion, even when a native callback adds a new first event.
+    NSEvent *down = [NSEvent new], *up = [NSEvent new], *priority = [NSEvent new];
+    down.type = priority.type = NSEventTypeKeyDown; up.type = NSEventTypeKeyUp;
+    [app postEvent:down atStart:NO]; [app postEvent:up atStart:NO];
+    CFRunLoopPerformBlock(CFRunLoopGetCurrent(), kCFRunLoopDefaultMode, ^{
+        [app postEvent:priority atStart:YES];
+    });
+    NSTimeInterval deadline = NSProcessInfo.processInfo.systemUptime + 1;
+    NSEvent *peek = nil;
+    do {
+        peek = [app nextEventMatchingMask:1ULL<<NSEventTypeKeyDown untilDate:NSDate.distantPast
+            inMode:NSDefaultRunLoopMode dequeue:NO];
+    } while (peek != priority && NSProcessInfo.processInfo.systemUptime < deadline);
+    assert(peek == priority);
+    assert([app nextEventMatchingMask:1ULL<<NSEventTypeKeyUp untilDate:NSDate.distantPast
+        inMode:NSDefaultRunLoopMode dequeue:YES] == up);
+    assert(next_input() == priority && next_input() == down);
+
     // Software keys take the same event queue as hardware keys, preserve
     // Unicode and never depend on reading the guest's text/selection.
     AKTouchControls *controls = [host valueForKey:@"_touchControls"];

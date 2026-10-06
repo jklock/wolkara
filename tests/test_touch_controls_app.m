@@ -40,7 +40,6 @@
 }
 - (void)refresh {
     self.result.string = [NSString stringWithFormat:@"%@\nText: %@", self.lastAction, self.text];
-    [CATransaction flush];
 }
 - (BOOL)acceptsFirstResponder { return YES; }
 - (void)keyDown:(NSEvent *)event {
@@ -74,11 +73,78 @@ static void AKDrainFixtureEvents(void) {
     while ((event = [NSApp nextEventMatchingMask:UINT64_MAX untilDate:NSDate.distantPast inMode:NSDefaultRunLoopMode dequeue:YES])) [NSApp sendEvent:event];
 }
 
+static void AKFixtureInputSource(void *context) {
+    (void)context;
+    NSEvent *event = [NSEvent new]; event.type = NSEventTypeMouseMoved;
+    [NSApp postEvent:event atStart:NO];
+}
+
 @interface AKInputFixtureScene : UIResponder <UIWindowSceneDelegate>
 @property NSWindow *guest;
 @property NSTimer *pump;
 @end
 @implementation AKInputFixtureScene
+- (void)checkNativeUIProgress {
+    UIView *host = [self.guest valueForKey:@"_host"];
+    CFRunLoopSourceContext context = {0}; context.perform = AKFixtureInputSource;
+    CFRunLoopSourceRef source = CFRunLoopSourceCreate(NULL, 0, &context);
+    CFRunLoopAddSource(CFRunLoopGetCurrent(), source, kCFRunLoopDefaultMode);
+    // Empty nonblocking polls, source-driven blocking polls, a permanently
+    // occupied queue, repeated peeks, and NSApplication's own run loop must
+    // all let native UI make progress.
+    for (NSUInteger traffic = 0; traffic < 5; traffic++) {
+        UIView *probe = [[UIView alloc] initWithFrame:CGRectMake(60, 260, 24, 24)];
+        probe.backgroundColor = UIColor.systemGreenColor;
+        [host addSubview:probe];
+        UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(60, 300, 220, 32)];
+        [host addSubview:slider];
+        __block BOOL completed = NO, deferred = NO, timerFired = NO;
+        dispatch_async(dispatch_get_main_queue(), ^{ deferred = YES; });
+        NSTimer *timer = [NSTimer scheduledTimerWithTimeInterval:0.02 repeats:NO block:^(NSTimer *fired) {
+            (void)fired; slider.value = 0.75; timerFired = YES;
+        }];
+        // No explicit flush in the fixture: it previously hid presentation
+        // problems by forcing a Core Animation commit after every key/motion.
+        [UIView animateWithDuration:0.05 animations:^{
+            probe.center = CGPointMake(200, 272);
+        } completion:^(BOOL finished) { completed = finished; }];
+        NSEvent *peeked = nil;
+        if (traffic == 3) {
+            AKFixtureInputSource(NULL);
+            peeked = [NSApp nextEventMatchingMask:UINT64_MAX untilDate:NSDate.distantPast
+                inMode:NSDefaultRunLoopMode dequeue:NO];
+            assert(peeked);
+        }
+        NSTimeInterval deadline = NSProcessInfo.processInfo.systemUptime + 2;
+        if (traffic == 4) {
+            [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:NO block:^(NSTimer *stop) {
+                (void)stop; [NSApp stop:nil];
+            }];
+            [NSApp run];
+        }
+        while (traffic != 4 && !(completed && deferred && timerFired) && NSProcessInfo.processInfo.systemUptime < deadline) {
+            @autoreleasepool {
+                if (traffic == 2) AKFixtureInputSource(NULL);
+                if (traffic == 1) CFRunLoopSourceSignal(source);
+                NSEvent *event = [NSApp nextEventMatchingMask:UINT64_MAX
+                    untilDate:traffic == 1 ? [NSDate dateWithTimeIntervalSinceNow:0.01] : NSDate.distantPast
+                    inMode:NSDefaultRunLoopMode dequeue:traffic != 3];
+                if (peeked) assert(event == peeked);
+            }
+        }
+        [timer invalidate];
+        NSLog(@"Native UI progress: traffic=%lu animation=%d deferred=%d timer=%d",
+            (unsigned long)traffic, completed, deferred, timerFired);
+        assert(completed && deferred && timerFired && slider.value == 0.75);
+        if (peeked) assert([NSApp nextEventMatchingMask:UINT64_MAX untilDate:NSDate.distantPast
+            inMode:NSDefaultRunLoopMode dequeue:YES] == peeked);
+        [probe removeFromSuperview]; [slider removeFromSuperview];
+    }
+    CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, kCFRunLoopDefaultMode);
+    CFRelease(source);
+    NSLog(@"TOUCH_UI_SELF_TEST_PASS: native UI presentation, deferred work, slider updates and queue peeking inside guest loop");
+    exit(EXIT_SUCCESS);
+}
 - (void)scene:(UIScene *)scene willConnectToSession:(UISceneSession *)session options:(UISceneConnectionOptions *)options {
     (void)session; (void)options;
     [NSApplication sharedApplication];
@@ -102,6 +168,14 @@ static void AKDrainFixtureEvents(void) {
                 _Exit(EXIT_FAILURE);
             });
     }
+    if ([NSProcessInfo.processInfo.arguments containsObject:@"--ui-progress-test"]) {
+        [NSTimer scheduledTimerWithTimeInterval:2 repeats:NO block:^(NSTimer *timer) {
+            (void)timer;
+            [self.pump invalidate]; self.pump = nil;
+            [self checkNativeUIProgress];
+        }];
+        return;
+    }
     if ([NSProcessInfo.processInfo.arguments containsObject:@"--guest-poll-loop"]) {
         // Exercise UIKit inside the timer-entered desktop loop used by the
         // runtime, rather than only returning to UIApplicationMain each turn.
@@ -110,9 +184,10 @@ static void AKDrainFixtureEvents(void) {
             [self.pump invalidate];
             self.pump = nil;
             while (YES) { @autoreleasepool {
+                if ([NSProcessInfo.processInfo.arguments containsObject:@"--queued-traffic"]) AKFixtureInputSource(NULL);
                 NSEvent *event = [NSApp nextEventMatchingMask:UINT64_MAX untilDate:NSDate.distantPast
                     inMode:NSDefaultRunLoopMode dequeue:YES];
-                if (event) [NSApp sendEvent:event];
+                if (event.window) [NSApp sendEvent:event];
             } }
         }];
     }
