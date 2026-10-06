@@ -1,5 +1,8 @@
 #import <UIKit/UIKit.h>
 
+// Posted after saving; the object is the defaults store that changed.
+FOUNDATION_EXPORT NSNotificationName const AKGamepadLayoutDidChangeNotification;
+
 // Preferences contain only UI geometry; never controller or game state.
 @interface AKGamepadLayout : NSObject
 - (instancetype)initWithDefaults:(NSUserDefaults *)defaults;

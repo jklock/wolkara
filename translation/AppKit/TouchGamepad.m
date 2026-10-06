@@ -138,6 +138,7 @@ CGPoint AKTouchGamepadStickPosition(CGPoint point, CGSize size) {
     UISwitch *_editSwitch;
     NSArray<UISlider *> *_sliders;
     NSArray<UILabel *> *_values;
+    CAShapeLayer *_editGrid, *_editAxes;
 }
 - (instancetype)initWithFrame:(CGRect)frame {
     if ((self = [super initWithFrame:frame])) {
@@ -146,6 +147,14 @@ CGPoint AKTouchGamepadStickPosition(CGPoint point, CGSize size) {
         self.layer.zPosition = 99999;
         _preferences = [[AKGamepadLayout alloc] initWithDefaults:NSUserDefaults.standardUserDefaults];
         _dragOrigins = [NSMutableDictionary new];
+        _editGrid = [CAShapeLayer layer]; _editAxes = [CAShapeLayer layer];
+        _editGrid.name = @"WolkaraEditGrid"; _editAxes.name = @"WolkaraEditAxes";
+        for (CAShapeLayer *layer in @[_editGrid, _editAxes]) {
+            layer.fillColor = nil; layer.zPosition = -1; [self.layer addSublayer:layer];
+        }
+        _editGrid.strokeColor = [UIColor colorWithWhite:1 alpha:0.16].CGColor; _editGrid.lineWidth = 0.5;
+        _editAxes.strokeColor = [UIColor.systemYellowColor colorWithAlphaComponent:0.6].CGColor; _editAxes.lineWidth = 1;
+        _editAxes.lineDashPattern = @[@4,@4];
         NSArray *elements = @[GCInputButtonA,GCInputButtonB,GCInputButtonX,GCInputButtonY,
             GCInputLeftShoulder,GCInputLeftTrigger,GCInputRightTrigger,GCInputRightShoulder,
             GCInputButtonMenu,@"dpad.up",@"dpad.right",@"dpad.down",@"dpad.left"];
@@ -207,6 +216,7 @@ CGPoint AKTouchGamepadStickPosition(CGPoint point, CGSize size) {
     for (AKGamepadButton *button in _buttons.allValues) button.enabled = !self.configuring || _editing;
     _leftStick.enabled = _rightStick.enabled = !self.configuring;
     _editDone.hidden = _hint.hidden = !_editing;
+    _editGrid.hidden = _editAxes.hidden = !_editing;
     [self setNeedsLayout];
 }
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
@@ -225,6 +235,7 @@ CGPoint AKTouchGamepadStickPosition(CGPoint point, CGSize size) {
 }
 - (void)layoutSubviews {
     [super layoutSubviews]; CGRect safe = [self usableBounds];
+    if (_editing) [self layoutEditGridInBounds:safe];
     CGFloat side = MIN(216*_preferences.frontScale,MIN(safe.size.height-70,safe.size.width/2-12));
     side = MAX(44,side);
     CGFloat w = 56*_preferences.rearScale, h = 44*_preferences.rearScale;
@@ -253,6 +264,26 @@ CGPoint AKTouchGamepadStickPosition(CGPoint point, CGSize size) {
         CGFloat width = MIN(390,safe.size.width-24), height = MIN(390,safe.size.height-16);
         _settings.frame = CGRectMake(CGRectGetMidX(safe)-width/2,CGRectGetMaxY(safe)-height-8,width,height);
     }
+}
+- (void)layoutEditGridInBounds:(CGRect)safe {
+    // Symmetric spacing about the safe-area center. Layers are visual guides
+    // only: they cannot intercept drags or change a saved control position.
+    UIBezierPath *grid = [UIBezierPath bezierPath], *axes = [UIBezierPath bezierPath];
+    CGFloat x = CGRectGetMidX(safe), y = CGRectGetMidY(safe), step = 24;
+    for (NSInteger column = -(NSInteger)floor(safe.size.width / (2*step)); column*step <= safe.size.width/2; column++) {
+        CGFloat line = x + column*step;
+        [grid moveToPoint:CGPointMake(line,CGRectGetMinY(safe))]; [grid addLineToPoint:CGPointMake(line,CGRectGetMaxY(safe))];
+    }
+    for (NSInteger row = -(NSInteger)floor(safe.size.height / (2*step)); row*step <= safe.size.height/2; row++) {
+        CGFloat line = y + row*step;
+        [grid moveToPoint:CGPointMake(CGRectGetMinX(safe),line)]; [grid addLineToPoint:CGPointMake(CGRectGetMaxX(safe),line)];
+    }
+    [axes moveToPoint:CGPointMake(x,CGRectGetMinY(safe))]; [axes addLineToPoint:CGPointMake(x,CGRectGetMaxY(safe))];
+    [axes moveToPoint:CGPointMake(CGRectGetMinX(safe),y)]; [axes addLineToPoint:CGPointMake(CGRectGetMaxX(safe),y)];
+    [CATransaction begin]; [CATransaction setDisableActions:YES];
+    _editGrid.frame = _editAxes.frame = self.bounds;
+    _editGrid.path = grid.CGPath; _editAxes.path = axes.CGPath;
+    [CATransaction commit];
 }
 - (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gestureRecognizer {
     (void)gestureRecognizer; return _editing;

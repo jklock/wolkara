@@ -36,13 +36,19 @@ The fourth toolbar button (gear) opens a scrollable panel. Its Done and Reset
 buttons remain pinned at the bottom. The pointer icon toggles the trackpad.
 
 - **Transparency:** 0–80%, applied to the existing translucent artwork;
-  default 20% additional transparency.
+  default 20% additional transparency. It also applies immediately to all four
+  toolbar buttons (pointer, keyboard, controller and settings), including when
+  the touch controller is hidden. The saved value is restored at launch.
 - **Shoulder button size:** 80–150%, default 100%.
 - **Sticks and face button size:** 65–140%, default 100%, subject to available
   safe-area space. Each stick and its annular buttons scale together.
 - **Edit layout:** drag either stick/ring group, each rear button, or `+`.
   Done editing exits the editor. Reset to defaults restores all sizes, opacity
   and positions without changing whether automatic controls are enabled.
+  A 24-point grid, symmetric about the safe area's center, appears behind the
+  controls while editing. Dashed horizontal/vertical center guides help align
+  both sides. These are visual references: dragging stays free, saved positions
+  are unchanged and the grid disappears on leaving edit mode.
 
 Settings release held input before opening and suppress game input while open
 or editing. Standalone buttons remain touchable in edit mode so their pan
@@ -50,6 +56,8 @@ recognizers work; their game values are still blocked. Positions are normalized
 to the available safe area, saved locally, and clamped after rotation/resizing.
 The toolbar and editor exit remain fixed, so moved controls cannot strand the UI.
 Preferences use `WolkaraTouchLayoutV1` and contain no game or account data.
+The pointer symbol has a small optical offset to the right inside its existing
+button; the button's size, position and touch target are unchanged.
 
 ## Controller API
 

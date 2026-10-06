@@ -1,5 +1,6 @@
 #import "TouchControls.h"
 #import "TouchTrackpad.h"
+#import "TouchGamepadLayout.h"
 
 @interface AKTouchControls (KeyboardState)
 - (void)updateKeyboardButton;
@@ -200,6 +201,8 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
         _keyboardButton = [self buttonWithSymbol:@"keyboard" label:@"Show keyboard" action:@selector(toggleKeyboard)];
         _keyboardButton.accessibilityIdentifier = @"tolkara.keyboard";
         _trackpadButton = [self buttonWithSymbol:@"cursorarrow" label:@"Enable touch trackpad" action:@selector(toggleTrackpad)];
+        // Optical centering for the left-leaning symbol; keep its hit area fixed.
+        _trackpadButton.imageView.transform = CGAffineTransformMakeTranslation(2, 0);
         _trackpadButton.accessibilityIdentifier = @"tolkara.trackpad";
         _gamepadButton = [self buttonWithSymbol:@"gamecontroller" label:@"Automatic touch controller" action:@selector(toggleGamepad)];
         _gamepadButton.accessibilityIdentifier = @"tolkara.gamepad";
@@ -228,8 +231,17 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(suspendInput:) name:UIApplicationWillResignActiveNotification object:nil];
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(backgroundInput:) name:UIApplicationDidEnterBackgroundNotification object:nil];
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(windowResigned:) name:UIWindowDidResignKeyNotification object:nil];
+        [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(controlAppearanceChanged:)
+            name:AKGamepadLayoutDidChangeNotification object:NSUserDefaults.standardUserDefaults];
+        [self controlAppearanceChanged:nil];
     }
     return self;
+}
+
+- (void)controlAppearanceChanged:(NSNotification *)notification {
+    (void)notification;
+    AKGamepadLayout *layout = [[AKGamepadLayout alloc] initWithDefaults:NSUserDefaults.standardUserDefaults];
+    for (UIButton *button in @[_trackpadButton, _keyboardButton, _gamepadButton, _settingsButton]) button.alpha = layout.opacity;
 }
 
 - (void)layoutSubviews {
