@@ -5,74 +5,64 @@
 
 @interface AKTouchControls (KeyboardState)
 - (void)updateKeyboardButton;
+- (void)updateDraftButtons;
 @end
 
-// UIKit needs a real UITextInput client to start system dictation. Keep its
-// document local to the current composition; never mirror the guest's text.
+// A normal, visible UIKit document. Editing and dictation stay local until
+// Insert is requested; never reset the text context on every keyboard callback.
 @interface AKKeyboardTextView : UITextView <UITextViewDelegate>
 @property (nonatomic, weak) AKTouchControls *inputOwner;
-- (void)forwardCommittedText;
+- (BOOL)forwardCommittedText;
+- (void)discardDraft;
+- (BOOL)canModifyDraft;
 @end
 
 @implementation AKKeyboardTextView {
-    NSUInteger _editingDepth;
-    NSUInteger _inputGeneration;
     NSMutableSet *_dictationPlaceholders;
-    BOOL _acceptingInput, _clearing, _forwardScheduled;
+    BOOL _acceptingInput;
+    NSUInteger _session;
 }
 - (instancetype)initWithFrame:(CGRect)frame textContainer:(NSTextContainer *)container {
     if ((self = [super initWithFrame:frame textContainer:container])) {
         self.delegate = self;
         _dictationPlaceholders = [NSMutableSet new];
-        self.backgroundColor = UIColor.clearColor;
-        self.textColor = UIColor.clearColor;
-        self.tintColor = UIColor.clearColor;
-        self.accessibilityElementsHidden = YES;
+        self.backgroundColor = [UIColor colorWithWhite:0.2 alpha:1];
+        self.textColor = UIColor.whiteColor;
+        self.tintColor = UIColor.systemCyanColor;
+        self.font = [UIFont systemFontOfSize:17];
+        self.layer.cornerRadius = 8;
+        self.accessibilityLabel = @"Text to insert";
+        self.accessibilityHint = @"Edit your draft, then tap Insert. Existing game text is not shown here.";
+        self.accessibilityIdentifier = @"wolkara.keyboard.draft";
         self.autocapitalizationType = UITextAutocapitalizationTypeNone;
         self.autocorrectionType = UITextAutocorrectionTypeNo;
         self.spellCheckingType = UITextSpellCheckingTypeNo;
         self.smartQuotesType = UITextSmartQuotesTypeNo;
         self.smartDashesType = UITextSmartDashesTypeNo;
         self.smartInsertDeleteType = UITextSmartInsertDeleteTypeNo;
+        self.returnKeyType = UIReturnKeyDone;
         self.secureTextEntry = NO;
     }
     return self;
 }
 - (UIView *)inputAccessoryView { return self.inputOwner.inputAccessoryView; }
-- (BOOL)pointInside:(CGPoint)point withEvent:(UIEvent *)event {
-    (void)point; (void)event;
-    return NO;
-}
-- (void)clearComposition {
-    _clearing = YES;
+- (BOOL)canModifyDraft { return _acceptingInput && !_dictationPlaceholders.count && !self.markedTextRange; }
+- (void)textViewDidChange:(UITextView *)view { (void)view; [self.inputOwner updateDraftButtons]; }
+- (void)textViewDidChangeSelection:(UITextView *)view { (void)view; [self.inputOwner updateDraftButtons]; }
+- (void)discardDraft {
     [super setText:@""];
-    self.selectedRange = NSMakeRange(0, 0);
     [self.undoManager removeAllActions];
-    _clearing = NO;
+    [self.inputOwner updateDraftButtons];
 }
-- (void)forwardCommittedText {
-    if (_editingDepth || _clearing || _dictationPlaceholders.count || self.markedTextRange) return;
-    if (!_acceptingInput) { [self clearComposition]; return; }
-    if (!self.text.length) return;
-    NSString *text = [self.text copy];
-    [self clearComposition];
-    [self.inputOwner insertText:text];
-}
-- (void)scheduleCommittedText {
-    if (_editingDepth || _clearing || !_acceptingInput || _forwardScheduled) return;
-    _forwardScheduled = YES;
-    NSUInteger generation = _inputGeneration;
-    __weak AKKeyboardTextView *weakSelf = self;
-    // UIKit is still completing its keyboard edit when insertText:/delegate
-    // callbacks return. Resetting its document/selection/undo stack inside
-    // that transaction can invalidate the input service's pending text context.
-    // Drain only after the callback has returned, coalescing nested callbacks.
-    dispatch_async(dispatch_get_main_queue(), ^{
-        AKKeyboardTextView *input = weakSelf;
-        if (!input || generation != input->_inputGeneration) return;
-        input->_forwardScheduled = NO;
-        [input forwardCommittedText];
-    });
+- (BOOL)forwardCommittedText {
+    if (![self canModifyDraft]) return NO;
+    // Drafts cannot send Return/Tab or other control keys by pasting text.
+    // Those keys remain explicit actions in the accessory bar.
+    NSString *text = [[self.text componentsSeparatedByCharactersInSet:NSCharacterSet.controlCharacterSet]
+        componentsJoinedByString:@" "];
+    [self discardDraft];
+    if (text.length) [self.inputOwner insertText:text];
+    return YES;
 }
 - (BOOL)becomeFirstResponder {
     _acceptingInput = YES;
@@ -82,88 +72,69 @@
     return accepted;
 }
 - (BOOL)resignFirstResponder {
-    // Preserve a completed edit if the user immediately closes the keyboard.
-    // Marked text and pending dictation remain provisional and are discarded.
-    [self forwardCommittedText];
-    _acceptingInput = NO;
-    _inputGeneration++;
-    _forwardScheduled = NO;
-    [_dictationPlaceholders removeAllObjects];
-    [self clearComposition];
     BOOL accepted = [super resignFirstResponder];
-    // UIKit can re-enter becomeFirstResponder while finishing composition.
-    _acceptingInput = !accepted && self.isFirstResponder;
+    if (accepted) {
+        _acceptingInput = NO;
+        _session++;
+        [_dictationPlaceholders removeAllObjects];
+        [self discardDraft];
+    }
     [self.inputOwner updateKeyboardButton];
     return accepted;
 }
-- (void)textViewDidChange:(UITextView *)textView {
-    (void)textView;
-    [self scheduleCommittedText];
+- (BOOL)textView:(UITextView *)textView shouldChangeTextInRange:(NSRange)range replacementText:(NSString *)text {
+    (void)textView; (void)range;
+    if ([text isEqual:@"\n"]) {
+        // Done inserts the draft without pressing Return in the game. Defer
+        // until UIKit finishes this edit; do not mutate its document here.
+        NSUInteger session = _session;
+        __weak AKKeyboardTextView *weakSelf = self;
+        [NSRunLoop.mainRunLoop performInModes:@[NSRunLoopCommonModes] block:^{
+            AKKeyboardTextView *input = weakSelf;
+            if (input && input->_session == session) [input forwardCommittedText];
+        }];
+        return NO;
+    }
+    return _acceptingInput;
 }
-- (void)insertText:(NSString *)text {
-    if (!_acceptingInput) return;
-    _editingDepth++;
-    [super insertText:text];
-    _editingDepth--;
-    [self scheduleCommittedText];
-}
+- (void)insertText:(NSString *)text { if (_acceptingInput) [super insertText:text]; }
 - (void)replaceRange:(UITextRange *)range withText:(NSString *)text {
-    if (!_acceptingInput) return;
-    _editingDepth++;
-    [super replaceRange:range withText:text];
-    _editingDepth--;
-    [self scheduleCommittedText];
+    if (_acceptingInput) [super replaceRange:range withText:text];
 }
 - (void)setMarkedText:(NSString *)text selectedRange:(NSRange)range {
-    if (!_acceptingInput) return;
-    _editingDepth++;
-    [super setMarkedText:text selectedRange:range];
-    _editingDepth--;
-    [self scheduleCommittedText];
+    if (_acceptingInput) [super setMarkedText:text selectedRange:range];
 }
-- (void)unmarkText {
-    _editingDepth++;
-    [super unmarkText];
-    _editingDepth--;
-    [self scheduleCommittedText];
-}
-- (void)deleteBackward {
-    if (!_acceptingInput) return;
-    if (!self.hasText && !self.markedTextRange) { [self.inputOwner deleteBackward]; return; }
-    _editingDepth++;
-    [super deleteBackward];
-    _editingDepth--;
-    [self scheduleCommittedText];
-}
+- (void)unmarkText { if (_acceptingInput) [super unmarkText]; }
 - (id)insertDictationResultPlaceholder {
     if (!_acceptingInput) return nil;
-    _editingDepth++;
     id placeholder = [super insertDictationResultPlaceholder];
     if (placeholder) [_dictationPlaceholders addObject:placeholder];
-    _editingDepth--;
+    [self.inputOwner updateDraftButtons];
     return placeholder;
 }
 - (void)removeDictationResultPlaceholder:(id)placeholder willInsertResult:(BOOL)willInsert {
     if (![_dictationPlaceholders containsObject:placeholder]) return;
-    _editingDepth++;
     [super removeDictationResultPlaceholder:placeholder willInsertResult:willInsert];
     [_dictationPlaceholders removeObject:placeholder];
-    _editingDepth--;
-    [self scheduleCommittedText];
+    [self.inputOwner updateDraftButtons];
 }
 - (void)dictationRecognitionFailed {
-    // This is an optional UITextInput callback, not implemented by UITextView.
-    _editingDepth++;
+    // UITextView does not implement this optional callback. Preserve the
+    // completed draft; only discard the provisional recognition segment.
+    if (self.markedTextRange) {
+        [super setMarkedText:@"" selectedRange:NSMakeRange(0, 0)];
+        [super unmarkText];
+    }
     [_dictationPlaceholders removeAllObjects];
-    [self clearComposition];
-    _editingDepth--;
+    [self.inputOwner updateDraftButtons];
 }
 @end
 
 @implementation AKTouchControls {
     UIButton *_keyboardButton, *_trackpadButton, *_gamepadButton, *_settingsButton;
+    UIButton *_insertDraftButton, *_clearDraftButton;
     BOOL _gamepadEnabled;
-    UIView *_accessory;
+    UIView *_accessory, *_composer;
     NSTimer *_holdTimer;
     AKKeyboardTextView *_keyboardInput;
     AKTrackpad _pad;
@@ -201,12 +172,12 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
         _haptics = [AKTouchHaptics new];
         _keyboardInput = [[AKKeyboardTextView alloc] initWithFrame:CGRectMake(0, 0, 1, 1) textContainer:nil];
         _keyboardInput.inputOwner = self;
-        [self addSubview:_keyboardInput];
+        [self buildComposer];
         _keyboardButton = [self buttonWithSymbol:@"keyboard" label:@"Show keyboard" action:@selector(toggleKeyboard)];
         _keyboardButton.accessibilityIdentifier = @"tolkara.keyboard";
         _trackpadButton = [self buttonWithSymbol:@"cursorarrow" label:@"Enable touch trackpad" action:@selector(toggleTrackpad)];
         // Optical centering for the left-leaning symbol; keep its hit area fixed.
-        _trackpadButton.imageView.transform = CGAffineTransformMakeTranslation(2, 0);
+        _trackpadButton.imageView.transform = CGAffineTransformMakeTranslation(4, 0);
         _trackpadButton.accessibilityIdentifier = @"tolkara.trackpad";
         _gamepadButton = [self buttonWithSymbol:@"gamecontroller" label:@"Automatic touch controller" action:@selector(toggleGamepad)];
         _gamepadButton.accessibilityIdentifier = @"tolkara.gamepad";
@@ -286,6 +257,7 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
 - (BOOL)canBecomeFirstResponder { return YES; }
 - (BOOL)keyboardVisible { return _keyboardInput.isFirstResponder; }
 - (BOOL)becomeFirstResponder {
+    _composer.hidden = NO;
     [self.delegate touchKeyboardVisibilityChanged:YES];
     BOOL accepted = [_keyboardInput becomeFirstResponder];
     [self updateKeyboardButton];
@@ -297,6 +269,8 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
     return accepted;
 }
 - (void)updateKeyboardButton {
+    _composer.hidden = !self.keyboardVisible;
+    [self updateDraftButtons];
     [_keyboardButton setImage:[UIImage systemImageNamed:self.keyboardVisible ? @"keyboard.chevron.compact.down" : @"keyboard"] forState:UIControlStateNormal];
     _keyboardButton.accessibilityLabel = self.keyboardVisible ? @"Hide keyboard" : @"Show keyboard";
     [self.delegate touchKeyboardVisibilityChanged:self.keyboardVisible];
@@ -312,9 +286,8 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
         [self.superview becomeFirstResponder];
     }
 }
-// The guest owns its text and selection. The native input view holds only
-// uncommitted composition, then forwards it here and clears its document.
-// Always allow a backspace request against the guest's text.
+// The guest owns its text/selection. Only explicit Insert forwards the draft.
+// Accessory keys still allow editing existing text directly in the guest.
 - (BOOL)hasText { return YES; }
 - (void)insertText:(NSString *)text { [self.delegate touchInsertText:text]; }
 - (void)deleteBackward { [self.delegate touchSpecialKey:51 characters:@"\x7f"]; }
@@ -324,27 +297,102 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
         UIStackView *row = [[UIStackView alloc] initWithFrame:CGRectMake(0, 0, 320, 44)];
         row.distribution = UIStackViewDistributionFillEqually;
         row.backgroundColor = [UIColor colorWithWhite:0.12 alpha:0.96];
-        NSArray<NSString *> *titles = @[@"Esc", @"Tab", @"←", @"→", @"↵", @"⌄"];
+        NSArray<NSString *> *titles = @[@"Esc", @"Tab", @"←", @"→", @"⌫", @"↵", @"⌄"];
         for (NSUInteger i = 0; i < titles.count; i++) {
             UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
             button.tag = (NSInteger)i;
             button.tintColor = UIColor.whiteColor;
             [button setTitle:titles[i] forState:UIControlStateNormal];
-            button.accessibilityLabel = @[@"Escape", @"Tab", @"Left arrow", @"Right arrow", @"Return", @"Hide keyboard"][i];
+            button.accessibilityIdentifier = [NSString stringWithFormat:@"wolkara.keyboard.key.%lu", (unsigned long)i];
+            button.accessibilityLabel = @[@"Escape", @"Tab", @"Left arrow", @"Right arrow", @"Game backspace", @"Return", @"Hide keyboard"][i];
             [button addTarget:self action:@selector(accessoryKey:) forControlEvents:UIControlEventTouchUpInside];
             [row addArrangedSubview:button];
         }
         _accessory = row;
+        [self updateDraftButtons];
     }
     return _accessory;
 }
 - (void)accessoryKey:(UIButton *)button {
-    if (button.tag == 5) { [self dismissKeyboard]; return; }
-    // A fast tap on Return/Tab must follow the last completed text edit.
-    [_keyboardInput forwardCommittedText];
-    const unsigned short codes[] = {53, 48, 123, 124, 36};
-    NSArray<NSString *> *characters = @[@"\x1b", @"\t", @"\uF702", @"\uF703", @"\r"];
-    if (button.tag >= 0 && button.tag < 5) [self.delegate touchSpecialKey:codes[button.tag] characters:characters[button.tag]];
+    if (button.tag == 6) { [self dismissKeyboard]; return; }
+    // Insert and Return/Tab are deliberate separate steps. Do not accidentally
+    // send an unfinished draft or switch the guest field during composition.
+    if (_keyboardInput.text.length || ![_keyboardInput canModifyDraft]) return;
+    const unsigned short codes[] = {53, 48, 123, 124, 51, 36};
+    NSArray<NSString *> *characters = @[@"\x1b", @"\t", @"\uF702", @"\uF703", @"\x7f", @"\r"];
+    if (button.tag >= 0 && button.tag < 6) [self.delegate touchSpecialKey:codes[button.tag] characters:characters[button.tag]];
+}
+- (void)insertDraft { [_keyboardInput forwardCommittedText]; }
+- (void)clearDraft { if ([_keyboardInput canModifyDraft]) [_keyboardInput discardDraft]; }
+- (void)updateDraftButtons {
+    BOOL ready = [_keyboardInput canModifyDraft];
+    _insertDraftButton.enabled = _clearDraftButton.enabled = ready && _keyboardInput.hasText;
+    for (UIButton *button in ((UIStackView *)_accessory).arrangedSubviews) {
+        button.enabled = button.tag == 6 || (ready && !_keyboardInput.hasText);
+    }
+}
+- (void)buildComposer {
+    _composer = [[UIView alloc] initWithFrame:CGRectZero];
+    _composer.hidden = YES;
+    _composer.translatesAutoresizingMaskIntoConstraints = NO;
+    _composer.backgroundColor = [UIColor colorWithWhite:0.08 alpha:0.98];
+    _composer.layer.cornerRadius = 12;
+    _composer.layer.zPosition = self.layer.zPosition;
+    UILabel *label = [UILabel new];
+    label.text = @"Draft · Insert into the selected game field";
+    label.font = [UIFont systemFontOfSize:12];
+    label.textColor = UIColor.lightGrayColor;
+    label.adjustsFontSizeToFitWidth = YES;
+    label.minimumScaleFactor = 0.75;
+    UIButton *insert = _insertDraftButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    [insert setTitle:@"Insert" forState:UIControlStateNormal];
+    insert.titleLabel.font = [UIFont boldSystemFontOfSize:17];
+    insert.accessibilityIdentifier = @"wolkara.keyboard.insert";
+    [insert addTarget:self action:@selector(insertDraft) forControlEvents:UIControlEventTouchUpInside];
+    UIButton *clear = _clearDraftButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    [clear setImage:[UIImage systemImageNamed:@"xmark.circle"] forState:UIControlStateNormal];
+    clear.accessibilityLabel = @"Clear draft";
+    clear.accessibilityIdentifier = @"wolkara.keyboard.clear";
+    [clear addTarget:self action:@selector(clearDraft) forControlEvents:UIControlEventTouchUpInside];
+    for (UIView *view in @[label, _keyboardInput, insert, clear]) {
+        view.translatesAutoresizingMaskIntoConstraints = NO;
+        [_composer addSubview:view];
+    }
+    [NSLayoutConstraint activateConstraints:@[
+        [label.leadingAnchor constraintEqualToAnchor:_composer.leadingAnchor constant:12],
+        [label.topAnchor constraintEqualToAnchor:_composer.topAnchor constant:6],
+        [label.trailingAnchor constraintEqualToAnchor:_composer.trailingAnchor constant:-12],
+        [label.heightAnchor constraintEqualToConstant:16],
+        [_keyboardInput.leadingAnchor constraintEqualToAnchor:_composer.leadingAnchor constant:8],
+        [_keyboardInput.topAnchor constraintEqualToAnchor:label.bottomAnchor constant:4],
+        [_keyboardInput.bottomAnchor constraintEqualToAnchor:_composer.bottomAnchor constant:-8],
+        [_keyboardInput.trailingAnchor constraintEqualToAnchor:clear.leadingAnchor],
+        [clear.widthAnchor constraintEqualToConstant:44],
+        [clear.heightAnchor constraintEqualToConstant:44],
+        [clear.centerYAnchor constraintEqualToAnchor:_keyboardInput.centerYAnchor],
+        [clear.trailingAnchor constraintEqualToAnchor:insert.leadingAnchor],
+        [insert.widthAnchor constraintEqualToConstant:64],
+        [insert.heightAnchor constraintEqualToConstant:44],
+        [insert.centerYAnchor constraintEqualToAnchor:_keyboardInput.centerYAnchor],
+        [insert.trailingAnchor constraintEqualToAnchor:_composer.trailingAnchor constant:-8],
+    ]];
+}
+- (void)didMoveToSuperview {
+    [super didMoveToSuperview];
+    [_composer removeFromSuperview];
+    UIView *host = self.superview;
+    if (!host) return;
+    [host addSubview:_composer];
+    // The editor follows the keyboard; the toolbar stays fixed at the top.
+    // No resizing of the game's rendering surface or reading of game memory.
+    NSLayoutConstraint *width = [_composer.widthAnchor constraintEqualToAnchor:host.safeAreaLayoutGuide.widthAnchor constant:-24];
+    width.priority = UILayoutPriorityDefaultHigh;
+    [NSLayoutConstraint activateConstraints:@[
+        [_composer.bottomAnchor constraintEqualToAnchor:host.keyboardLayoutGuide.topAnchor constant:-4],
+        [_composer.centerXAnchor constraintEqualToAnchor:host.safeAreaLayoutGuide.centerXAnchor],
+        width, [_composer.widthAnchor constraintLessThanOrEqualToConstant:800],
+        [_composer.heightAnchor constraintEqualToConstant:82],
+    ]];
 }
 
 - (void)processTouches:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
@@ -396,6 +444,7 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
     if (!self.window) [self backgroundInput:nil];
 }
 - (void)dealloc {
+    [_composer removeFromSuperview];
     [_holdTimer invalidate];
     [NSNotificationCenter.defaultCenter removeObserver:self];
 }

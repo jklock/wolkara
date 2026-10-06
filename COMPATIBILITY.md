@@ -52,8 +52,13 @@ UIKit starvation reproduced with a busy synthetic desktop-event queue and
 publishes pending native UI changes after event processing. Regression tests,
 manual simulator typing/slider drags and the signed device build pass. The
 [UI-pump correction](docs/TOUCH_INPUT.md#native-ui-stalls-while-the-guest-continues-2026-10-06)
-still needs a physical-device retest; simulator success does not establish that
-the user's stall is resolved or that game performance is unchanged.
+did **not** resolve the full device symptom: on 2026-10-07 the user reported
+queued keyboard taps released by Control Center / Notification Center. The new
+[visible draft editor and tracking-mode follow-up](docs/TOUCH_INPUT.md#visible-draft-and-tracking-mode-follow-up-2026-10-07)
+remove per-key native document resets and service UIKit tracking work while the
+keyboard/settings are open. Synthetic checks pass; resolution of the device
+stall and frame-rate impact remain unverified. The toolbar now stays top center
+regardless of keyboard/controller state, with a further optical pointer offset.
 
 On 2026-10-07, the user reported a first-launch failure after installing from
 Xcode, followed by a successful launch from the icon. The failed device log

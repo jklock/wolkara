@@ -1,12 +1,12 @@
 # Experimental touch input
 
 The AppKit adapter provides four translucent toolbar buttons: pointer, keyboard,
-automatic touch controller and control settings (gear). The toolbar stays at the
-bottom right when the controller is hidden and moves to the top center when it is
-visible or being configured. The keyboard button opens and closes the iOS
-keyboard. It stays above the keyboard when open, respecting the safe area;
-the guest's rendering size stays unchanged. A small accessory row provides
-Escape, Tab, left/right arrows, Return and a close button.
+automatic touch controller and control settings (gear). The toolbar always stays
+at the top center inside the safe area, including with a physical controller,
+with the keyboard open or with touch controls hidden. The keyboard button opens
+and closes the iOS keyboard and a visible draft editor immediately above it;
+the guest's rendering size stays unchanged. The accessory row provides Escape,
+Tab, left/right arrows, game backspace, Return and a close button.
 The control-transparency slider also fades all four toolbar buttons, updates
 them live and restores the saved value at launch. It does not fade the native
 keyboard or the settings panel. The pointer icon is optically centered with a
@@ -40,18 +40,29 @@ Touch input has a software cursor; physical mouse events retain their own
 path. Opening the keyboard cancels a current trackpad gesture.
 
 Select a text field in the application, then open the keyboard manually.
-There is no automatic detection of guest text fields. The bridge forwards
-committed text, composed Unicode characters and paired key events; it does
-not read the guest's text or selection. Autocorrection and smart substitutions
-are disabled, and neither entered text nor key codes are written to the adapter's
-keyboard diagnostics. A native `UITextView` receives keyboard input and keeps
-provisional composition locally until UIKit commits it. Committed text is
-forwarded once and the native document and undo history are cleared on a later
-main-queue turn, after UIKit's edit callback returns. A close or accessory key
-first flushes completed input so it cannot overtake the last typed character.
-Pending callbacks from a closed keyboard cannot affect a reopened session. This is
-not a mirror of the guest's text: selection and predictive editing of existing
-guest text remain unsupported.
+Write, select, correct, paste or dictate into the native **Draft** panel; tap
+**Insert** (or the system keyboard's **Done**) to insert the completed draft at
+the game's current cursor. This does not press Return. Press **↵** separately to
+submit in the game. While a draft is present or recognition/composition is still
+pending, game accessory keys are disabled, so they cannot move to another field
+or submit an unfinished draft. **Clear draft** clears only this local document;
+the accessory **⌫** acts on existing game text after the draft is empty.
+
+The editor keeps a normal UIKit text document during editing. It no longer
+clears the document/selection/undo history after every letter, and there is no
+per-keystroke asynchronous forwarding. Insert transfers completed text exactly
+once and then clears the local draft and undo history. Newlines, tabs and control
+characters in pasted text become spaces rather than implicit game commands.
+Closing the keyboard or entering the background discards the draft without
+sending it; temporary focus loss for the dictation UI keeps it available.
+
+There is no automatic detection or reading of game text fields. This panel is a
+local draft, **not a mirror of the game field**: it cannot retrieve or replace
+already-entered game text. The current AppKit adapter translates text into paired
+key events and has no exposed game text/selection query. No application-memory
+inspection or game-specific hooks are used. The editor is visible plain text,
+including when the user selects a password field in the game. Autocorrection
+and smart substitutions are disabled. Drafts are not saved or logged.
 
 ## System keyboard dictation
 
@@ -59,15 +70,15 @@ The keyboard requests normal text entry instead of treating every guest
 field as a password. A native UIKit text view is the first responder, providing
 the `UITextInput` contract used by system dictation instead of only `UIKeyInput`.
 Select the game's chat field, open our keyboard and use its system
-microphone button. Dictated text follows the same input path as typed text;
-press Return yourself to send it. Tolkara adds no speech engine or recording UI.
+microphone button. Dictated text appears in the editable draft;
+tap Insert, then press Return yourself to send it. Tolkara adds no speech engine or recording UI.
 
 Enable **Settings > General > Keyboard > Enable Dictation** on the iPhone and
 use Apple's keyboard with a supported language. iOS controls microphone
 availability and recognition. Because Tolkara does not inspect guest fields,
 it cannot automatically switch back to secure keyboard traits for passwords;
 the guest still controls its own text display and masking. The bridge does not
-retain committed text or record audio itself. Uncommitted composition is
+record audio itself or retain text after insertion. The local draft is
 discarded when the keyboard closes or the app enters the background.
 
 The `feature/keyboard-dictation` branch starts at `9483e1a`, before the native
@@ -95,10 +106,11 @@ These are synthetic input tests. On 2026-10-06 the user confirmed that the
 microphone works on the iPhone, but reported long stalls after a few ordinary
 keystrokes even without using dictation. The bridge previously reset UIKit's
 document, selection and undo history synchronously inside text-edit callbacks.
-The follow-up defers that reset and text delivery until the callback returns,
+The earlier follow-up deferred that reset and text delivery until the callback returned,
 and preserves ordering for immediate Return, backspace and keyboard close.
-The minutes-long stall has not been reproduced in the simulator; this is a
-candidate fix requiring another physical-device typing/dictation check.
+The user subsequently confirmed that the stall still occurs on the iPhone.
+The visible draft revision above replaces that per-key bridge; see the latest
+validation below. The minutes-long device stall has not been reproduced in the simulator.
 No microphone audio was captured as part of automated validation.
 
 The expanded fixture can run inside the same timer-entered, nonblocking desktop
@@ -166,10 +178,50 @@ Xcode 27 passed:
   without invoking Control Center. This did not run a game or record dictation.
 - Signed arm64 iOS Debug build and strict/deep signature verification passed.
 
-The corrected build has not been installed on the physical iPhone by this
-validation run. Repeat typing, all three sliders, opening/closing the keyboard,
-and dictation on the device without the Control Center workaround before marking
-the reported stall resolved. Device frame-rate impact is also unmeasured.
+On 2026-10-07 the user confirmed that the physical-device stall persists:
+several typed keys queue up and all arrive after beginning Control Center or
+Notification Center. The earlier busy-queue fix therefore did **not** resolve
+the full reported issue.
+
+### Visible draft and tracking-mode follow-up (2026-10-07)
+
+In addition to replacing per-key document resets with explicit draft insertion,
+the main-thread pump gives UIKit's tracking mode a nonblocking turn, at most
+120 times per second, **only while the native keyboard/editor or control settings
+are open**. It still services the default mode every turn and keeps the existing
+event mask/order/peek behavior. Normal gameplay with these panels closed retains
+the preceding pump path. No system gesture is synthesized and no private UIKit
+API is used.
+
+A focused synthetic test schedules tracking-mode and default-mode work inside
+the timer-entered desktop loop. Before this change only default-mode work ran;
+after it both complete with the keyboard or settings open. This demonstrates the
+missing mode service, **not that it explains every real-device stall**. Apple
+documents [UITrackingRunLoopMode](https://developer.apple.com/documentation/uikit/uitrackingrunloopmode)
+as the mode used for tracking controls and describes mode-specific execution in
+[CFRunLoopRunInMode](https://developer.apple.com/documentation/corefoundation/cfrunloopruninmode(_:_:_:)).
+
+Current checks use only original fixtures, with no game or accounts:
+- `tools/test_touch_controls_ui.sh --self-test --guest-poll-loop --queued-traffic`:
+  draft editing/selection/deletion, 64 repeated edits, explicit insertion without
+  duplicate text, Unicode, marked composition, synthetic dictation, cancellation,
+  control-character filtering, separate Return, focus and fixed toolbar geometry.
+- `tools/test_touch_controls_ui.sh --self-test --tracking-progress-test`:
+  default and tracking-mode progress with both native surfaces.
+- `tools/test_touch_controls_ui.sh --self-test --ui-progress-test`: ordinary
+  animation/timer/main-queue progress across empty/occupied queues and peeking.
+
+- Required `tools/test_emulation.sh` (ASan/UBSan) and
+  `tools/test_translation_sim.sh`: passed.
+- Signed arm64 iOS Debug build and strict/deep signature verification: passed.
+- Manual simulator keyboard taps, deletion and Insert produced exactly `hola`
+  in the original input fixture. Drags changed all three sliders without a
+  system-edge gesture. The draft/toolbar and non-overlapping settings layout
+  were inspected visually. No speech was recorded or game run.
+
+Physical typing, dictation, sliders and game frame-rate must be checked again
+before marking the user's stall resolved. The build is prepared for Xcode;
+this work does not install it or interrupt the user's game.
 
 ## Validation
 

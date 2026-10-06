@@ -10,8 +10,8 @@ experiment remains separate, and the inherited keyboard correction is retained.
 When the guest window is active and no physical gamepad is connected, a translucent
 controller appears automatically. Connecting a physical gamepad removes it;
 disconnecting the physical pad restores it. The toolbar's gamepad icon toggles
-Automatic / Off and saves that preference. The toolbar moves to the top center
-while the touch controller is visible or being configured, leaving the game controls free.
+Automatic / Off and saves that preference. The toolbar stays at the top center
+in every state, including with a physical pad connected or the keyboard open.
 
 - LT then LB at the upper left; RB then RT at the upper right (left-to-right).
   Triggers are outermost on both sides.
