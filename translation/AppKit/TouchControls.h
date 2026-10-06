@@ -12,8 +12,8 @@
 - (void)touchControlSettings;
 @end
 
-// Lives above the guest layer, but only the toolbar buttons intercept hit testing.
-// The host supplies direct touches; hardware mouse input stays on its old path.
+// Toolbar above the guest layer, with a separate native draft panel above
+// the keyboard. The host supplies direct touches; hardware mouse is unchanged.
 @interface AKTouchControls : UIView <UIKeyInput>
 @property (nonatomic, weak) id<AKTouchControlsDelegate> delegate;
 @property (nonatomic) BOOL trackpadEnabled;

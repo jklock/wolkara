@@ -262,7 +262,8 @@ CGPoint AKTouchGamepadStickPosition(CGPoint point, CGSize size) {
     _editDone.frame = CGRectMake(CGRectGetMidX(safe)-70,CGRectGetMinY(safe)+60,140,40);
     _hint.frame = CGRectMake(CGRectGetMidX(safe)-150,CGRectGetMinY(safe)+103,300,22);
     if (_settings) {
-        CGFloat width = MIN(390,safe.size.width-24), height = MIN(390,safe.size.height-16);
+        // Reserve the fixed toolbar's top row; the panel body scrolls.
+        CGFloat width = MIN(390,safe.size.width-24), height = MIN(390,safe.size.height-68);
         _settings.frame = CGRectMake(CGRectGetMidX(safe)-width/2,CGRectGetMaxY(safe)-height-8,width,height);
     }
 }

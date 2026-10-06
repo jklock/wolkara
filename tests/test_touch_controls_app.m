@@ -1,6 +1,7 @@
 // Original UIKit/AppKit fixture for manual touch/keyboard testing. No guest.
 #import "AppKit.h"
 #import "TouchControls.h"
+#import "TouchGamepad.h"
 #include <assert.h>
 
 @interface AKInputFixtureView : NSView
@@ -25,7 +26,7 @@
         }
         _heading.fontSize = 24; _instructions.fontSize = 15; _result.fontSize = 18;
         _heading.string = @"Tolkara · Touch input fixture";
-        _instructions.string = @"Slide: move • Tap: left click • Two fingers: scroll / right click\nThree-finger tap: middle click • Hold then slide: drag\nUse the keyboard button at the bottom right. This is an original test screen.";
+        _instructions.string = @"Slide: move • Tap: left click • Two fingers: scroll / right click\nThree-finger tap: middle click • Hold then slide: drag\nUse the keyboard button at the top center. This is an original test screen.";
         [self setFrame:frame];
     }
     return self;
@@ -73,6 +74,15 @@ static void AKDrainFixtureEvents(void) {
     while ((event = [NSApp nextEventMatchingMask:UINT64_MAX untilDate:NSDate.distantPast inMode:NSDefaultRunLoopMode dequeue:YES])) [NSApp sendEvent:event];
 }
 
+static UIView *AKFindInputView(UIView *root, NSString *identifier) {
+    if ([root.accessibilityIdentifier isEqual:identifier]) return root;
+    for (UIView *child in root.subviews) {
+        UIView *found = AKFindInputView(child, identifier);
+        if (found) return found;
+    }
+    return nil;
+}
+
 static void AKFixtureInputSource(void *context) {
     (void)context;
     NSEvent *event = [NSEvent new]; event.type = NSEventTypeMouseMoved;
@@ -84,6 +94,33 @@ static void AKFixtureInputSource(void *context) {
 @property NSTimer *pump;
 @end
 @implementation AKInputFixtureScene
+- (void)checkTrackingUIProgress {
+    UIView *host = [self.guest valueForKey:@"_host"];
+    AKTouchControls *controls = [host valueForKey:@"_touchControls"];
+    AKTouchGamepad *gamepad = [host valueForKey:@"_touchGamepad"];
+    for (NSUInteger surface = 0; surface < 2; surface++) {
+        if (surface == 0) [controls toggleKeyboard]; else [gamepad toggleSettings];
+        __block BOOL trackingFired = NO, defaultFired = NO;
+        NSTimer *tracking = [NSTimer timerWithTimeInterval:0.02 repeats:NO block:^(NSTimer *timer) {
+            (void)timer; trackingFired = YES;
+        }];
+        [NSRunLoop.mainRunLoop addTimer:tracking forMode:UITrackingRunLoopMode];
+        NSTimer *ordinary = [NSTimer scheduledTimerWithTimeInterval:0.02 repeats:NO block:^(NSTimer *timer) {
+            (void)timer; defaultFired = YES;
+        }];
+        NSTimeInterval deadline = NSProcessInfo.processInfo.systemUptime + 1;
+        while (!(trackingFired && defaultFired) && NSProcessInfo.processInfo.systemUptime < deadline) {
+            AKFixtureInputSource(NULL);
+            [NSApp nextEventMatchingMask:UINT64_MAX untilDate:NSDate.distantPast inMode:NSDefaultRunLoopMode dequeue:YES];
+        }
+        [tracking invalidate]; [ordinary invalidate];
+        NSLog(@"Native tracking progress: surface=%lu tracking=%d default=%d", (unsigned long)surface, trackingFired, defaultFired);
+        assert(trackingFired && defaultFired);
+        if (surface == 0) [controls dismissKeyboard]; else [gamepad toggleSettings];
+    }
+    NSLog(@"TOUCH_UI_SELF_TEST_PASS: UIKit tracking and default work progress while native editor/settings are open");
+    exit(EXIT_SUCCESS);
+}
 - (void)checkNativeUIProgress {
     UIView *host = [self.guest valueForKey:@"_host"];
     CFRunLoopSourceContext context = {0}; context.perform = AKFixtureInputSource;
@@ -168,6 +205,13 @@ static void AKFixtureInputSource(void *context) {
                 _Exit(EXIT_FAILURE);
             });
     }
+    if ([NSProcessInfo.processInfo.arguments containsObject:@"--tracking-progress-test"]) {
+        [NSTimer scheduledTimerWithTimeInterval:2 repeats:NO block:^(NSTimer *timer) {
+            (void)timer; [self.pump invalidate]; self.pump = nil;
+            [self checkTrackingUIProgress];
+        }];
+        return;
+    }
     if ([NSProcessInfo.processInfo.arguments containsObject:@"--ui-progress-test"]) {
         [NSTimer scheduledTimerWithTimeInterval:2 repeats:NO block:^(NSTimer *timer) {
             (void)timer;
@@ -214,95 +258,120 @@ static void AKFixtureInputSource(void *context) {
                 assert(host.keyboardLayoutGuide.layoutFrame.size.height > 100);
                 assert(CGRectGetMaxY(controls.frame) <= CGRectGetMinY(host.keyboardLayoutGuide.layoutFrame));
                 assert(CGRectGetMinY(controls.frame) >= 0);
-                UITextView *input = nil;
-                for (UIView *view in controls.subviews) if ([view isKindOfClass:UITextView.class]) input = (UITextView *)view;
+                CGRect toolbarFrame = controls.frame;
+                assert(fabs(CGRectGetMidX(toolbarFrame) - CGRectGetMidX(host.safeAreaLayoutGuide.layoutFrame)) < 1);
+                assert(fabs(CGRectGetMinY(toolbarFrame) - CGRectGetMinY(host.safeAreaLayoutGuide.layoutFrame) - 8) < 1);
+                UITextView *input = (UITextView *)AKFindInputView(host, @"wolkara.keyboard.draft");
+                UIButton *insert = (UIButton *)AKFindInputView(host, @"wolkara.keyboard.insert");
+                UIButton *clear = (UIButton *)AKFindInputView(host, @"wolkara.keyboard.clear");
                 assert(input.isFirstResponder && [input conformsToProtocol:@protocol(UITextInput)]);
+                assert(!input.superview.hidden && input.bounds.size.width > 100 && input.bounds.size.height >= 44);
+                CGRect editor = [input convertRect:input.bounds toView:host];
+                assert(CGRectGetMaxY(editor) < CGRectGetMinY(host.keyboardLayoutGuide.layoutFrame));
+                assert(CGRectGetMinY(editor) >= CGRectGetMaxY(controls.frame));
                 AKInputFixtureView *fixture = (AKInputFixtureView *)self.guest.contentView;
                 [input insertText:@"Fixture @ñ🙂"];
-                // Do not reset UIKit's document or deliver keys from within
-                // its edit transaction; both happen on the next main turn.
-                assert([input.text isEqual:@"Fixture @ñ🙂"] && fixture.text.length == 0);
                 AKDrainFixtureEvents();
-                assert(input.text.length == 0);
+                assert([input.text isEqual:@"Fixture @ñ🙂"] && fixture.text.length == 0 && insert.enabled && clear.enabled);
                 [input deleteBackward];
+                assert([input.text isEqual:@"Fixture @ñ"]);
+                // Editing an earlier range stays local; it must not append to
+                // the game or emit backspaces until the user requests Insert.
+                UITextPosition *end = [input positionFromPosition:input.beginningOfDocument offset:7];
+                [input replaceRange:[input textRangeFromPosition:input.beginningOfDocument toPosition:end] withText:@"Draft"];
+                assert([input.text isEqual:@"Draft @ñ"]);
+                [insert sendActionsForControlEvents:UIControlEventTouchUpInside];
                 AKDrainFixtureEvents();
-                assert([fixture.text isEqual:@"Fixture @ñ"]);
-                // Provisional recognition/composition must not reach the game.
+                assert([fixture.text isEqual:@"Draft @ñ"] && input.text.length == 0 && !insert.enabled && !clear.enabled);
+                [insert sendActionsForControlEvents:UIControlEventTouchUpInside];
+                AKDrainFixtureEvents();
+                assert([fixture.text isEqual:@"Draft @ñ"]);
+                // Provisional text and unfinished dictation cannot be inserted.
                 [input setMarkedText:@" provisional" selectedRange:NSMakeRange(12, 0)];
-                assert(input.markedTextRange != nil);
-                [input setMarkedText:@" ¡Hola equipo, vamos a la mazmorra!" selectedRange:NSMakeRange(33, 0)];
+                [insert sendActionsForControlEvents:UIControlEventTouchUpInside];
                 AKDrainFixtureEvents();
-                assert([fixture.text isEqual:@"Fixture @ñ"]);
+                assert([fixture.text isEqual:@"Draft @ñ"]);
+                [input setMarkedText:@" ¡Hola equipo!" selectedRange:NSMakeRange(@" ¡Hola equipo!".length, 0)];
                 [input unmarkText];
-                AKDrainFixtureEvents();
-                assert([fixture.text isEqual:@"Fixture @ñ ¡Hola equipo, vamos a la mazmorra!"]);
-                assert(input.text.length == 0 && input.markedTextRange == nil);
-                // Exercise UITextInput replacement, not just UIKeyInput injection.
-                [input replaceRange:input.selectedTextRange withText:@" Otra frase."];
-                AKDrainFixtureEvents();
-                assert([fixture.text isEqual:@"Fixture @ñ ¡Hola equipo, vamos a la mazmorra! Otra frase."]);
-                assert(input.text.length == 0);
-                // UIKit's pending dictation placeholder must not leak into input.
                 id placeholder = [input insertDictationResultPlaceholder];
-                assert(placeholder != nil);
+                assert(placeholder);
+                [insert sendActionsForControlEvents:UIControlEventTouchUpInside];
                 AKDrainFixtureEvents();
-                assert([fixture.text hasSuffix:@" Otra frase."]);
+                assert([fixture.text isEqual:@"Draft @ñ"]);
                 [input removeDictationResultPlaceholder:placeholder willInsertResult:YES];
                 [input insertText:@" Dictado."];
+                assert([input.text isEqual:@" ¡Hola equipo! Dictado."]);
+                [insert sendActionsForControlEvents:UIControlEventTouchUpInside];
                 AKDrainFixtureEvents();
-                assert([fixture.text isEqual:@"Fixture @ñ ¡Hola equipo, vamos a la mazmorra! Otra frase. Dictado."]);
-                [input setMarkedText:@" failed recognition" selectedRange:NSMakeRange(19, 0)];
-                [input dictationRecognitionFailed];
-                assert(input.text.length == 0);
-                NSMutableString *expected = [@"Fixture @ñ ¡Hola equipo, vamos a la mazmorra! Otra frase. Dictado." mutableCopy];
-                // Repeated edits and an immediate backspace before the queued
-                // commit must stay responsive, ordered and free of duplicates.
-                for (NSUInteger i = 0; i < 64; i++) {
-                    NSTimeInterval start = NSProcessInfo.processInfo.systemUptime;
-                    [input insertText:@"a"];
-                    [input insertText:@"b"];
-                    [input deleteBackward];
-                    assert([input.text isEqual:@"a"]);
-                    AKDrainFixtureEvents();
-                    [expected appendString:@"a"];
-                    assert([fixture.text isEqual:expected] && input.text.length == 0);
-                    assert(NSProcessInfo.processInfo.systemUptime - start < 1);
-                }
-                [input insertText:@" fast"];
-                UIStackView *accessory = (UIStackView *)controls.inputAccessoryView;
-                [(UIButton *)accessory.arrangedSubviews[4] sendActionsForControlEvents:UIControlEventTouchUpInside];
-                AKDrainFixtureEvents();
-                [expected appendString:@" fast\r"];
+                NSMutableString *expected = [@"Draft @ñ ¡Hola equipo! Dictado." mutableCopy];
                 assert([fixture.text isEqual:expected]);
-                [input insertText:@" close"];
-                [controls dismissKeyboard];
-                [controls toggleKeyboard];
+                // Many edits are now one normal document, not 64 resets of
+                // UIKit's selection/undo context and 64 asynchronous forwards.
+                for (NSUInteger i = 0; i < 64; i++) {
+                    [input insertText:@"a"]; [input insertText:@"b"]; [input deleteBackward];
+                    AKDrainFixtureEvents();
+                    assert(input.text.length == i + 1 && [fixture.text isEqual:expected]);
+                }
+                NSString *draft = [input.text copy];
+                [insert sendActionsForControlEvents:UIControlEventTouchUpInside];
+                [expected appendString:draft];
                 AKDrainFixtureEvents();
-                [expected appendString:@" close"];
-                assert([fixture.text isEqual:expected] && input.text.length == 0);
-                // Hiding the keyboard cancels provisional text and late results.
+                assert([fixture.text isEqual:expected] && !input.text.length);
+                [input insertText:@" discarded"];
+                [clear sendActionsForControlEvents:UIControlEventTouchUpInside];
+                assert(!input.text.length);
+                [input insertText:@" failed recognition" ];
+                [input setMarkedText:@" provisional" selectedRange:NSMakeRange(12, 0)];
+                [input dictationRecognitionFailed];
+                assert([input.text isEqual:@" failed recognition"]);
+                [clear sendActionsForControlEvents:UIControlEventTouchUpInside];
+                // Pasted controls are text, never implicit game commands.
+                input.text = @"one\ntwo\tthree";
+                [insert sendActionsForControlEvents:UIControlEventTouchUpInside];
+                [expected appendString:@"one two three"];
+                AKDrainFixtureEvents();
+                assert([fixture.text isEqual:expected]);
+                UIStackView *accessory = (UIStackView *)controls.inputAccessoryView;
+                [input insertText:@" done"];
+                [(UIButton *)accessory.arrangedSubviews[5] sendActionsForControlEvents:UIControlEventTouchUpInside];
+                AKDrainFixtureEvents();
+                assert([fixture.text isEqual:expected]);
+                // The system Done key inserts only; Return stays explicit.
+                [input.delegate textView:input shouldChangeTextInRange:NSMakeRange(input.text.length, 0) replacementText:@"\n"];
+                AKDrainFixtureEvents();
+                [expected appendString:@" done"];
+                assert([fixture.text isEqual:expected] && !input.text.length);
+                [(UIButton *)accessory.arrangedSubviews[5] sendActionsForControlEvents:UIControlEventTouchUpInside];
+                AKDrainFixtureEvents();
+                [expected appendString:@"\r"];
+                assert([fixture.text isEqual:expected]);
+                [input insertText:@" close without inserting"];
+                [controls dismissKeyboard]; [controls toggleKeyboard];
+                AKDrainFixtureEvents();
+                assert([fixture.text isEqual:expected] && !input.text.length);
                 [input setMarkedText:@" discard me" selectedRange:NSMakeRange(11, 0)];
                 [controls dismissKeyboard];
                 [input insertText:@" late result"];
                 [input removeDictationResultPlaceholder:placeholder willInsertResult:NO];
                 [input unmarkText];
-                assert(input.text.length == 0);
+                assert(!input.text.length);
                 [controls toggleKeyboard];
-                assert(input.isFirstResponder && input.text.length == 0);
-                [input setMarkedText:@" cancelled on background" selectedRange:NSMakeRange(24, 0)];
+                [input insertText:@" cancelled on background"];
                 [NSNotificationCenter.defaultCenter postNotificationName:UIApplicationWillResignActiveNotification object:nil];
-                assert(controls.keyboardVisible && input.markedTextRange != nil);
                 [NSNotificationCenter.defaultCenter postNotificationName:UIWindowDidResignKeyNotification object:input.window];
-                assert(controls.keyboardVisible);
+                assert(controls.keyboardVisible && input.text.length);
                 [NSNotificationCenter.defaultCenter postNotificationName:UIApplicationDidEnterBackgroundNotification object:nil];
-                assert(!controls.keyboardVisible && input.text.length == 0);
+                assert(!controls.keyboardVisible && !input.text.length && input.superview.hidden);
                 [input insertText:@" background result"];
+                [host layoutIfNeeded];
+                assert(CGRectEqualToRect(toolbarFrame, controls.frame));
+                [controls setGamepadVisible:NO]; [host layoutIfNeeded];
+                assert(CGRectEqualToRect(toolbarFrame, controls.frame));
                 [NSTimer scheduledTimerWithTimeInterval:1 repeats:NO block:^(NSTimer *timer) {
                     (void)timer;
                     assert([fixture.text isEqual:expected]);
-                    [controls dismissKeyboard];
                     assert(!controls.keyboardVisible && host.isFirstResponder);
-                    NSLog(@"TOUCH_UI_SELF_TEST_PASS: deferred native edits, repeated typing/deletion, immediate Return/close, dictation, cancellation and focus restoration");
+                    NSLog(@"TOUCH_UI_SELF_TEST_PASS: visible draft editing, explicit insertion, composition/dictation, cancellation, fixed toolbar and focus");
                     exit(EXIT_SUCCESS);
                 }];
             }];

@@ -249,7 +249,6 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
 @implementation AKHostView { CGPoint _last; NSEventModifierFlags _mods; BOOL _pressedRight, _pressedLeft, _pointerInside, _softwareCursor; UIImageView *_cursorView; UIPointerInteraction *_pointer; UIPointerStyle *_gamePointerStyle; unsigned _hoverUpdates, _pointerUpdates, _cursorVisibilityReasons; NSTimeInterval _pointerReportTime;
     AKTouchControls *_touchControls;
     AKTouchGamepad *_touchGamepad;
-    NSLayoutConstraint *_toolbarBottom, *_toolbarTrailing, *_toolbarTop, *_toolbarCenter;
     BOOL _touchCursorActive, _touchCursorInitialized, _pressedMiddle;
     NSTimeInterval _lastTouchClickTime;
     CGPoint _lastTouchClickPoint;
@@ -277,14 +276,11 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
         _touchControls.delegate = self;
         _touchControls.translatesAutoresizingMaskIntoConstraints = NO;
         [self addSubview:_touchControls];
-        _toolbarBottom = [_touchControls.bottomAnchor constraintEqualToAnchor:self.keyboardLayoutGuide.topAnchor constant:-8];
-        _toolbarTrailing = [_touchControls.trailingAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.trailingAnchor constant:-12];
-        _toolbarTop = [_touchControls.topAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.topAnchor constant:8];
-        _toolbarCenter = [_touchControls.centerXAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.centerXAnchor];
         [NSLayoutConstraint activateConstraints:@[
             [_touchControls.widthAnchor constraintEqualToConstant:200],
             [_touchControls.heightAnchor constraintEqualToConstant:44],
-            _toolbarBottom, _toolbarTrailing,
+            [_touchControls.topAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.topAnchor constant:8],
+            [_touchControls.centerXAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.centerXAnchor],
         ]];
         _touchGamepad = [[AKTouchGamepad alloc] initWithHostView:self];
         __weak AKHostView *weakSelf = self;
@@ -293,12 +289,6 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
             if (!host) return;
             [host->_touchControls cancelTouches];
             [host->_touchControls setGamepadVisible:visible];
-            // Keep the keyboard/trackpad toolbar away from the touch controls.
-            [NSLayoutConstraint deactivateConstraints:@[host->_toolbarBottom, host->_toolbarTrailing,
-                                                        host->_toolbarTop, host->_toolbarCenter]];
-            [NSLayoutConstraint activateConstraints:(visible || host->_touchGamepad.configuring) ? @[host->_toolbarTop, host->_toolbarCenter] :
-                @[host->_toolbarBottom, host->_toolbarTrailing]];
-            [host layoutIfNeeded];
         };
         _touchGamepad.enabled = _touchControls.gamepadEnabled;
         [self touchTrackpadChanged:_touchControls.trackpadEnabled];
@@ -308,6 +298,7 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
 - (void)didMoveToWindow {
     [super didMoveToWindow]; [_touchGamepad refresh];
 }
+- (BOOL)nativeControlsActive { return _touchControls.keyboardVisible || _touchGamepad.configuring; }
 - (void)touchKeyboardVisibilityChanged:(BOOL)visible { _touchGamepad.keyboardVisible = visible; }
 - (void)touchGamepadPreferenceChanged:(BOOL)enabled { _touchGamepad.enabled = enabled; }
 - (void)touchControlSettings { [_touchGamepad toggleSettings]; }
@@ -662,6 +653,7 @@ static void logLayer(CALayer *layer,unsigned depth) {
     if ((self = [super init])) { _contentRect = r; _styleMask=m; self.nextResponder = NSApp; _windowNumber = ++numbers; }
     return self;
 }
+- (BOOL)ak_nativeControlsActive { return [_host nativeControlsActive]; }
 // Visible windows, frontmost first: the window shown last is in front.
 + (NSArray<NSNumber *> *)windowNumbersWithOptions:(NSUInteger)options {
     (void)options;
@@ -838,7 +830,7 @@ static void logLayer(CALayer *layer,unsigned depth) {
 #pragma mark - NSApplication
 
 @implementation NSApplication { NSMutableArray<NSEvent *> *_queue; NSMutableArray<NSWindow *> *_windows; NSEvent *_currentEvent; BOOL _launched, _inRun, _active, _terminating, _terminationPending, _terminationApproved;
-    CFTimeInterval _lastUIKitPump;
+    CFTimeInterval _lastUIKitPump, _lastTrackingPump;
 }
 + (NSApplication *)sharedApplication {
     if (NSApp) return NSApp; // Super init publishes the singleton before subclass init callbacks.
@@ -888,6 +880,16 @@ static void logLayer(CALayer *layer,unsigned depth) {
     // Set the budget before calling out too: a UIKit callback may inspect the
     // guest queue. A genuinely nested guest loop must still be able to pump.
     _lastUIKitPump = CACurrentMediaTime();
+    // The desktop loop normally asks only for the default mode. Native text
+    // selection, scrolling and controls also schedule work in UIKit's tracking
+    // mode. Give it a bounded turn while our native editor/settings are open;
+    // never run the common-modes pseudo-mode or depend on a system-edge gesture.
+    if (NSThread.isMainThread && [self.keyWindow ak_nativeControlsActive] &&
+        _lastUIKitPump - _lastTrackingPump >= 1.0 / 120.0) {
+        _lastTrackingPump = _lastUIKitPump;
+        CFRunLoopRunInMode((__bridge CFStringRef)UITrackingRunLoopMode, 0, false);
+        _lastTrackingPump = CACurrentMediaTime();
+    }
     CFRunLoopRunInMode(kCFRunLoopDefaultMode, seconds, once);
     // The outer UIKit loop never regains control while the guest runs. Publish
     // pending native control/layout changes after the input callback returns,
