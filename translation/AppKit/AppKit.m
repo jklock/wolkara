@@ -3,6 +3,7 @@
 #import "Images.h"
 #import "TextInput.h"
 #import "TouchControls.h"
+#import "TouchGamepad.h"
 #import <GameController/GameController.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
@@ -247,6 +248,8 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
 
 @implementation AKHostView { CGPoint _last; NSEventModifierFlags _mods; BOOL _pressedRight, _pressedLeft, _pointerInside, _softwareCursor; UIImageView *_cursorView; UIPointerInteraction *_pointer; UIPointerStyle *_gamePointerStyle; unsigned _hoverUpdates, _pointerUpdates, _cursorVisibilityReasons; NSTimeInterval _pointerReportTime;
     AKTouchControls *_touchControls;
+    AKTouchGamepad *_touchGamepad;
+    NSLayoutConstraint *_toolbarBottom, *_toolbarTrailing, *_toolbarTop, *_toolbarCenter;
     BOOL _touchCursorActive, _touchCursorInitialized, _pressedMiddle;
     NSTimeInterval _lastTouchClickTime;
     CGPoint _lastTouchClickPoint;
@@ -274,16 +277,39 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
         _touchControls.delegate = self;
         _touchControls.translatesAutoresizingMaskIntoConstraints = NO;
         [self addSubview:_touchControls];
+        _toolbarBottom = [_touchControls.bottomAnchor constraintEqualToAnchor:self.keyboardLayoutGuide.topAnchor constant:-8];
+        _toolbarTrailing = [_touchControls.trailingAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.trailingAnchor constant:-12];
+        _toolbarTop = [_touchControls.topAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.topAnchor constant:8];
+        _toolbarCenter = [_touchControls.centerXAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.centerXAnchor];
         [NSLayoutConstraint activateConstraints:@[
-            [_touchControls.widthAnchor constraintEqualToConstant:96],
+            [_touchControls.widthAnchor constraintEqualToConstant:148],
             [_touchControls.heightAnchor constraintEqualToConstant:44],
-            [_touchControls.trailingAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.trailingAnchor constant:-12],
-            [_touchControls.bottomAnchor constraintEqualToAnchor:self.keyboardLayoutGuide.topAnchor constant:-8],
+            _toolbarBottom, _toolbarTrailing,
         ]];
+        _touchGamepad = [[AKTouchGamepad alloc] initWithHostView:self];
+        __weak AKHostView *weakSelf = self;
+        _touchGamepad.visibilityChanged = ^(BOOL visible) {
+            AKHostView *host = weakSelf;
+            if (!host) return;
+            [host->_touchControls cancelTouches];
+            [host->_touchControls setGamepadVisible:visible];
+            // Keep the keyboard/trackpad toolbar away from the touch controls.
+            [NSLayoutConstraint deactivateConstraints:@[host->_toolbarBottom, host->_toolbarTrailing,
+                                                        host->_toolbarTop, host->_toolbarCenter]];
+            [NSLayoutConstraint activateConstraints:visible ? @[host->_toolbarTop, host->_toolbarCenter] :
+                @[host->_toolbarBottom, host->_toolbarTrailing]];
+            [host layoutIfNeeded];
+        };
+        _touchGamepad.enabled = _touchControls.gamepadEnabled;
         [self touchTrackpadChanged:_touchControls.trackpadEnabled];
     }
     return self;
 }
+- (void)didMoveToWindow {
+    [super didMoveToWindow]; [_touchGamepad refresh];
+}
+- (void)touchKeyboardVisibilityChanged:(BOOL)visible { _touchGamepad.keyboardVisible = visible; }
+- (void)touchGamepadPreferenceChanged:(BOOL)enabled { _touchGamepad.enabled = enabled; }
 - (BOOL)canBecomeFirstResponder { return YES; }
 - (void)setNsWindow:(NSWindow *)window {
     _nsWindow = window;
@@ -516,7 +542,7 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
     // the window. Keep visibility tied to its actual in-window location.
     [self moveHoverTo:point inside:CGRectContainsPoint(self.bounds,point)];
 }
-- (void)dealloc { [NSNotificationCenter.defaultCenter removeObserver:self]; }
+- (void)dealloc { [_touchGamepad invalidate]; [NSNotificationCenter.defaultCenter removeObserver:self]; }
 static BOOL AKIsRight(UIEvent *ev) { return (ev.buttonMask & UIEventButtonMaskSecondary) != 0; }
 - (BOOL)handleTrackpadTouches:(NSSet<UITouch *> *)touches event:(UIEvent *)event {
     if (!_touchControls.trackpadEnabled) return NO;

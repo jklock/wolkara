@@ -159,7 +159,8 @@
 @end
 
 @implementation AKTouchControls {
-    UIButton *_keyboardButton, *_trackpadButton;
+    UIButton *_keyboardButton, *_trackpadButton, *_gamepadButton;
+    BOOL _gamepadEnabled;
     UIView *_accessory;
     NSTimer *_holdTimer;
     AKKeyboardTextView *_keyboardInput;
@@ -200,6 +201,12 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
         _keyboardButton.accessibilityIdentifier = @"tolkara.keyboard";
         _trackpadButton = [self buttonWithSymbol:@"hand.draw" label:@"Enable touch trackpad" action:@selector(toggleTrackpad)];
         _trackpadButton.accessibilityIdentifier = @"tolkara.trackpad";
+        _gamepadButton = [self buttonWithSymbol:@"gamecontroller" label:@"Automatic touch controller" action:@selector(toggleGamepad)];
+        _gamepadButton.accessibilityIdentifier = @"tolkara.gamepad";
+        _gamepadButton.accessibilityHint = @"Show touch controls when no physical controller is connected. Tap to turn off or restore automatic controls.";
+        NSNumber *gamepad = [NSUserDefaults.standardUserDefaults objectForKey:@"TKTouchGamepadEnabled"];
+        _gamepadEnabled = gamepad ? gamepad.boolValue : YES;
+        [self setGamepadVisible:NO];
         _trackpadButton.accessibilityHint = @"One finger moves; tap to click. Two fingers scroll or tap for right click. Three fingers tap for middle click. Hold then slide to drag. Long-press this button for mouse buttons.";
         __weak AKTouchControls *weakSelf = self;
         NSMutableArray<UIAction *> *actions = [NSMutableArray new];
@@ -227,6 +234,7 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
     [super layoutSubviews];
     _trackpadButton.frame = CGRectMake(0, 0, 44, 44);
     _keyboardButton.frame = CGRectMake(52, 0, 44, 44);
+    _gamepadButton.frame = CGRectMake(104, 0, 44, 44);
 }
 - (void)setTrackpadEnabled:(BOOL)enabled {
     [self cancelTouches];
@@ -240,9 +248,21 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
     self.trackpadEnabled = !self.trackpadEnabled;
     [NSUserDefaults.standardUserDefaults setBool:self.trackpadEnabled forKey:@"TKTouchTrackpadEnabled"];
 }
+- (BOOL)gamepadEnabled { return _gamepadEnabled; }
+- (void)setGamepadVisible:(BOOL)visible {
+    _gamepadButton.tintColor = visible ? UIColor.systemCyanColor : UIColor.whiteColor;
+    _gamepadButton.accessibilityValue = _gamepadEnabled ? (visible ? @"Active" : @"Automatic") : @"Off";
+}
+- (void)toggleGamepad {
+    _gamepadEnabled = !_gamepadEnabled;
+    [NSUserDefaults.standardUserDefaults setBool:_gamepadEnabled forKey:@"TKTouchGamepadEnabled"];
+    [self setGamepadVisible:NO];
+    [self.delegate touchGamepadPreferenceChanged:_gamepadEnabled];
+}
 - (BOOL)canBecomeFirstResponder { return YES; }
 - (BOOL)keyboardVisible { return _keyboardInput.isFirstResponder; }
 - (BOOL)becomeFirstResponder {
+    [self.delegate touchKeyboardVisibilityChanged:YES];
     BOOL accepted = [_keyboardInput becomeFirstResponder];
     [self updateKeyboardButton];
     return accepted;
@@ -255,6 +275,7 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
 - (void)updateKeyboardButton {
     [_keyboardButton setImage:[UIImage systemImageNamed:self.keyboardVisible ? @"keyboard.chevron.compact.down" : @"keyboard"] forState:UIControlStateNormal];
     _keyboardButton.accessibilityLabel = self.keyboardVisible ? @"Hide keyboard" : @"Show keyboard";
+    [self.delegate touchKeyboardVisibilityChanged:self.keyboardVisible];
 }
 - (void)toggleKeyboard {
     [self cancelTouches];
