@@ -282,7 +282,7 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
         _toolbarTop = [_touchControls.topAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.topAnchor constant:8];
         _toolbarCenter = [_touchControls.centerXAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.centerXAnchor];
         [NSLayoutConstraint activateConstraints:@[
-            [_touchControls.widthAnchor constraintEqualToConstant:148],
+            [_touchControls.widthAnchor constraintEqualToConstant:200],
             [_touchControls.heightAnchor constraintEqualToConstant:44],
             _toolbarBottom, _toolbarTrailing,
         ]];
@@ -296,7 +296,7 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
             // Keep the keyboard/trackpad toolbar away from the touch controls.
             [NSLayoutConstraint deactivateConstraints:@[host->_toolbarBottom, host->_toolbarTrailing,
                                                         host->_toolbarTop, host->_toolbarCenter]];
-            [NSLayoutConstraint activateConstraints:visible ? @[host->_toolbarTop, host->_toolbarCenter] :
+            [NSLayoutConstraint activateConstraints:(visible || host->_touchGamepad.configuring) ? @[host->_toolbarTop, host->_toolbarCenter] :
                 @[host->_toolbarBottom, host->_toolbarTrailing]];
             [host layoutIfNeeded];
         };
@@ -310,6 +310,7 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
 }
 - (void)touchKeyboardVisibilityChanged:(BOOL)visible { _touchGamepad.keyboardVisible = visible; }
 - (void)touchGamepadPreferenceChanged:(BOOL)enabled { _touchGamepad.enabled = enabled; }
+- (void)touchControlSettings { [_touchGamepad toggleSettings]; }
 - (BOOL)canBecomeFirstResponder { return YES; }
 - (void)setNsWindow:(NSWindow *)window {
     _nsWindow = window;

@@ -3,6 +3,7 @@
 Implemented on `feature/touch-controller` from `feature/wow-home` (`2b87fd8`),
 2026-10-06. This replaces the earlier feasibility-only proposal. The native mouse
 experiment remains separate, and the inherited keyboard correction is retained.
+`feature/wolkara` continues from `b55084a` with the settings/editor below.
 
 ## Layout and behavior
 
@@ -10,9 +11,10 @@ When the guest window is active and no physical gamepad is connected, a transluc
 controller appears automatically. Connecting a physical gamepad removes it;
 disconnecting the physical pad restores it. The toolbar's gamepad icon toggles
 Automatic / Off and saves that preference. The toolbar moves to the top center
-while the touch controller is visible, leaving the game controls free.
+while the touch controller is visible or being configured, leaving the game controls free.
 
-- LB and LT at the upper left; RT and RB at the upper right.
+- LT then LB at the upper left; RB then RT at the upper right (left-to-right).
+  Triggers are outermost on both sides.
 - Two analog sticks at the bottom, with radial dead zones and clamped output.
 - Four independent direction buttons form an annular D-pad around the left stick.
 - Y/B/A/X form the matching ring around the right stick. Only the visible sectors
@@ -27,6 +29,27 @@ commands, input broadcasting or gameplay decisions. Touches outside the controls
 continue to the existing trackpad. Opening the keyboard, losing focus, entering
 the background, hiding the controls or connecting hardware releases held inputs.
 A cancelled asynchronous connection cannot restore an unwanted overlay.
+
+## Customization
+
+The fourth toolbar button (gear) opens a scrollable panel. Its Done and Reset
+buttons remain pinned at the bottom. The pointer icon toggles the trackpad.
+
+- **Transparency:** 0–80%, applied to the existing translucent artwork;
+  default 20% additional transparency.
+- **Shoulder button size:** 80–150%, default 100%.
+- **Sticks and face button size:** 65–140%, default 100%, subject to available
+  safe-area space. Each stick and its annular buttons scale together.
+- **Edit layout:** drag either stick/ring group, each rear button, or `+`.
+  Done editing exits the editor. Reset to defaults restores all sizes, opacity
+  and positions without changing whether automatic controls are enabled.
+
+Settings release held input before opening and suppress game input while open
+or editing. Standalone buttons remain touchable in edit mode so their pan
+recognizers work; their game values are still blocked. Positions are normalized
+to the available safe area, saved locally, and clamped after rotation/resizing.
+The toolbar and editor exit remain fixed, so moved controls cannot strand the UI.
+Preferences use `WolkaraTouchLayoutV1` and contain no game or account data.
 
 ## Controller API
 
@@ -66,7 +89,10 @@ bounds and malformed coordinates, D-pad diagonals/opposing directions/cancel,
 held modifiers, neutral release, annular hit regions, `+` alignment and trackpad
 passthrough. The lifecycle fixture checks physical priority, own-controller and
 snapshot filtering, keyboard/focus suspension, late replies, error/retry and
-teardown. The launcher fixture checks that status text fits at normal and large
+teardown. Additional checks cover malformed preferences, clamped sizes,
+persistence, resized bounds, all four rear buttons and `+` being hit-testable
+and draggable in edit mode, suppressed game input while editing, and reset.
+The launcher fixture checks that status text fits at normal and large
 accessibility font sizes.
 
 All six commands above passed with Xcode 27.0 and the iOS 27.0 iPhone 16 Pro Max
@@ -79,10 +105,10 @@ The signed device build also passed:
 ```sh
 xcodebuild -project Tolkara.xcodeproj -scheme Tolkara -configuration Debug \
   -sdk iphoneos -destination 'generic/platform=iOS' \
-  -derivedDataPath build/iphone-touch-gamepad-signed ARCHS=arm64 \
+  -derivedDataPath build/iphone-wolkara-signed ARCHS=arm64 \
   TOLKARA_SYSTEM_ROOTS=YES build
 codesign --verify --deep --strict \
-  build/iphone-touch-gamepad-signed/Build/Products/Debug-iphoneos/Tolkara.app
+  build/iphone-wolkara-signed/Build/Products/Debug-iphoneos/Tolkara.app
 ```
 
 Strict signature verification passed with normal access to the macOS keychain.

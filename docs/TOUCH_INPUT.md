@@ -1,8 +1,9 @@
 # Experimental touch input
 
-The AppKit adapter provides three translucent toolbar buttons: trackpad, keyboard
-and automatic touch controller. The toolbar stays at the bottom right when the
-controller is hidden and moves to the top center when it is visible. The keyboard button opens and closes the iOS
+The AppKit adapter provides four translucent toolbar buttons: pointer, keyboard,
+automatic touch controller and control settings (gear). The toolbar stays at the
+bottom right when the controller is hidden and moves to the top center when it is
+visible or being configured. The keyboard button opens and closes the iOS
 keyboard. It stays above the keyboard when open, respecting the safe area;
 the guest's rendering size stays unchanged. A small accessory row provides
 Escape, Tab, left/right arrows, Return and a close button.
@@ -12,9 +13,9 @@ is connected, or turns them off. The custom layout provides two sticks, D-pad,
 ABXY, LB/LT/RB/RT and `+`; it hides and releases held input while the keyboard is
 open. See [touch controller details and validation](TOUCH_CONTROLLER_PROPOSAL.md).
 
-The hand button toggles trackpad mode and appears cyan when enabled. The
+The pointer button toggles trackpad mode and appears cyan when enabled. The
 initial default is on for iPhone, off for iPad; a user's choice is saved
-locally. Switching it off restores direct touch input. Long-press the hand
+locally. Switching it off restores direct touch input. Long-press the pointer
 button for a menu with left, right and middle clicks.
 
 | Finger action in trackpad mode | Mouse input |
@@ -22,7 +23,7 @@ button for a menu with left, right and middle clicks.
 | Slide one finger | Relative cursor movement; lifting/repositioning does not move the cursor. |
 | Tap once / twice | Left click / double click. |
 | Tap with two fingers | Right click. |
-| Tap with three fingers | Middle click. The hand button's menu provides an alternative. |
+| Tap with three fingers | Middle click. The pointer button's menu provides an alternative. |
 | Slide two fingers | Vertical or horizontal wheel scrolling, with accumulated partial steps. |
 | Hold one finger still for about half a second, then slide | Left-button drag until release. |
 | Hold two fingers still for about half a second, then slide | Right-button drag, including relative camera motion when the guest captures the mouse. |

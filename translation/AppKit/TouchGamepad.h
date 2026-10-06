@@ -11,8 +11,10 @@ CGPoint AKTouchGamepadStickPosition(CGPoint point, CGSize size);
 @property(nonatomic) BOOL enabled;
 @property(nonatomic) BOOL keyboardVisible;
 @property(nonatomic, readonly) BOOL visible;
+@property(nonatomic, readonly) BOOL configuring;
 @property(nonatomic, copy, nullable) void (^visibilityChanged)(BOOL visible);
 - (void)refresh;
+- (void)toggleSettings;
 - (void)invalidate;
 @end
 NS_ASSUME_NONNULL_END

@@ -1,4 +1,5 @@
 #import "TouchGamepad.h"
+#import "TouchGamepadLayout.h"
 #include <math.h>
 
 CGPoint AKTouchGamepadStickPosition(CGPoint point, CGSize size) {
@@ -115,62 +116,250 @@ CGPoint AKTouchGamepadStickPosition(CGPoint point, CGSize size) {
 - (void)reset { [self updatePosition:CGPointZero]; }
 @end
 
-@interface AKGamepadOverlay : UIView
+@interface AKGamepadOverlay : UIView <UIGestureRecognizerDelegate>
 @property(nonatomic, readonly) NSDictionary<NSString *,AKGamepadButton *> *buttons;
 @property(nonatomic, readonly) AKGamepadStick *leftStick;
 @property(nonatomic, readonly) AKGamepadStick *rightStick;
+@property(nonatomic, readonly) AKGamepadLayout *preferences;
+@property(nonatomic) BOOL controlsVisible;
+@property(nonatomic, readonly) BOOL configuring;
+@property(nonatomic, readonly) BOOL editing;
+@property(nonatomic, copy) void (^configurationChanged)(void);
 - (void)reset;
+- (void)toggleSettings;
+- (void)finishConfiguration;
 @end
-@implementation AKGamepadOverlay
+@implementation AKGamepadOverlay {
+    NSDictionary<NSString *,UIView *> *_items;
+    NSMutableDictionary<NSString *,NSValue *> *_dragOrigins;
+    UIView *_settings;
+    UIButton *_editDone;
+    UILabel *_hint;
+    UISwitch *_editSwitch;
+    NSArray<UISlider *> *_sliders;
+    NSArray<UILabel *> *_values;
+}
 - (instancetype)initWithFrame:(CGRect)frame {
     if ((self = [super initWithFrame:frame])) {
         self.multipleTouchEnabled = YES;
-        // AppKit attaches the guest's rendering layer after creating its host.
-        // Stay above that layer, below the cursor (100000) and toolbar (100001).
+        // Above the guest surface, below the cursor and keyboard toolbar.
         self.layer.zPosition = 99999;
+        _preferences = [[AKGamepadLayout alloc] initWithDefaults:NSUserDefaults.standardUserDefaults];
+        _dragOrigins = [NSMutableDictionary new];
         NSArray *elements = @[GCInputButtonA,GCInputButtonB,GCInputButtonX,GCInputButtonY,
             GCInputLeftShoulder,GCInputLeftTrigger,GCInputRightTrigger,GCInputRightShoulder,
             GCInputButtonMenu,@"dpad.up",@"dpad.right",@"dpad.down",@"dpad.left"];
         NSArray *titles = @[@"A",@"B",@"X",@"Y",@"LB",@"LT",@"RT",@"RB",@"+",@"↑",@"→",@"↓",@"←"];
         NSMutableDictionary *buttons = [NSMutableDictionary new];
+        UIView *left = [UIView new], *right = [UIView new];
+        left.multipleTouchEnabled = right.multipleTouchEnabled = YES;
+        [self addSubview:left]; [self addSubview:right];
         for (NSUInteger i=0; i<elements.count; i++) {
             AKGamepadButton *button = [AKGamepadButton new]; button.element = elements[i];
             [button setTitle:titles[i] forState:UIControlStateNormal];
             button.accessibilityLabel = [@"Controller " stringByAppendingString:elements[i]];
             button.accessibilityIdentifier = [@"tolkara.gamepad." stringByAppendingString:elements[i]];
-            buttons[elements[i]] = button; [self addSubview:button];
+            buttons[elements[i]] = button;
+            [(i<4 ? right : i>=9 ? left : self) addSubview:button];
         }
         _buttons = buttons;
         _leftStick = [AKGamepadStick new]; _rightStick = [AKGamepadStick new];
         _leftStick.element = GCInputLeftThumbstick; _rightStick.element = GCInputRightThumbstick;
         _leftStick.accessibilityLabel = @"Controller left stick"; _rightStick.accessibilityLabel = @"Controller right stick";
         _leftStick.accessibilityIdentifier = @"tolkara.gamepad.leftStick"; _rightStick.accessibilityIdentifier = @"tolkara.gamepad.rightStick";
-        [self addSubview:_leftStick]; [self addSubview:_rightStick];
+        [left addSubview:_leftStick]; [right addSubview:_rightStick];
+        _items = @{@"left":left,@"right":right,@"LB":buttons[GCInputLeftShoulder],@"LT":buttons[GCInputLeftTrigger],
+            @"RB":buttons[GCInputRightShoulder],@"RT":buttons[GCInputRightTrigger],@"menu":buttons[GCInputButtonMenu]};
+        for (NSString *name in _items) {
+            UIView *item = _items[name]; item.accessibilityIdentifier = [@"wolkara.layout." stringByAppendingString:name];
+            // Retain button identifiers used by input tests and accessibility.
+            if ([item isKindOfClass:AKGamepadButton.class]) item.accessibilityIdentifier = [@"tolkara.gamepad." stringByAppendingString:((AKGamepadButton *)item).element];
+            UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(drag:)];
+            pan.delegate = self; [item addGestureRecognizer:pan];
+        }
+        _editDone = [UIButton buttonWithType:UIButtonTypeSystem];
+        [_editDone setTitle:@"Done editing" forState:UIControlStateNormal];
+        _editDone.backgroundColor = [UIColor colorWithWhite:0.12 alpha:0.96];
+        _editDone.tintColor = UIColor.systemYellowColor; _editDone.layer.cornerRadius = 14;
+        _editDone.accessibilityIdentifier = @"wolkara.layout.done";
+        [_editDone addTarget:self action:@selector(finishConfiguration) forControlEvents:UIControlEventTouchUpInside];
+        [self addSubview:_editDone];
+        _hint = [UILabel new]; _hint.text = @"Drag controls to move them";
+        _hint.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+        _hint.textColor = UIColor.whiteColor; _hint.textAlignment = NSTextAlignmentCenter;
+        _hint.userInteractionEnabled = NO; [self addSubview:_hint];
+        [self updateAppearance];
     }
     return self;
 }
+- (BOOL)configuring { return _settings != nil || _editing; }
+- (void)setControlsVisible:(BOOL)visible { _controlsVisible = visible; [self updateAppearance]; }
+- (void)updateAppearance {
+    self.hidden = !_controlsVisible && !self.configuring;
+    for (UIView *item in _items.allValues) {
+        item.hidden = !_controlsVisible && !self.configuring;
+        item.alpha = _editing ? MAX(0.5,_preferences.opacity) : _preferences.opacity;
+        item.layer.borderWidth = _editing ? 1 : ([item isKindOfClass:AKGamepadButton.class] ? 1 : 0);
+        item.layer.borderColor = (_editing ? UIColor.systemYellowColor : [UIColor colorWithWhite:1 alpha:0.3]).CGColor;
+    }
+    // An enabled UIControl is needed for its own pan recognizer to receive
+    // touches. The manager suppresses game input throughout configuration.
+    for (AKGamepadButton *button in _buttons.allValues) button.enabled = !self.configuring || _editing;
+    _leftStick.enabled = _rightStick.enabled = !self.configuring;
+    _editDone.hidden = _hint.hidden = !_editing;
+    [self setNeedsLayout];
+}
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
-    UIView *hit = [super hitTest:point withEvent:event]; return hit == self ? nil : hit;
+    UIView *hit = [super hitTest:point withEvent:event];
+    if (self.configuring) return hit; // Editing/settings must never click the game.
+    if (hit == self || hit == _items[@"left"] || hit == _items[@"right"]) return nil;
+    return hit;
+}
+- (CGRect)usableBounds { return UIEdgeInsetsInsetRect(self.bounds,self.safeAreaInsets); }
+- (void)place:(NSString *)name frame:(CGRect)frame baseSize:(CGSize)base safe:(CGRect)safe {
+    UIView *item = _items[name];
+    CGRect placed = [_preferences frameForItem:name defaultFrame:frame inBounds:safe];
+    item.transform = CGAffineTransformIdentity; item.bounds = (CGRect){CGPointZero,base};
+    item.center = CGPointMake(CGRectGetMidX(placed),CGRectGetMidY(placed));
+    item.transform = CGAffineTransformMakeScale(placed.size.width/base.width,placed.size.height/base.height);
 }
 - (void)layoutSubviews {
-    [super layoutSubviews]; CGRect safe = UIEdgeInsetsInsetRect(self.bounds,self.safeAreaInsets);
-    CGFloat left = CGRectGetMinX(safe)+6, right = CGRectGetMaxX(safe)-222;
-    CGFloat bottom = CGRectGetMaxY(safe)-222, top = CGRectGetMinY(safe)+8;
-    _leftStick.frame = CGRectMake(left+56,bottom+56,104,104);
-    _rightStick.frame = CGRectMake(right+56,bottom+56,104,104);
+    [super layoutSubviews]; CGRect safe = [self usableBounds];
+    CGFloat side = MIN(216*_preferences.frontScale,MIN(safe.size.height-70,safe.size.width/2-12));
+    side = MAX(44,side);
+    CGFloat w = 56*_preferences.rearScale, h = 44*_preferences.rearScale;
+    CGFloat left = CGRectGetMinX(safe)+6, right = CGRectGetMaxX(safe)-6;
+    CGFloat bottom = CGRectGetMaxY(safe)-6, top = CGRectGetMinY(safe)+8;
+    [self place:@"left" frame:CGRectMake(left,bottom-side,side,side) baseSize:CGSizeMake(216,216) safe:safe];
+    [self place:@"right" frame:CGRectMake(right-side,bottom-side,side,side) baseSize:CGSizeMake(216,216) safe:safe];
+    _leftStick.frame = _rightStick.frame = CGRectMake(56,56,104,104);
     NSArray *leftNames = @[@"dpad.up",@"dpad.right",@"dpad.down",@"dpad.left"];
     NSArray *rightNames = @[GCInputButtonY,GCInputButtonB,GCInputButtonA,GCInputButtonX];
     for (NSUInteger i=0; i<4; i++) {
-        AKGamepadButton *leftButton = _buttons[leftNames[i]], *rightButton = _buttons[rightNames[i]];
-        if (leftButton.sector != (NSInteger)i) leftButton.sector = i;
-        if (rightButton.sector != (NSInteger)i) rightButton.sector = i;
-        leftButton.frame = CGRectMake(left,bottom,216,216); rightButton.frame = CGRectMake(right,bottom,216,216);
+        AKGamepadButton *a = _buttons[leftNames[i]], *b = _buttons[rightNames[i]];
+        if (a.sector != (NSInteger)i) a.sector = i;
+        if (b.sector != (NSInteger)i) b.sector = i;
+        a.frame = b.frame = CGRectMake(0,0,216,216);
     }
-    _buttons[GCInputLeftShoulder].frame = CGRectMake(left,top,56,44);
-    _buttons[GCInputLeftTrigger].frame = CGRectMake(left+64,top,56,44);
-    _buttons[GCInputRightTrigger].frame = CGRectMake(right+96,top,56,44);
-    _buttons[GCInputRightShoulder].frame = CGRectMake(right+160,top,56,44);
-    _buttons[GCInputButtonMenu].frame = CGRectMake(CGRectGetMidX(self.bounds)-22,bottom+168,44,44);
+    [self place:@"LT" frame:CGRectMake(left,top,w,h) baseSize:CGSizeMake(56,44) safe:safe];
+    [self place:@"LB" frame:CGRectMake(left+w+8,top,w,h) baseSize:CGSizeMake(56,44) safe:safe];
+    [self place:@"RT" frame:CGRectMake(right-w,top,w,h) baseSize:CGSizeMake(56,44) safe:safe];
+    [self place:@"RB" frame:CGRectMake(right-w*2-8,top,w,h) baseSize:CGSizeMake(56,44) safe:safe];
+    [self place:@"menu" frame:CGRectMake(CGRectGetMidX(self.bounds)-22,bottom-side+190*side/216-22,44,44)
+        baseSize:CGSizeMake(44,44) safe:safe];
+    _editDone.frame = CGRectMake(CGRectGetMidX(safe)-70,CGRectGetMinY(safe)+60,140,40);
+    _hint.frame = CGRectMake(CGRectGetMidX(safe)-150,CGRectGetMinY(safe)+103,300,22);
+    if (_settings) {
+        CGFloat width = MIN(390,safe.size.width-24), height = MIN(390,safe.size.height-16);
+        _settings.frame = CGRectMake(CGRectGetMidX(safe)-width/2,CGRectGetMaxY(safe)-height-8,width,height);
+    }
+}
+- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gestureRecognizer {
+    (void)gestureRecognizer; return _editing;
+}
+- (void)drag:(UIPanGestureRecognizer *)pan {
+    NSString *name = [_items allKeysForObject:pan.view].firstObject;
+    if (!name || !_editing) return;
+    if (pan.state == UIGestureRecognizerStateBegan) {
+        [_dragOrigins setObject:[NSValue valueWithCGRect:pan.view.frame] forKey:name]; [self reset];
+    }
+    CGRect frame = [_dragOrigins[name] CGRectValue];
+    if (pan.state == UIGestureRecognizerStateCancelled) {
+        [_preferences moveItem:name toFrame:frame inBounds:[self usableBounds]];
+    } else {
+        CGPoint delta = [pan translationInView:self];
+        frame.origin.x += delta.x; frame.origin.y += delta.y;
+        [_preferences moveItem:name toFrame:frame inBounds:[self usableBounds]];
+    }
+    [self setNeedsLayout]; [self layoutIfNeeded];
+    if (pan.state == UIGestureRecognizerStateEnded || pan.state == UIGestureRecognizerStateCancelled) {
+        [_preferences save]; [_dragOrigins removeObjectForKey:name];
+    }
+}
+- (UILabel *)label:(NSString *)text {
+    UILabel *label = [UILabel new]; label.text = text; label.textColor = UIColor.whiteColor;
+    label.font = [UIFont systemFontOfSize:15 weight:UIFontWeightMedium]; label.numberOfLines = 0;
+    return label;
+}
+- (void)toggleSettings {
+    if (_settings || _editing) { [self finishConfiguration]; return; }
+    [self reset];
+    _settings = [UIView new]; _settings.backgroundColor = [UIColor colorWithRed:.06 green:.08 blue:.11 alpha:1];
+    _settings.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+    _settings.layer.cornerRadius = 20; _settings.layer.borderWidth = 1;
+    _settings.layer.borderColor = [UIColor colorWithWhite:1 alpha:.2].CGColor;
+    _settings.accessibilityIdentifier = @"wolkara.controls.settings";
+    [self addSubview:_settings];
+    UIScrollView *scroll = [UIScrollView new]; scroll.translatesAutoresizingMaskIntoConstraints = NO;
+    [_settings addSubview:scroll];
+    UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[[self label:@"Touch controls"]]];
+    stack.axis = UILayoutConstraintAxisVertical; stack.spacing = 6; stack.translatesAutoresizingMaskIntoConstraints = NO;
+    [scroll addSubview:stack];
+    NSMutableArray *sliders = [NSMutableArray new], *values = [NSMutableArray new];
+    NSArray *names = @[@"Transparency",@"Shoulder button size",@"Sticks and face button size"];
+    CGFloat initial[] = {1-_preferences.opacity,_preferences.rearScale,_preferences.frontScale};
+    CGFloat min[] = {0,0.8,0.65}, max[] = {0.8,1.5,1.4};
+    for (NSUInteger i=0; i<3; i++) {
+        UILabel *value = [self label:@""]; [values addObject:value]; [stack addArrangedSubview:value];
+        UISlider *slider = [UISlider new]; slider.tag = i; slider.minimumValue = min[i]; slider.maximumValue = max[i]; slider.value = initial[i];
+        slider.accessibilityLabel = names[i]; slider.accessibilityIdentifier = [@"wolkara.controls." stringByAppendingString:@[@"transparency",@"rearScale",@"frontScale"][i]];
+        [slider addTarget:self action:@selector(sliderChanged:) forControlEvents:UIControlEventValueChanged];
+        [sliders addObject:slider]; [stack addArrangedSubview:slider];
+    }
+    _sliders = sliders; _values = values; [self updateValues];
+    _editSwitch = [UISwitch new]; _editSwitch.accessibilityLabel = @"Edit layout";
+    _editSwitch.accessibilityIdentifier = @"wolkara.controls.edit";
+    [_editSwitch addTarget:self action:@selector(beginEditing:) forControlEvents:UIControlEventValueChanged];
+    UIStackView *editRow = [[UIStackView alloc] initWithArrangedSubviews:@[[self label:@"Edit layout"],_editSwitch]];
+    editRow.axis = UILayoutConstraintAxisHorizontal; editRow.alignment = UIStackViewAlignmentCenter;
+    [stack addArrangedSubview:editRow];
+    [stack addArrangedSubview:[self label:@"Move each shoulder button, +, or a stick with its ring. Changes are saved on this device."]];
+    UIButton *reset = [UIButton buttonWithType:UIButtonTypeSystem]; [reset setTitle:@"Reset to defaults" forState:UIControlStateNormal];
+    reset.accessibilityIdentifier = @"wolkara.controls.reset";
+    [reset addTarget:self action:@selector(resetLayout) forControlEvents:UIControlEventTouchUpInside];
+    UIButton *done = [UIButton buttonWithType:UIButtonTypeSystem]; [done setTitle:@"Done" forState:UIControlStateNormal];
+    [done addTarget:self action:@selector(finishConfiguration) forControlEvents:UIControlEventTouchUpInside];
+    UIStackView *footer = [[UIStackView alloc] initWithArrangedSubviews:@[reset,done]];
+    footer.axis = UILayoutConstraintAxisHorizontal; footer.distribution = UIStackViewDistributionFillEqually;
+    footer.translatesAutoresizingMaskIntoConstraints = NO; [_settings addSubview:footer];
+    [NSLayoutConstraint activateConstraints:@[
+        [footer.bottomAnchor constraintEqualToAnchor:_settings.bottomAnchor constant:-8], [footer.heightAnchor constraintEqualToConstant:44],
+        [footer.leadingAnchor constraintEqualToAnchor:_settings.leadingAnchor constant:18], [footer.trailingAnchor constraintEqualToAnchor:_settings.trailingAnchor constant:-18],
+        [scroll.topAnchor constraintEqualToAnchor:_settings.topAnchor constant:16], [scroll.bottomAnchor constraintEqualToAnchor:footer.topAnchor constant:-8],
+        [scroll.leadingAnchor constraintEqualToAnchor:_settings.leadingAnchor constant:18], [scroll.trailingAnchor constraintEqualToAnchor:_settings.trailingAnchor constant:-18],
+        [stack.topAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.topAnchor], [stack.bottomAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.bottomAnchor],
+        [stack.leadingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.leadingAnchor], [stack.trailingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.trailingAnchor],
+        [stack.widthAnchor constraintEqualToAnchor:scroll.frameLayoutGuide.widthAnchor]
+    ]];
+    [self updateAppearance]; if (self.configurationChanged) self.configurationChanged();
+}
+- (void)updateValues {
+    _values[0].text = [NSString stringWithFormat:@"Transparency · %.0f%%",(1-_preferences.opacity)*100];
+    _values[1].text = [NSString stringWithFormat:@"Shoulder button size · %.0f%%",_preferences.rearScale*100];
+    _values[2].text = [NSString stringWithFormat:@"Sticks and face button size · %.0f%%",_preferences.frontScale*100];
+    for (NSUInteger i=0; i<_sliders.count; i++) _sliders[i].accessibilityValue = _values[i].text;
+}
+- (void)sliderChanged:(UISlider *)slider {
+    if (slider.tag == 0) _preferences.opacity = 1-slider.value;
+    else if (slider.tag == 1) _preferences.rearScale = slider.value;
+    else if (slider.tag == 2) _preferences.frontScale = slider.value;
+    [_preferences save]; [self updateValues]; [self updateAppearance];
+}
+- (void)beginEditing:(UISwitch *)sender {
+    if (!sender.on) return;
+    [self reset]; _editing = YES; [_settings removeFromSuperview]; _settings = nil;
+    _sliders = nil; _values = nil; _editSwitch = nil;
+    [self updateAppearance]; if (self.configurationChanged) self.configurationChanged();
+}
+- (void)resetLayout {
+    [self reset]; [_preferences reset];
+    _sliders[0].value = 1-_preferences.opacity; _sliders[1].value = _preferences.rearScale; _sliders[2].value = _preferences.frontScale;
+    [self updateValues]; [self updateAppearance];
+}
+- (void)finishConfiguration {
+    [self reset]; [_preferences save]; _editing = NO; [_dragOrigins removeAllObjects];
+    [_settings removeFromSuperview]; _settings = nil; _sliders = nil; _values = nil; _editSwitch = nil;
+    [self updateAppearance]; if (self.configurationChanged) self.configurationChanged();
 }
 - (void)reset {
     for (AKGamepadButton *button in _buttons.allValues) [button releaseInput];
@@ -189,7 +378,12 @@ CGPoint AKTouchGamepadStickPosition(CGPoint point, CGSize size) {
         _host = host; _enabled = YES;
         _overlay = [[AKGamepadOverlay alloc] initWithFrame:host.bounds];
         _overlay.autoresizingMask = UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
-        _overlay.hidden = YES; [host addSubview:_overlay];
+        [host addSubview:_overlay];
+        __weak AKTouchGamepad *weakSelf = self;
+        _overlay.configurationChanged = ^{
+            AKTouchGamepad *self = weakSelf;
+            if (self.visibilityChanged) self.visibilityChanged(self.visible);
+        };
         for (AKGamepadButton *button in _overlay.buttons.allValues)
             [button addTarget:self action:@selector(buttonChanged:) forControlEvents:UIControlEventValueChanged];
         [_overlay.leftStick addTarget:self action:@selector(stickChanged:) forControlEvents:UIControlEventValueChanged];
@@ -237,11 +431,11 @@ CGPoint AKTouchGamepadStickPosition(CGPoint point, CGSize size) {
 }
 - (void)setVisible:(BOOL)visible {
     if (_visible == visible) return;
-    _visible = visible; _overlay.hidden = !visible;
+    _visible = visible; _overlay.controlsVisible = visible;
     if (self.visibilityChanged) self.visibilityChanged(visible);
 }
 - (void)buttonChanged:(AKGamepadButton *)button {
-    if (!_visible) return;
+    if (!_visible || _overlay.configuring) return;
     if ([button.element hasPrefix:@"dpad."]) {
         CGPoint value = CGPointMake(_overlay.buttons[@"dpad.right"].pressed - _overlay.buttons[@"dpad.left"].pressed,
                                     _overlay.buttons[@"dpad.up"].pressed - _overlay.buttons[@"dpad.down"].pressed);
@@ -249,7 +443,7 @@ CGPoint AKTouchGamepadStickPosition(CGPoint point, CGSize size) {
     } else [_virtualController setValue:button.pressed ? 1 : 0 forButtonElement:button.element];
 }
 - (void)stickChanged:(AKGamepadStick *)stick {
-    if (_visible) [_virtualController setPosition:stick.position forDirectionPadElement:stick.element];
+    if (_visible && !_overlay.configuring) [_virtualController setPosition:stick.position forDirectionPadElement:stick.element];
 }
 - (void)disconnectController {
     GCVirtualController *controller = _virtualController;
@@ -305,7 +499,7 @@ CGPoint AKTouchGamepadStickPosition(CGPoint point, CGSize size) {
     (void)note; _active = YES; _failed = NO; [self refresh];
 }
 - (void)deactivate:(NSNotification *)note {
-    (void)note; _active = NO; [self refresh];
+    (void)note; [_overlay finishConfiguration]; _active = NO; [self refresh];
 }
 - (void)setEnabled:(BOOL)enabled {
     _enabled = enabled; _failed = NO; [self refresh];
@@ -313,7 +507,10 @@ CGPoint AKTouchGamepadStickPosition(CGPoint point, CGSize size) {
 - (void)setKeyboardVisible:(BOOL)visible {
     _keyboardVisible = visible; [self refresh];
 }
+- (BOOL)configuring { return _overlay.configuring; }
+- (void)toggleSettings { [_overlay toggleSettings]; }
 - (void)invalidate {
+    [_overlay finishConfiguration];
     _invalidated = YES;
     [NSNotificationCenter.defaultCenter removeObserver:self];
     [self refresh];
