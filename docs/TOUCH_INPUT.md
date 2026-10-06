@@ -7,6 +7,10 @@ visible or being configured. The keyboard button opens and closes the iOS
 keyboard. It stays above the keyboard when open, respecting the safe area;
 the guest's rendering size stays unchanged. A small accessory row provides
 Escape, Tab, left/right arrows, Return and a close button.
+The control-transparency slider also fades all four toolbar buttons, updates
+them live and restores the saved value at launch. It does not fade the native
+keyboard or the settings panel. The pointer icon is optically centered with a
+small rightward offset, without moving its touch target.
 
 The gamepad button enables automatic touch controls when no physical controller
 is connected, or turns them off. The custom layout provides two sticks, D-pad,
