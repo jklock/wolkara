@@ -1,10 +1,16 @@
 # Experimental touch input
 
-The AppKit adapter provides two translucent buttons at the bottom right of
-an application's window. The keyboard button opens and closes the iOS
+The AppKit adapter provides three translucent toolbar buttons: trackpad, keyboard
+and automatic touch controller. The toolbar stays at the bottom right when the
+controller is hidden and moves to the top center when it is visible. The keyboard button opens and closes the iOS
 keyboard. It stays above the keyboard when open, respecting the safe area;
 the guest's rendering size stays unchanged. A small accessory row provides
 Escape, Tab, left/right arrows, Return and a close button.
+
+The gamepad button enables automatic touch controls when no physical controller
+is connected, or turns them off. The custom layout provides two sticks, D-pad,
+ABXY, LB/LT/RB/RT and `+`; it hides and releases held input while the keyboard is
+open. See [touch controller details and validation](TOUCH_CONTROLLER_PROPOSAL.md).
 
 The hand button toggles trackpad mode and appears cyan when enabled. The
 initial default is on for iPhone, off for iPad; a user's choice is saved

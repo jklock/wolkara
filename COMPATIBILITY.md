@@ -34,6 +34,12 @@ this fix still need manual confirmation.** Fresh installation is covered only by
 fixtures. AltStore PAL execution remains unproven. These launcher checks do not
 extend the gameplay results recorded below.
 
+On 2026-10-06, the follow-up adds an [automatic touch controller](docs/TOUCH_CONTROLLER_PROPOSAL.md)
+with a custom UIKit layout, and fixes clipped descenders in the home status.
+Real GameController input and connection lifecycle are covered by synthetic
+simulator fixtures. This touch-controller revision has **not yet been tested
+in WoW on the physical iPhone** and does not extend the gameplay report below.
+
 Results updated on 2026-10-02 with the Forever gameplay report below.
 
 Experimental support was tested on an iPhone 16 Pro Max / iOS 27.0 with

@@ -131,6 +131,15 @@ The intended public distribution channel is **AltStore PAL**, not Classic.
 There is currently **no demonstrated PAL-compatible native execution path** for
 this launcher. The home screen and downloader do not solve that.
 
+An [AltStore source](https://faq.altstore.io/developers/make-a-source) is a feasible
+way to list and update this launcher: host its source JSON, artwork and release
+packages, then users add the URL in [PAL's Sources tab](https://faq.altstore.io/altstore-pal/sources).
+PAL still requires an Apple-notarized app/Alternative Distribution Package and
+marketplace registration; a source is not an exemption. Classic sources instead
+serve IPAs signed through the user's sideloading setup. Updating the launcher via
+a source is distinct from the launcher's own WoW CDN updates. No source was
+published and no notarization or distribution submission was performed here.
+
 [AltStore's PAL distribution documentation](https://faq.altstore.io/developers/distribute-with-altstore-pal)
 requires Apple notarization. [Apple's code-signing documentation](https://support.apple.com/guide/security/app-code-signing-process-sec7c917bf14/web)
 explains mandatory executable-code validation. Our engineering conclusion is
@@ -291,5 +300,14 @@ Results with Xcode 27.0:
   BUILD SUCCEEDED. Strict signature verification passed, and both license
   resources match the checked-in originals byte for byte.
 
-Touch-controller options are assessed separately in
-[the proposal](TOUCH_CONTROLLER_PROPOSAL.md); this UI branch does not enable one.
+The follow-up on `feature/touch-controller` adds an automatic virtual gamepad;
+see [its layout, implementation and validation](TOUCH_CONTROLLER_PROPOSAL.md).
+
+
+## Status text correction (2026-10-06)
+
+The status row previously stretched the title against a 20-point spinner,
+compressing a roughly 27.5-point line and clipping descenders in “Ready to play”.
+The row now centers its arranged views and labels resist vertical compression.
+The UIKit fixture checks text bounds at default and maximum accessibility sizes;
+large content remains scrollable. This changes neither update nor launch logic.
