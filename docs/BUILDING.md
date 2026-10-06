@@ -83,7 +83,15 @@ signing under Signing & Capabilities.
 When building directly in Xcode, run `tools/generate.sh` after setting up
 `local.env`, open `Tolkara.xcodeproj`, and select the **Tolkara** scheme and
 your device. The shared scheme runs without a debugger; keep **Debug
-executable** disabled. Direct Xcode builds include the generic compatibility
+executable** disabled. Keep **Run > Diagnostics > Metal API Validation** off
+as well. A reported Xcode-only startup failure completed memory preparation,
+then raised an `isLowPower` exception on the iOS Metal device. Xcode's extra
+Metal debug wrapper is the suspected cause; an ordinary icon launch worked.
+The shared scheme now explicitly disables this option; regenerate it with
+`tools/generate.sh` after updating an older checkout. This changes Xcode's
+launch diagnostics, not the game's files or the memory-preparation route.
+The [compatibility report](../COMPATIBILITY.md) tracks the pending device retest.
+Direct Xcode builds include the generic compatibility
 libraries by default. `tools/install.sh` retains its application-specific
 default; pass `NATIVE_GUEST_SHIMS=GENERIC` to that script to build without a
 particular `GUEST_EXE`. Regenerating the project replaces manual project

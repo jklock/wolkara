@@ -31,6 +31,9 @@ schemes:
       executable: Tolkara
       # Guest execution must not keep Xcode's debugger attached.
       debugEnabled: false
+      # Xcode's Metal debug device can forward macOS-only selectors past the
+      # adapter to the iOS driver. Match an ordinary Home Screen launch.
+      enableGPUValidationMode: false
     management:
       shared: true
       isShown: true

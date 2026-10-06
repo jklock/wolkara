@@ -55,6 +55,16 @@ manual simulator typing/slider drags and the signed device build pass. The
 still needs a physical-device retest; simulator success does not establish that
 the user's stall is resolved or that game performance is unchanged.
 
+On 2026-10-07, the user reported a first-launch failure after installing from
+Xcode, followed by a successful launch from the icon. The failed device log
+records completed memory preparation and confirmed helper detachment, followed
+by an `isLowPower` Objective-C exception on the native iOS Metal device during
+initialization. Xcode's launch record enabled `MTL_DEBUG_LAYER=1`; the shared
+scheme now disables Metal API Validation to match an ordinary icon launch.
+A synthetic Metal-property probe passes in the simulator with validation both
+on and off, so it does not reproduce the device failure. **The first Xcode
+launch with validation disabled still needs a physical-device retest.**
+
 Results updated on 2026-10-02 with the Forever gameplay report below.
 
 Experimental support was tested on an iPhone 16 Pro Max / iOS 27.0 with
