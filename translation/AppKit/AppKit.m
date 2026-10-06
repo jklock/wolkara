@@ -395,6 +395,14 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
         [self postTextKey:code characters:characters unmodified:unmodified modifiers:modifiers];
     });
 }
+- (void)touchReplaceText:(NSString *)text {
+    // macOS field editing through the same event queue as typed input. This
+    // is one explicit Replace action, with no clipboard, text query or Return.
+    // Command is carried on the A events only; it cannot stay held for typing.
+    [self postTextKey:0 characters:@"a" unmodified:@"a" modifiers:NSEventModifierFlagCommand];
+    [self touchSpecialKey:51 characters:@"\x7f"];
+    [self touchInsertText:text];
+}
 - (void)touchSpecialKey:(unsigned short)code characters:(NSString *)characters {
     [self postTextKey:code characters:characters unmodified:characters modifiers:0];
 }

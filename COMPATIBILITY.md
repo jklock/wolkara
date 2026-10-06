@@ -59,6 +59,10 @@ remove per-key native document resets and service UIKit tracking work while the
 keyboard/settings are open. Synthetic checks pass; resolution of the device
 stall and frame-rate impact remain unverified. The toolbar now stays top center
 regardless of keyboard/controller state, with a further optical pointer offset.
+The draft's **Replace** action now selects all and replaces the focused field
+instead of appending; an empty draft clears it. Reading the field's prior text
+is still unsupported. Synthetic replacement/clearing and key-order tests pass;
+WoW's handling of Select All on the iPhone needs user validation.
 
 On 2026-10-07, the user reported a first-launch failure after installing from
 Xcode, followed by a successful launch from the icon. The failed device log

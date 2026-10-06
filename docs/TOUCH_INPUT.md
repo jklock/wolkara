@@ -41,28 +41,50 @@ path. Opening the keyboard cancels a current trackpad gesture.
 
 Select a text field in the application, then open the keyboard manually.
 Write, select, correct, paste or dictate into the native **Draft** panel; tap
-**Insert** (or the system keyboard's **Done**) to insert the completed draft at
-the game's current cursor. This does not press Return. Press **↵** separately to
-submit in the game. While a draft is present or recognition/composition is still
-pending, game accessory keys are disabled, so they cannot move to another field
-or submit an unfinished draft. **Clear draft** clears only this local document;
-the accessory **⌫** acts on existing game text after the draft is empty.
+**Replace** (or the system keyboard's **Done**) to replace **all** text in the
+selected game field. This does not press Return. Press **↵** separately to submit
+in the game. An empty draft clears the field: open the keyboard and tap Replace
+without entering text. A just-submitted draft is cleared locally and Replace is
+then disabled until another edit or keyboard session, preventing a second tap
+or queued Done callback from accidentally clearing the replacement.
+
+While a draft is present or recognition/composition is still pending, game
+accessory keys are disabled, so they cannot move to another field or submit an
+unfinished draft. **Clear draft** clears only this local document; the accessory
+**⌫** acts on existing game text when the draft is empty.
 
 The editor keeps a normal UIKit text document during editing. It no longer
 clears the document/selection/undo history after every letter, and there is no
-per-keystroke asynchronous forwarding. Insert transfers completed text exactly
-once and then clears the local draft and undo history. Newlines, tabs and control
-characters in pasted text become spaces rather than implicit game commands.
+per-keystroke asynchronous forwarding. The explicit Replace action queues
+**Command+A**, **Backspace**, then the draft's normal Unicode key events, in
+order. All keys have matching releases; Command is scoped to the A events.
+It does not query a field, use the clipboard, infer password length, send a
+fixed series of deletes, press Return or retry automatically. Newlines, tabs
+and control characters in pasted text become spaces rather than implicit game
+commands. Ordinary direct text input retains its insertion behavior.
 Closing the keyboard or entering the background discards the draft without
 sending it; temporary focus loss for the dictation UI keeps it available.
 
 There is no automatic detection or reading of game text fields. This panel is a
-local draft, **not a mirror of the game field**: it cannot retrieve or replace
-already-entered game text. The current AppKit adapter translates text into paired
-key events and has no exposed game text/selection query. No application-memory
-inspection or game-specific hooks are used. The editor is visible plain text,
-including when the user selects a password field in the game. Autocorrection
-and smart substitutions are disabled. Drafts are not saved or logged.
+local draft, **not a mirror of the game field**: it starts empty rather than
+retrieving already-entered text. AppKit offers text-context queries through
+[`NSTextInputClient`](https://developer.apple.com/documentation/appkit/nstextinputclient),
+but the current adapter has no verified whole-field text/selection query for
+WoW. The user chose whole-field replacement as the fallback. No application
+memory inspection or game-specific hooks are used. The editor is visible plain
+text, including when the user selects a password field in the game.
+Autocorrection and smart substitutions are disabled. Drafts are not saved or logged.
+
+The replacement path depends on the focused game field recognizing the macOS
+Select All shortcut. Original fixtures verify replacement with existing text,
+a cursor in the middle, partial selection, empty clearing, duplicate suppression,
+composition/dictation and exact key order/modifiers. The updated iOS build still
+needs a physical WoW login/chat-field check; the synthetic result does not
+prove every game field honors that shortcut. On 2026-10-07 the input fixture,
+translation suite, required ASan/UBSan suite, signed arm64 device build and strict
+signature verification passed. Manual simulator key taps replaced `a` with `b`
+without appending, then an empty Replace cleared the field. No game was run or
+credentials read during these checks.
 
 ## System keyboard dictation
 
@@ -71,7 +93,7 @@ field as a password. A native UIKit text view is the first responder, providing
 the `UITextInput` contract used by system dictation instead of only `UIKeyInput`.
 Select the game's chat field, open our keyboard and use its system
 microphone button. Dictated text appears in the editable draft;
-tap Insert, then press Return yourself to send it. Tolkara adds no speech engine or recording UI.
+tap Replace, then press Return yourself to send it. Tolkara adds no speech engine or recording UI.
 
 Enable **Settings > General > Keyboard > Enable Dictation** on the iPhone and
 use Apple's keyboard with a supported language. iOS controls microphone

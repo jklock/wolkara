@@ -187,6 +187,31 @@ int main(void) { @autoreleasepool {
         assert(event.window == window && [event.characters isEqual:typed[i]]);
         assert(event.keyCode == (i ? 0xFF : 19));
     }
+    // Whole-field replacement selects all before deleting/inserting, with
+    // balanced key pairs, no leaked Command modifier, and no implicit Return.
+    [controls.delegate touchReplaceText:@"@ñ🙂"];
+    for (unsigned up = 0; up < 2; up++) {
+        NSEvent *event = next_input();
+        assert(event.type == (up ? NSEventTypeKeyUp : NSEventTypeKeyDown));
+        assert(event.keyCode == 0 && event.modifierFlags == NSEventModifierFlagCommand);
+        assert([event.characters isEqual:@"a"] && event.window == window);
+    }
+    for (unsigned up = 0; up < 2; up++) {
+        NSEvent *event = next_input();
+        assert(event.type == (up ? NSEventTypeKeyUp : NSEventTypeKeyDown));
+        assert(event.keyCode == 51 && event.modifierFlags == 0 && event.window == window);
+    }
+    for (unsigned i = 0; i < 3; i++) for (unsigned up = 0; up < 2; up++) {
+        NSEvent *event = next_input();
+        assert(event.type == (up ? NSEventTypeKeyUp : NSEventTypeKeyDown));
+        assert([event.characters isEqual:typed[i]] && event.window == window);
+        assert(event.modifierFlags == (i ? 0 : NSEventModifierFlagShift));
+    }
+    assert(![app nextEventMatchingMask:UINT64_MAX untilDate:NSDate.distantPast inMode:NSDefaultRunLoopMode dequeue:YES]);
+    [controls.delegate touchReplaceText:@""];
+    assert(next_input().keyCode == 0 && next_input().keyCode == 0);
+    assert(next_input().keyCode == 51 && next_input().keyCode == 51);
+    assert(![app nextEventMatchingMask:UINT64_MAX untilDate:NSDate.distantPast inMode:NSDefaultRunLoopMode dequeue:YES]);
     [controls deleteBackward];
     assert(next_input().keyCode == 51 && next_input().type == NSEventTypeKeyUp);
     [controls insertText:@"\n"];
