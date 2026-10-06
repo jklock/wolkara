@@ -75,6 +75,57 @@ int main(void){@autoreleasepool{
     assert(!resume.counts[TKWoWMD5(asset)] && !resume.counts[TKWoWMD5(present)]);assert([resume.counts[@"range"] unsignedIntegerValue]==1);
     NSArray *rows=TKWoWTable([NSData dataWithContentsOfFile:[root stringByAppendingPathComponent:@".build.info"]],&error);assert(TKWoWBuildCurrent(rows,@"wow_classic_beta",plan[@"version"]));
     source=[[TKWoWCASCStore alloc] initWithDirectory:[root stringByAppendingPathComponent:@"Data/data"] error:&error];assert(source);assert([[source readKey:TKWoWMD5(asset) size:asset.length] isEqual:asset]);assert([[source readKey:TKWoWMD5(present) size:present.length] isEqual:present]);source=nil;
+    // A new transaction clones the prior receipts and reads no unchanged CASC
+    // payload, while still validating metadata and the original loose file.
+    TKWoWUpdater *warm=[[TKWoWUpdater alloc] initWithClient:resume];
+    __block BOOL reused=NO;
+    result=[warm updatePlan:plan root:root progress:^(NSString *phase,uint64_t done,uint64_t total){
+        (void)done;(void)total;if([phase isEqual:@"reuse"])reused=YES;
+    } error:&error];
+    if(!result)fprintf(stderr,"Warm update: %s\n",error.localizedDescription.UTF8String);assert(result && reused);
+    assert(warm.verificationBytesRead==0 && warm.verificationBytesReused>=asset.length+present.length);
+    warm.fullVerification=YES;
+    result=[warm updatePlan:plan root:root progress:^(NSString *phase,uint64_t done,uint64_t total){(void)phase;(void)done;(void)total;} error:&error];
+    assert(result && warm.verificationBytesRead>0 && warm.verificationBytesReused==0);
+    // A published patch adds one object: unchanged payload is not reread and
+    // exactly that new object is fetched, across another atomic clone/swap.
+    NSData *patchAsset=Wrap(Text(@"our next patch asset"));resume.responses[TKWoWMD5(patchAsset)]=patchAsset;
+    NSMutableData *nextDownload=[download mutableCopy];((uint8_t *)nextDownload.mutableBytes)[8]=3;
+    [nextDownload appendData:Hash(patchAsset)];BE(nextDownload,patchAsset.length,5);BE(nextDownload,0,1);
+    NSString *nextConfiguration=[configuration stringByReplacingOccurrencesOfString:Reference(@"download",download,resume)
+        withString:Reference(@"download",nextDownload,resume)];
+    NSString *nextBuild=TKWoWMD5(Text(nextConfiguration));resume.responses[nextBuild]=Text(nextConfiguration);
+    resume.responses[@"versions"]=Text([NSString stringWithFormat:@"Region|BuildConfig|CDNConfig|VersionsName\neu|%@|%@|synthetic-3\n",nextBuild,cdn]);
+    plan=[resume planForProduct:@"wow_classic_beta" region:@"eu" locale:@"enUS" error:&error];assert(plan);
+    warm.fullVerification=NO;
+    result=[warm updatePlan:plan root:root progress:^(NSString *phase,uint64_t done,uint64_t total){(void)phase;(void)done;(void)total;} error:&error];
+    if(!result)fprintf(stderr,"Incremental patch: %s\n",error.localizedDescription.UTF8String);assert(result);
+    assert(warm.verificationBytesRead==0 && warm.verificationBytesReused>=asset.length+present.length);
+    assert([resume.counts[TKWoWMD5(patchAsset)] unsignedIntegerValue]==1);
+    // An external edit to an existing segment is caught on the next update;
+    // only the broken object is downloaded again and user folders survive.
+    NSString *dataDirectory=[root stringByAppendingPathComponent:@"Data/data"];
+    NSDictionary *receipt=TKWoWCASCVerificationSnapshot(dataDirectory);assert(receipt);
+    BOOL damaged=NO;uint8_t assetKey[16];assert(TKWoWUnhex(TKWoWMD5(asset),assetKey));
+    for(NSData *bucket in receipt[@"buckets"]) {
+        const uint8_t *p=bucket.bytes;
+        for(NSUInteger i=0;i<bucket.length;i+=25)if(!memcmp(p+i,assetKey,16)) {
+            uint64_t location=0;for(unsigned j=0;j<5;j++)location=(location<<8)|p[i+16+j];
+            NSString *path=[dataDirectory stringByAppendingPathComponent:[NSString stringWithFormat:@"data.%03llu",location>>30]];
+            NSFileHandle *file=[NSFileHandle fileHandleForUpdatingAtPath:path];assert(file);
+            [file seekToFileOffset:(location&0x3fffffff)+30+asset.length-1];[file writeData:Text(@"!")];[file closeFile];damaged=YES;
+        }
+    }
+    assert(damaged);NSUInteger oldDownloads=[resume.counts[TKWoWMD5(asset)] unsignedIntegerValue];
+    warm.fullVerification=NO;
+    result=[warm updatePlan:plan root:root progress:^(NSString *phase,uint64_t done,uint64_t total){(void)phase;(void)done;(void)total;} error:&error];
+    if(!result)fprintf(stderr,"Changed segment: %s\n",error.localizedDescription.UTF8String);assert(result);
+    assert([resume.counts[TKWoWMD5(asset)] unsignedIntegerValue]==oldDownloads+1);
+    assert([[NSData dataWithContentsOfFile:addon] isEqual:Text(@"keep me")]);
+    // The receipt is optional: loss/corruption must produce full verification.
+    assert([Text(@"broken receipt") writeToFile:[dataDirectory stringByAppendingPathComponent:@".wolkara-verified"] atomically:YES]);
+    result=[warm updatePlan:plan root:root progress:^(NSString *phase,uint64_t done,uint64_t total){(void)phase;(void)done;(void)total;} error:&error];
+    assert(result && warm.verificationBytesRead>0 && warm.verificationBytesReused==0);
     // A newly published build before activation leaves the previous root intact.
     resume.changed=NO;
     result=[[[TKWoWUpdater alloc] initWithClient:resume] updatePlan:plan root:root progress:^(NSString *phase,uint64_t done,uint64_t total){(void)done;(void)total;if([phase isEqual:@"files"])resume.changed=YES;} error:&error];

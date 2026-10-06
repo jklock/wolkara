@@ -112,6 +112,7 @@ static BOOL SameBuild(NSDictionary *a,NSDictionary *b) {
     return SafeWrite(root,@".build.info",[text dataUsingEncoding:NSUTF8StringEncoding],error);
 }
 - (BOOL)updatePlan:(NSDictionary *)plan root:(NSString *)root progress:(void (^)(NSString *,uint64_t,uint64_t))progress error:(NSError **)error {
+    _verificationBytesRead=0;_verificationBytesReused=0;
     NSString *folder=nil;for(NSDictionary *p in TKWoWProducts())if([p[@"id"] isEqual:plan[@"product"]])folder=p[@"folder"];
     if(!folder || ![@[@"eu",@"us",@"kr",@"tw"] containsObject:plan[@"region"]] || ![@[@"enUS",@"esES",@"deDE",@"frFR",@"itIT",@"esMX",@"ptBR",@"ruRU",@"koKR",@"zhTW"] containsObject:plan[@"locale"]] || !root.isAbsolutePath || !TKWoWHashValid(plan[@"version"][@"BuildConfig"]) || !TKWoWHashValid(plan[@"version"][@"CDNConfig"]))return Fail(error,@"Invalid update target.");
     root=root.stringByResolvingSymlinksInPath;NSString *parent=root.stringByDeletingLastPathComponent;
@@ -135,7 +136,10 @@ static BOOL SameBuild(NSDictionary *a,NSDictionary *b) {
         if(![snapshotHash isEqual:sourceHash]) {
             // This path is our own incomplete snapshot, never the installation.
             if([fm fileExistsAtPath:stage] && ![fm removeItemAtPath:stage error:&failure])return NO;
+            NSString *sourceData=Join(root,@"Data/data"),*stagedData=Join(stage,@"Data/data");
+            NSDictionary *verification=_fullVerification?nil:TKWoWCASCVerificationSnapshot(sourceData);
             progress(@"snapshot",0,0);if(![self cloneRoot:root into:stage progress:progress error:&failure])return NO;
+            if(!TKWoWCASCCloneVerification(verification,sourceData,stagedData,&failure))return NO;
             if(![sourceHash writeToFile:marker atomically:YES encoding:NSUTF8StringEncoding error:&failure])return NO;
         }
         if(![stage.stringByResolvingSymlinksInPath isEqual:stage])return Fail(&failure,@"Staging directory must not be a symlink.");
@@ -151,6 +155,7 @@ static BOOL SameBuild(NSDictionary *a,NSDictionary *b) {
         NSData *download=[_client manifest:@"download" config:plan[@"config"] cdn:plan[@"cdn"] error:&failure];if(!download)return NO;
         NSData *records=TKWoWDownloads(download,plan[@"locale"],plan[@"region"],&failure);download=nil;if(!records)return NO;
         store=[[TKWoWCASCStore alloc] initWithDirectory:Join(dataRoot,@"data") error:&failure];if(!store)return NO;
+        if(_fullVerification)[store discardVerification];
         // Plan missing objects after content verification, using compact records.
         const TKWoWDownloadEntry *entries=records.bytes; NSUInteger count=records.length/sizeof(*entries);
         NSMutableData *missing=[NSMutableData new];uint64_t required=0,processed=0,total=0;
@@ -158,10 +163,15 @@ static BOOL SameBuild(NSDictionary *a,NSDictionary *b) {
         for(NSUInteger i=0;i<count;i++) { @autoreleasepool {
             if([self cancelled:&failure])return NO;
             NSString *key=TKWoWHex(entries[i].key,16);
-            if(![store readKey:key size:entries[i].size]) { [missing appendBytes:entries+i length:sizeof(*entries)];required+=entries[i].size+30; }
-            processed+=entries[i].size;if(i%500==0 || i+1==count)progress(@"verify",processed,total);
+            if(![store verifyKey:key size:entries[i].size]) { [missing appendBytes:entries+i length:sizeof(*entries)];required+=entries[i].size+30; }
+            processed+=entries[i].size;
+            if(i%500==0 || i+1==count) {
+                if(store.verificationBytesReused)progress(@"reuse",i+1,count);
+                else progress(@"verify",processed,total);
+            }
         }}
         records=nil;
+        if(![store saveVerification:&failure])return NO;
         uint64_t loose=[plan[@"installFileBytes"] unsignedLongLongValue];
         uint64_t free=[[[fm attributesOfFileSystemForPath:stage error:&failure] objectForKey:NSFileSystemFreeSize] unsignedLongLongValue];
         if(required>UINT64_MAX-loose-1024*1024*1024 || free<required+loose+1024*1024*1024)return Fail(&failure,[NSString stringWithFormat:@"Not enough storage. Need at least %.1f GB free for this update.",(required+loose+1024*1024*1024)/1e9]);
@@ -182,7 +192,7 @@ static BOOL SameBuild(NSDictionary *a,NSDictionary *b) {
             NSArray *keys=Words(plan[@"config"][name]), *sizes=Words(plan[@"config"][[name stringByAppendingString:@"-size"]]);
             if(keys.count!=2 || sizes.count!=2)return Fail(&failure,@"Missing bootstrap manifest.");
             uint64_t size=[sizes[1] longLongValue];
-            if(![store readKey:keys[1] size:size]) {
+            if(![store verifyKey:keys[1] size:size]) {
                 NSData *raw=[_client encodedKey:keys[1] size:size plan:plan indices:indices error:&failure];
                 if(!raw || ![store addData:raw key:keys[1] error:&failure])return NO;
             }
@@ -192,7 +202,7 @@ static BOOL SameBuild(NSDictionary *a,NSDictionary *b) {
         NSArray *roots=Words(plan[@"config"][@"root"]);
         if(roots.count!=1)return Fail(&failure,@"Unsupported root manifest configuration.");
         NSString *rootKey=TKWoWEncodingKey(encoding,roots[0],&failure);if(!rootKey)return NO;
-        if(![store readKey:rootKey size:0]) {
+        if(![store verifyKey:rootKey size:0]) {
             NSData *raw=[_client encodedKey:rootKey size:0 plan:plan indices:indices error:&failure];
             if(!raw || ![store addData:raw key:rootKey error:&failure])return NO;
         }
@@ -214,6 +224,7 @@ static BOOL SameBuild(NSDictionary *a,NSDictionary *b) {
             progress(@"files",++done,[plan[@"files"] count]);
         }}
         if(![store checkpoint:&failure])return NO;
+        if(![store saveVerification:&failure])return NO;
         NSData *flavor=[[NSString stringWithFormat:@"Product Flavor!STRING:0\n%@\n",plan[@"product"]] dataUsingEncoding:NSUTF8StringEncoding];
         if(!SafeWrite(stage,Join(folder,@".flavor.info"),flavor,&failure) || ![self writeBuildInfo:plan root:stage error:&failure])return NO;
         if([self cancelled:&failure])return NO;
@@ -241,12 +252,16 @@ static BOOL SameBuild(NSDictionary *a,NSDictionary *b) {
         // One filesystem operation activates metadata, executable and data together.
         int result=[fm fileExistsAtPath:root]?renamex_np(stage.fileSystemRepresentation,root.fileSystemRepresentation,RENAME_SWAP):rename(stage.fileSystemRepresentation,root.fileSystemRepresentation);
         if(result)return Fail(&failure,[NSString stringWithFormat:@"Cannot activate the verified installation (%s).",strerror(errno)]);
-        success=YES;store=nil;
+        success=YES;
+        _verificationBytesRead=store.verificationBytesRead;_verificationBytesReused=store.verificationBytesReused;store=nil;
         // stage now holds only the replaced private snapshot. The new root owns
         // settings and addons unchanged; clean up this transaction's old clone.
         [fm removeItemAtPath:job error:NULL];progress(@"complete",1,1);return YES;
     } @finally {
-        if(!success && store)[store checkpoint:NULL];
+        if(!success && store) {
+            if([store checkpoint:NULL])[store saveVerification:NULL];
+            _verificationBytesRead=store.verificationBytesRead;_verificationBytesReused=store.verificationBytesReused;
+        }
         if(!success && failure && error)*error=failure;
         _client.progress=nil;flock(lock,LOCK_UN);close(lock);
     }

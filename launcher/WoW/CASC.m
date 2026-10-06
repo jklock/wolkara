@@ -128,11 +128,104 @@ static unsigned Bucket(const uint8_t *p) { unsigned v=0; for(int i=0;i<9;i++)v^=
 static BOOL WriteAll(int fd,const void *bytes,size_t size) {
     const uint8_t *p=bytes; while(size) { ssize_t n=write(fd,p,size); if(n<0 && errno==EINTR)continue; if(n<=0)return NO; p+=n;size-=(size_t)n; } return YES;
 }
+
+// Optional local receipts, not a substitute for CDN checksums. Each compact
+// record is a full EKey (16), packed location (5), and envelope size (4).
+// Inode + nanosecond ctime catch replacements and writes even if mtime is reset.
+static NSString *const VerificationFile=@".wolkara-verified";
+static const NSUInteger ReceiptSize=25, ReceiptLimit=5000000, CacheLimit=160*1024*1024;
+static NSString *SegmentPath(NSString *directory,uint64_t segment) {
+    return [directory stringByAppendingPathComponent:[NSString stringWithFormat:@"data.%03llu",segment]];
+}
+static NSArray *Stamp(const struct stat *s) {
+    if(!S_ISREG(s->st_mode) || s->st_size<0)return nil;
+    return @[[NSString stringWithFormat:@"%llu:%llu:%lld:%lld:%ld:%lld:%ld",
+        (uint64_t)s->st_dev,(uint64_t)s->st_ino,(int64_t)s->st_size,
+        (int64_t)s->st_mtimespec.tv_sec,s->st_mtimespec.tv_nsec,
+        (int64_t)s->st_ctimespec.tv_sec,s->st_ctimespec.tv_nsec],
+        [NSString stringWithFormat:@"%lld:%lld:%ld",(int64_t)s->st_size,
+            (int64_t)s->st_mtimespec.tv_sec,s->st_mtimespec.tv_nsec]];
+}
+static NSArray *SegmentStamp(NSString *directory,uint64_t segment) {
+    struct stat s;return lstat(SegmentPath(directory,segment).fileSystemRepresentation,&s)?nil:Stamp(&s);
+}
+static int CompareReceipt(const void *a,const void *b) { return memcmp(a,b,ReceiptSize); }
+static NSArray *EmptyReceipts(void) {
+    NSMutableArray *buckets=[NSMutableArray new];for(unsigned i=0;i<16;i++)[buckets addObject:[NSMutableData new]];return buckets;
+}
+static BOOL WriteVerification(NSDictionary *receipt,NSString *directory,NSError **error) { @autoreleasepool {
+    NSData *body=[NSPropertyListSerialization dataWithPropertyList:receipt format:NSPropertyListBinaryFormat_v1_0 options:0 error:error];
+    if(!body || body.length>CacheLimit-24) { Fail(error,@"Verification record exceeds its storage limit.");return NO; }
+    NSMutableData *data=[[NSData dataWithBytes:"WKVERIFY" length:8] mutableCopy];
+    uint8_t digest[16];TKWoWUnhex(TKWoWMD5(body),digest);[data appendBytes:digest length:16];[data appendData:body];
+    return [data writeToFile:[directory stringByAppendingPathComponent:VerificationFile] options:NSDataWritingAtomic error:error];
+}}
+NSDictionary *TKWoWCASCVerificationSnapshot(NSString *directory) { @autoreleasepool {
+    NSString *path=[directory stringByAppendingPathComponent:VerificationFile];
+    int fd=open(path.fileSystemRepresentation,O_RDONLY|O_NOFOLLOW|O_NONBLOCK);if(fd<0)return nil;
+    struct stat before,after;
+    if(fstat(fd,&before) || !S_ISREG(before.st_mode) || before.st_size<24 || before.st_size>(off_t)CacheLimit) { close(fd);return nil; }
+    NSMutableData *file=[NSMutableData dataWithLength:(NSUInteger)before.st_size];size_t done=0;
+    while(done<file.length) { ssize_t n=read(fd,(uint8_t *)file.mutableBytes+done,file.length-done);if(n<0 && errno==EINTR)continue;if(n<=0)break;done+=(size_t)n; }
+    BOOL stable=!fstat(fd,&after) && [Stamp(&before) isEqual:Stamp(&after)];close(fd);
+    if(done!=file.length || !stable || memcmp(file.bytes,"WKVERIFY",8))return nil;
+    NSData *body=[file subdataWithRange:NSMakeRange(24,file.length-24)];
+    if(![TKWoWMD5(body) isEqual:TKWoWHex((const uint8_t *)file.bytes+8,16)])return nil;
+    id receipt=[NSPropertyListSerialization propertyListWithData:body options:NSPropertyListImmutable format:NULL error:NULL];
+    if(![receipt isKindOfClass:NSDictionary.class] || ![receipt[@"version"] isEqual:@1] ||
+       ![receipt[@"segments"] isKindOfClass:NSDictionary.class] || [receipt[@"segments"] count]>1024 ||
+       ![receipt[@"buckets"] isKindOfClass:NSArray.class] || [receipt[@"buckets"] count]!=16)return nil;
+    NSDictionary *segments=receipt[@"segments"];NSMutableDictionary *valid=[NSMutableDictionary new];BOOL allowed[1024]={NO};
+    for(id name in segments) {
+        if(![name isKindOfClass:NSString.class] || ![name isEqual:@([name integerValue]).stringValue] || [name integerValue]<0 || [name integerValue]>=1024)return nil;
+        id stamp=segments[name];
+        if(![stamp isKindOfClass:NSArray.class] || [stamp count]!=2 ||
+           ![stamp[0] isKindOfClass:NSString.class] || ![stamp[1] isKindOfClass:NSString.class])return nil;
+        if([stamp isEqual:SegmentStamp(directory,[name integerValue])]) { valid[name]=stamp;allowed[[name integerValue]]=YES; }
+    }
+    NSMutableArray *filtered=[NSMutableArray new];NSUInteger count=0;
+    for(unsigned bucket=0;bucket<16;bucket++) {
+        id entries=receipt[@"buckets"][bucket];
+        if(![entries isKindOfClass:NSData.class] || [entries length]%ReceiptSize)return nil;
+        count+=[entries length]/ReceiptSize;if(count>ReceiptLimit)return nil;
+        const uint8_t *p=[entries bytes];NSMutableData *kept=[NSMutableData new];
+        for(NSUInteger i=0;i<[entries length];i+=ReceiptSize) {
+            uint64_t size=LE(p+i+21,4),offset=BE(p+i+16,5)&0x3fffffff;
+            if(Bucket(p+i)!=bucket || size<39 || size>256*1024*1024+30 || offset+size>0x40000000 ||
+               (i && memcmp(p+i-ReceiptSize,p+i,16)>=0))return nil;
+            if(allowed[BE(p+i+16,5)>>30])[kept appendBytes:p+i length:ReceiptSize];
+        }
+        [filtered addObject:kept];
+    }
+    return @{@"version":@1,@"segments":valid,@"buckets":filtered};
+}}
+BOOL TKWoWCASCCloneVerification(NSDictionary *snapshot,NSString *source,NSString *destination,NSError **error) { @autoreleasepool {
+    // The caller captured this snapshot before clonefile, and finished cloning
+    // before calling here. A changed source cannot bless a stale/partial clone.
+    NSMutableDictionary *segments=[NSMutableDictionary new];BOOL allowed[1024]={NO};
+    for(NSString *name in snapshot[@"segments"]) {
+        NSArray *before=snapshot[@"segments"][name],*now=SegmentStamp(source,name.integerValue);
+        NSArray *cloned=SegmentStamp(destination,name.integerValue);
+        if([before isEqual:now] && [before[1] isEqual:cloned[1]]) { segments[name]=cloned;allowed[name.integerValue]=YES; }
+    }
+    NSMutableArray *buckets=[NSMutableArray new];
+    for(NSData *entries in snapshot[@"buckets"]?:EmptyReceipts()) {
+        NSMutableData *kept=[NSMutableData new];const uint8_t *p=entries.bytes;
+        for(NSUInteger i=0;i<entries.length;i+=ReceiptSize)if(allowed[BE(p+i+16,5)>>30])[kept appendBytes:p+i length:ReceiptSize];
+        [buckets addObject:kept];
+    }
+    if(![NSFileManager.defaultManager fileExistsAtPath:destination])return YES;
+    return WriteVerification(@{@"version":@1,@"segments":segments,@"buckets":buckets},destination,error);
+}}
 @implementation TKWoWCASCStore {
     NSString *_directory;
     NSMutableArray<NSMutableData *> *_buckets;
     uint32_t _generation[16];
     NSMutableDictionary<NSString *,NSData *> *_added;
+    NSArray<NSData *> *_verified;
+    NSArray<NSMutableData *> *_pendingVerification;
+    NSMutableDictionary<NSString *,NSArray *> *_segmentStamps;
+    BOOL _verificationChanged;
     int _fd; uint32_t _segment; uint64_t _offset;
 }
 - (instancetype)initWithDirectory:(NSString *)directory error:(NSError **)error {
@@ -165,29 +258,81 @@ static BOOL WriteAll(int fd,const void *bytes,size_t size) {
         }
         [_buckets addObject:entries];
     }
+    NSDictionary *receipt=TKWoWCASCVerificationSnapshot(directory);
+    _verified=receipt[@"buckets"]?:EmptyReceipts();
+    _segmentStamps=[receipt[@"segments"] mutableCopy]?:[NSMutableDictionary new];
+    _pendingVerification=EmptyReceipts();
     return self;
 }
 - (void)dealloc { if(_fd>=0)close(_fd); }
+- (const uint8_t *)entryForKey:(NSString *)key hash:(const uint8_t *)hash {
+    NSData *added=_added[key]; const uint8_t *entry=added.bytes;
+    return entry?:[self indexedEntryForHash:hash];
+}
+- (const uint8_t *)indexedEntryForHash:(const uint8_t *)hash {
+    NSData *bucket=_buckets[Bucket(hash)]; const uint8_t *p=bucket.bytes; NSUInteger lo=0,hi=bucket.length/18;
+    while(lo<hi) { NSUInteger mid=lo+(hi-lo)/2; if(memcmp(p+mid*18,hash,9)<0)lo=mid+1;else hi=mid; }
+    if(lo==bucket.length/18 || memcmp(p+lo*18,hash,9))return NULL;return p+lo*18;
+}
+- (void)discardVerification {
+    _verified=EmptyReceipts();_pendingVerification=EmptyReceipts();[_segmentStamps removeAllObjects];
+}
+- (void)invalidateSegment:(NSString *)segment {
+    NSMutableArray *keptBuckets=[NSMutableArray new];
+    for(unsigned bucket=0;bucket<16;bucket++) {
+        NSMutableData *kept=[NSMutableData new];
+        for(NSData *entries in @[_verified[bucket],_pendingVerification[bucket]]) {
+            const uint8_t *p=entries.bytes;
+            for(NSUInteger i=0;i<entries.length;i+=ReceiptSize)if((BE(p+i+16,5)>>30)!=(uint64_t)segment.longLongValue)[kept appendBytes:p+i length:ReceiptSize];
+        }
+        // Pending records need not be sorted, so keep everything pending.
+        [keptBuckets addObject:kept];
+    }
+    _verified=EmptyReceipts();_pendingVerification=keptBuckets;[_segmentStamps removeObjectForKey:segment];
+}
+- (void)rememberKey:(const uint8_t *)key entry:(const uint8_t *)entry stamp:(NSArray *)stamp {
+    NSString *segment=@(BE(entry+9,5)>>30).stringValue;
+    if(_segmentStamps[segment] && ![_segmentStamps[segment] isEqual:stamp]) {
+        // Earlier planning may already have reused another object in this
+        // segment. Verifying this one cannot authorize that earlier decision.
+        _verificationChanged=YES;[self invalidateSegment:segment];
+    }
+    _segmentStamps[segment]=stamp;
+    NSMutableData *pending=_pendingVerification[Bucket(key)];[pending appendBytes:key length:16];[pending appendBytes:entry+9 length:9];
+}
+- (BOOL)verifyKey:(NSString *)key size:(uint64_t)size {
+    uint8_t hash[16];if(!TKWoWUnhex(key,hash) || size>256*1024*1024)return NO;
+    const uint8_t *entry=[self entryForKey:key hash:hash];
+    if(entry && (!size || LE(entry+14,4)==size+30)) {
+        NSData *receipts=_verified[Bucket(hash)];const uint8_t *p=receipts.bytes;NSUInteger lo=0,hi=receipts.length/ReceiptSize;
+        while(lo<hi) { NSUInteger mid=lo+(hi-lo)/2;if(memcmp(p+mid*ReceiptSize,hash,16)<0)lo=mid+1;else hi=mid; }
+        if(lo<receipts.length/ReceiptSize && !memcmp(p+lo*ReceiptSize,hash,16) && !memcmp(p+lo*ReceiptSize+16,entry+9,9)) {
+            _verificationBytesReused+=LE(entry+14,4)-30;return YES;
+        }
+    }
+    return [self readKey:key size:size]!=nil;
+}
 - (NSData *)readKey:(NSString *)key size:(uint64_t)size {
     uint8_t hash[16]; if(!TKWoWUnhex(key,hash) || size>256*1024*1024)return nil;
-    NSData *added=_added[key]; const uint8_t *entry=added.bytes;
-    if(!entry) {
-        NSData *bucket=_buckets[Bucket(hash)]; const uint8_t *p=bucket.bytes; NSUInteger lo=0,hi=bucket.length/18;
-        while(lo<hi) { NSUInteger mid=lo+(hi-lo)/2; if(memcmp(p+mid*18,hash,9)<0)lo=mid+1;else hi=mid; }
-        if(lo==bucket.length/18 || memcmp(p+lo*18,hash,9))return nil; entry=p+lo*18;
-    }
+    const uint8_t *entry=[self entryForKey:key hash:hash];if(!entry)return nil;
     uint64_t packed=BE(entry+9,5), fullSize=LE(entry+14,4);
     if(fullSize<39 || fullSize>256*1024*1024+30 || (size && fullSize!=size+30))return nil;
-    NSString *path=[_directory stringByAppendingPathComponent:[NSString stringWithFormat:@"data.%03llu",packed>>30]];
-    int fd=open(path.fileSystemRepresentation,O_RDONLY|O_NOFOLLOW); if(fd<0)return nil;
+    NSString *path=SegmentPath(_directory,packed>>30);
+    int fd=open(path.fileSystemRepresentation,O_RDONLY|O_NOFOLLOW|O_NONBLOCK); if(fd<0)return nil;
+    struct stat before,after;
+    if(fstat(fd,&before) || !S_ISREG(before.st_mode) || before.st_size<0 ||
+       (packed&0x3fffffff)+fullSize>(uint64_t)before.st_size) { close(fd);return nil; }
     NSMutableData *raw=[NSMutableData dataWithLength:(NSUInteger)fullSize]; uint8_t *p=raw.mutableBytes; size_t done=0;
-    while(done<fullSize) { ssize_t n=pread(fd,p+done,(size_t)fullSize-done,(off_t)((packed&0x3fffffff)+done)); if(n<0 && errno==EINTR)continue; if(n<=0)break; done+=(size_t)n; } close(fd);
-    if(done!=fullSize || LE(p+16,4)!=fullSize)return nil;
+    while(done<fullSize) { ssize_t n=pread(fd,p+done,(size_t)fullSize-done,(off_t)((packed&0x3fffffff)+done)); if(n<0 && errno==EINTR)continue; if(n<=0)break; done+=(size_t)n; }
+    BOOL stable=!fstat(fd,&after) && [Stamp(&before) isEqual:Stamp(&after)];close(fd);
+    _verificationBytesRead+=done;
+    if(!stable || done!=fullSize || LE(p+16,4)!=fullSize)return nil;
     // Agent may zero the seven unindexed hash bytes in this envelope.
     // The complete EKey is independently verified against BLTE below.
     for(int i=0;i<9;i++)if(p[15-i]!=hash[i])return nil;
     NSData *encoded=[NSData dataWithBytesNoCopy:p+30 length:(NSUInteger)fullSize-30 freeWhenDone:NO];
     if(!TKWoWEncodedValid(encoded,key,NULL))return nil;
+    [self rememberKey:hash entry:entry stamp:Stamp(&after)];
     // Keep the parent allocation alive independently of the autorelease pool.
     return [NSData dataWithBytes:p+30 length:(NSUInteger)fullSize-30];
 }
@@ -201,11 +346,49 @@ static BOOL WriteAll(int fd,const void *bytes,size_t size) {
         _fd=open(path.fileSystemRepresentation,O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW,0600);
         if(_fd<0) { Fail(error,@"Cannot create CASC segment.");return NO; }
     }
+    struct stat previous;
+    if(fstat(_fd,&previous) || (_segmentStamps[@(_segment).stringValue] &&
+       ![_segmentStamps[@(_segment).stringValue] isEqual:Stamp(&previous)])) {
+        Fail(error,@"CASC data changed during the update.");return NO;
+    }
     uint8_t header[30]={0}; for(int i=0;i<16;i++)header[i]=hash[15-i]; PutLE(header+16,size,4);
     // Reserved header bytes remain zero, as in the public CASC storage format.
     if(!WriteAll(_fd,header,30) || !WriteAll(_fd,data.bytes,data.length)) { Fail(error,@"Cannot write CASC data; check free space.");return NO; }
     uint8_t entry[18]; memcpy(entry,hash,9);PutBE(entry+9,((uint64_t)_segment<<30)|_offset,5);PutLE(entry+14,size,4);
-    _added[key]=[NSData dataWithBytes:entry length:18]; _offset+=size;return YES;
+    _added[key]=[NSData dataWithBytes:entry length:18]; _offset+=size;
+    // Only our append-only writer can advance a segment's stamp while keeping
+    // its earlier receipts. No original segment is ever opened for writing.
+    struct stat s;if(fstat(_fd,&s)) { Fail(error,@"Cannot inspect CASC data.");return NO; }
+    _segmentStamps[@(_segment).stringValue]=Stamp(&s);
+    [self rememberKey:hash entry:entry stamp:Stamp(&s)];return YES;
+}
+- (BOOL)saveVerification:(NSError **)error {
+    if(_verificationChanged) { Fail(error,@"CASC data changed during the update. Reopen to retry.");return NO; }
+    // Receipts describe durable, indexed content; never unpublished appends.
+    if(![self checkpoint:error])return NO;
+    // Recheck before persisting: a receipt must never silently bless a change.
+    for(NSString *segment in _segmentStamps.allKeys)
+        if(![_segmentStamps[segment] isEqual:SegmentStamp(_directory,segment.integerValue)]) {
+            _verificationChanged=YES;
+            [self invalidateSegment:segment];
+            Fail(error,@"CASC data changed during the update. Reopen to retry.");return NO;
+        }
+    NSMutableArray *buckets=[NSMutableArray new];NSUInteger count=0;
+    for(unsigned bucket=0;bucket<16;bucket++) {
+        NSMutableData *records=[_verified[bucket] mutableCopy];[records appendData:_pendingVerification[bucket]];
+        qsort(records.mutableBytes,records.length/ReceiptSize,ReceiptSize,CompareReceipt);
+        uint8_t *p=records.mutableBytes;NSUInteger used=0;
+        for(NSUInteger i=0;i<records.length;i+=ReceiptSize) {
+            const uint8_t *entry=[self indexedEntryForHash:p+i];
+            if(!entry || memcmp(entry+9,p+i+16,9) || (used && !memcmp(p+used-ReceiptSize,p+i,16)))continue;
+            memmove(p+used,p+i,ReceiptSize);used+=ReceiptSize;
+        }
+        records.length=used;count+=used/ReceiptSize;
+        if(count>ReceiptLimit) { Fail(error,@"Too many verified CASC objects.");return NO; }
+        [buckets addObject:records];
+    }
+    if(!WriteVerification(@{@"version":@1,@"segments":_segmentStamps,@"buckets":buckets},_directory,error))return NO;
+    _verified=buckets;_pendingVerification=EmptyReceipts();return YES;
 }
 - (BOOL)checkpoint:(NSError **)error {
     if(_fd>=0 && fsync(_fd)) { Fail(error,@"Cannot sync CASC segment.");return NO; }
