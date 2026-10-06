@@ -153,7 +153,13 @@ int main(void) { @autoreleasepool {
     // Software keys take the same event queue as hardware keys, preserve
     // Unicode and never depend on reading the guest's text/selection.
     AKTouchControls *controls = [host valueForKey:@"_touchControls"];
-    assert(controls && controls.hasText && controls.isSecureTextEntry);
+    assert(controls && controls.hasText);
+    // Dictation uses the separate UIKit text view introduced by the keyboard
+    // change. The toolbar itself no longer supplies text input traits.
+    UITextView *keyboard = [controls valueForKey:@"_keyboardInput"];
+    assert([keyboard isKindOfClass:UITextView.class] && !keyboard.isSecureTextEntry);
+    assert(keyboard.autocorrectionType == UITextAutocorrectionTypeNo);
+    assert(keyboard.spellCheckingType == UITextSpellCheckingTypeNo);
     [controls insertText:@"@ñ🙂"];
     NSArray<NSString *> *typed = @[@"@", @"ñ", @"🙂"];
     for (unsigned i = 0; i < 3; i++) for (unsigned up = 0; up < 2; up++) {
