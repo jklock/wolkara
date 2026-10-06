@@ -108,6 +108,29 @@ static UIView *Find(UIView *view, NSString *identifier) {
     [self.window layoutIfNeeded];
     CGRect button=[[self primary] convertRect:[self primary].bounds toView:self.window];
     assert(CGRectContainsRect(self.window.bounds,button));
+    UILabel *label=(id)Find(self.controller.view,@"wow.status");
+    CGRect text=[label textRectForBounds:label.bounds limitedToNumberOfLines:label.numberOfLines];
+    NSLog(@"DESCENDER_METRICS: frame=%@ text=%@ lineHeight=%g ascender=%g descender=%g",NSStringFromCGRect(label.frame),NSStringFromCGRect(text),label.font.lineHeight,label.font.ascender,label.font.descender);
+    assert(label.bounds.size.height + 0.01 >= label.font.lineHeight);
+    assert(text.origin.y >= 0 && CGRectGetMaxY(text) <= label.bounds.size.height + 0.5);
+    self.controller.traitOverrides.preferredContentSizeCategory=UIContentSizeCategoryAccessibilityExtraExtraExtraLarge;
+    [self performSelector:@selector(captureLargeText) withObject:nil afterDelay:0.3];
+}
+- (void)captureLargeText {
+    [self.window layoutIfNeeded];
+    UILabel *label=(id)Find(self.controller.view,@"wow.status");
+    assert(label.bounds.size.height + 0.01 >= label.font.lineHeight);
+    assert(CGRectGetMaxY([label textRectForBounds:label.bounds limitedToNumberOfLines:label.numberOfLines]) <= label.bounds.size.height + 0.5);
+    UIScrollView *scroll=(id)Find(self.controller.view,@"wow.scroll");
+    [scroll scrollRectToVisible:[label convertRect:label.bounds toView:scroll] animated:NO];
+    [self capture:@"wow-home-large-text.png"];
+    self.controller.traitOverrides.preferredContentSizeCategory=UIContentSizeCategoryLarge;
+    [self performSelector:@selector(captureDefaultText) withObject:nil afterDelay:0.3];
+}
+- (void)captureDefaultText {
+    [self.window layoutIfNeeded];
+    UIScrollView *scroll=(id)Find(self.controller.view,@"wow.scroll");
+    scroll.contentOffset=CGPointZero;
     [self capture:@"wow-home.png"];
     [self tap]; [self performSelector:@selector(checkLaunch) withObject:nil afterDelay:0.3];
 }

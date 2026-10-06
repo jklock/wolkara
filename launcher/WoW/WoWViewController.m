@@ -9,7 +9,9 @@ static UIColor *Muted(void) { return [UIColor colorWithRed:0.66 green:0.72 blue:
 static UILabel *Label(CGFloat size, UIFontWeight weight, UIColor *color) {
     UILabel *label=[UILabel new]; label.numberOfLines=0; label.textColor=color;
     label.font=[[UIFontMetrics metricsForTextStyle:UIFontTextStyleBody] scaledFontForFont:[UIFont systemFontOfSize:size weight:weight]];
-    label.adjustsFontForContentSizeCategory=YES; return label;
+    label.adjustsFontForContentSizeCategory=YES;
+    [label setContentCompressionResistancePriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisVertical];
+    return label;
 }
 static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     UIStackView *stack=[[UIStackView alloc] initWithArrangedSubviews:views];
@@ -93,6 +95,9 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     _stateLabel=Label(23,UIFontWeightSemibold,UIColor.whiteColor); _stateLabel.accessibilityIdentifier=@"wow.status";
     UIStackView *stateRow=[[UIStackView alloc] initWithArrangedSubviews:@[_activity,_stateLabel]];
     stateRow.axis=UILayoutConstraintAxisHorizontal; stateRow.spacing=10;
+    // A hidden activity indicator retains its 20pt intrinsic height. Center
+    // it rather than stretching/compressing both views to that same height.
+    stateRow.alignment=UIStackViewAlignmentCenter;
     [_activity setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
     _detailLabel=Label(15,UIFontWeightRegular,Muted()); _detailLabel.accessibilityIdentifier=@"wow.detail";
     _versionLabel=Label(12,UIFontWeightRegular,Muted()); _versionLabel.accessibilityIdentifier=@"wow.version";
