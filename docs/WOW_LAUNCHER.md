@@ -156,8 +156,10 @@ tests reproduce the old failure and cover recovery during resume/activation,
 appending across a 64 MiB checkpoint, retained warm receipts after reopening,
 and refusal of actual corruption. Xcode now logs update phase transitions,
 errors and verification byte counters; segment rechecks log the segment number.
-The specific source of the device's metadata change and the fix's behavior on
-that pending download still need a physical-device retry.
+A subsequent Xcode console observation confirmed `data.075` was rechecked and
+the physical update reached `activate` then `complete` (67,488,524,145 bytes
+read, 44,033,527 reused). The exact source of the metadata change remains
+unidentified; a later warm patch and post-update gameplay need separate tests.
 
 `Installation.m` checks the installed product and original executable.
 `WoWViewController.m` serializes update jobs, discards stale UI/launch callbacks

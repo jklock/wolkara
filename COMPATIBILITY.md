@@ -53,7 +53,10 @@ device trial reported repeated **CASC data changed during the update** while
 resuming 70235 → 70245. A follow-up revalidates only a changed segment's trusted
 objects before allowing metadata-only recovery; checksum failures still block
 activation. Synthetic metadata-change/resume and 64 MiB checkpoint tests pass;
-retrying the pending patch on the physical iPhone remains unverified.
+a subsequent physical retry reached `activate` and `complete` in Xcode after
+rechecking `data.075`. The logged counters were 67,488,524,145 bytes read and
+44,033,527 reused during that adoption/resume pass. This is an observed update
+completion, not a warm-patch speed measurement or a post-update gameplay test.
 See [persistent verification](docs/WOW_LAUNCHER.md#persistent-verification-2026-10-07).
 
 On 2026-10-06, the follow-up adds an [automatic touch controller](docs/TOUCH_CONTROLLER_PROPOSAL.md)
