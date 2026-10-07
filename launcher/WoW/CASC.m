@@ -175,7 +175,14 @@ static BOOL WriteVerification(NSDictionary *receipt,NSString *directory,NSError 
 }}
 NSDictionary *TKWoWCASCVerificationSnapshot(NSString *directory) { @autoreleasepool {
     NSString *path=[directory stringByAppendingPathComponent:VerificationFile];
-    int fd=open(path.fileSystemRepresentation,O_RDONLY|O_NOFOLLOW|O_NONBLOCK);if(fd<0)return nil;
+    int fd=open(path.fileSystemRepresentation,O_RDONLY|O_NOFOLLOW|O_NONBLOCK);
+    // Upgrade the former name without re-reading unchanged game data. Never
+    // fall back from an existing invalid/current record or follow a symlink.
+    if(fd<0 && errno==ENOENT) {
+        path=[directory stringByAppendingPathComponent:@".wowkara-verified"];
+        fd=open(path.fileSystemRepresentation,O_RDONLY|O_NOFOLLOW|O_NONBLOCK);
+    }
+    if(fd<0)return nil;
     struct stat before,after;
     if(fstat(fd,&before) || !S_ISREG(before.st_mode) || before.st_size<24 || before.st_size>(off_t)CacheLimit) { close(fd);return nil; }
     NSMutableData *file=[NSMutableData dataWithLength:(NSUInteger)before.st_size];size_t done=0;

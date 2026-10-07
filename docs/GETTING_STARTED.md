@@ -104,6 +104,11 @@ with the same bundle ID, team and Keychain group. This replaces the app while
 keeping its game data. Game updates happen inside Wolkara; source/app updates
 still require rebuilding. Signing and authorization requirements remain separate.
 
+When upgrading an earlier build after the Wolkara rename, keep your existing
+bundle ID and Keychain group. Saved touch layouts and verified-download receipts
+are read from their former storage keys and saved under the new names. The old
+keys remain only as migration inputs; they are not used for new installations.
+
 The existing setup has launched without the Mac and after reboot. Cellular-only
 startup remains unresolved; see [the iPhone notes](IPHONE.md). Build success or
 a simulator pass is not proof of game execution on another device/signing setup.

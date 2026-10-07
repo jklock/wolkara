@@ -137,6 +137,18 @@ static void Drain(void) { CFRunLoopRunInMode(kCFRunLoopDefaultMode,0.03,false); 
 static void TestPreferences(void) {
     NSString *suite=[@"org.tolkara.layout-test." stringByAppendingString:NSUUID.UUID.UUIDString];
     NSUserDefaults *defaults=[[NSUserDefaults alloc] initWithSuiteName:suite];
+    // Existing installations keep layout, opacity, size and haptic settings.
+    [defaults setObject:@{@"opacity":@0.6,@"rearScale":@1.2,@"frontScale":@0.9,
+        @"hapticsEnabled":@NO,@"positions":@{@"menu":@[@0.5,@0.5]}} forKey:@"WowkaraTouchLayoutV1"];
+    AKGamepadLayout *migrated=[[AKGamepadLayout alloc] initWithDefaults:defaults];
+    assert(fabs(migrated.opacity-.6)<.001 && fabs(migrated.rearScale-1.2)<.001 &&
+           fabs(migrated.frontScale-.9)<.001 && !migrated.hapticsEnabled);
+    assert([defaults dictionaryForKey:@"WolkaraTouchLayoutV1"]);
+    CGRect migratedFrame=[migrated frameForItem:@"menu" defaultFrame:CGRectMake(0,0,100,100) inBounds:CGRectMake(0,0,500,300)];
+    assert(CGRectEqualToRect(migratedFrame,CGRectMake(200,100,100,100)));
+    migrated.opacity=.3;[migrated save];
+    assert(fabs([[AKGamepadLayout alloc] initWithDefaults:defaults].opacity-.3)<.001);
+    // Explicit current values (even malformed ones) must not resurrect old values.
     [defaults setObject:@{@"opacity":@"bad",@"rearScale":@99,@"frontScale":@(-2),
         @"positions":@{@"broken":@[@"x",@0],@"left":@[@(-1),@4]}} forKey:@"WolkaraTouchLayoutV1"];
     AKGamepadLayout *layout=[[AKGamepadLayout alloc] initWithDefaults:defaults];

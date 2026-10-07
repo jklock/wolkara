@@ -67,6 +67,26 @@ int main(void) {@autoreleasepool {
     assert(![store verifyKey:TKWoWHex(key,16) size:a.length]);
     // Fetching bytes (e.g. executable extraction) always verifies the payload.
     assert([[store readKey:ka size:a.length] isEqual:a]);store=nil;
+    // A renamed installation reuses only fully validated legacy receipts;
+    // the next save uses the new name, which always takes precedence.
+    NSString *legacyCache=[directory stringByAppendingPathComponent:@".wowkara-verified"];
+    assert([fm moveItemAtPath:cache toPath:legacyCache error:NULL]);
+    store=Open(directory);
+    assert([store verifyKey:ka size:a.length] && [store verifyKey:kb size:b.length]);
+    assert(store.verificationBytesRead==0 && store.verificationBytesReused==a.length+b.length);
+    Persist(store);store=nil;
+    NSData *migrated=[NSData dataWithContentsOfFile:cache];assert(migrated);
+    assert([[@"invalid current receipt" dataUsingEncoding:NSUTF8StringEncoding] writeToFile:cache atomically:YES]);
+    assert(!TKWoWCASCVerificationSnapshot(directory));
+    assert([fm removeItemAtPath:cache error:NULL]);
+    assert([fm createSymbolicLinkAtPath:cache withDestinationPath:legacyCache error:NULL]);
+    assert(!TKWoWCASCVerificationSnapshot(directory));
+    assert([fm removeItemAtPath:cache error:NULL]);
+    assert([fm removeItemAtPath:legacyCache error:NULL]);
+    assert([fm createSymbolicLinkAtPath:legacyCache withDestinationPath:cache error:NULL]);
+    assert(!TKWoWCASCVerificationSnapshot(directory));
+    assert([fm removeItemAtPath:legacyCache error:NULL]);
+    assert([migrated writeToFile:cache atomically:YES]);
     // APFS cloning changes inodes: carry trust only over our completed clone.
     NSDictionary *snapshot=TKWoWCASCVerificationSnapshot(directory);assert(snapshot);
     NSString *cloned=[base stringByAppendingPathComponent:@"cloned"];Clone(directory,cloned);
