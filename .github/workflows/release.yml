@@ -1,12 +1,10 @@
-# On a v* release: the unsigned .ipa and its notes.
+# Explicit experimental packaging for an existing tag; no automatic public IPA.
 
-name: Release
+name: Experimental IPA (manual)
 
+# Wolkara is currently published as source. Packaging an experimental External
+# JIT IPA is an explicit maintainer action, never an automatic tag/release side effect.
 on:
-  release:
-    types: [published]
-  push:
-    tags: ["v*"] # only v* tags
   workflow_dispatch:
     inputs:
       tag:

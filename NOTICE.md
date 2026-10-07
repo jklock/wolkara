@@ -1,5 +1,9 @@
 # Notices
 
+Wolkara is a WoW-focused fork of Tolkara, by Vasilii Kharitonov and the Tolkara
+contributors. The original runtime, translation layer and history are retained.
+Wolkara additions are provided under the same MIT license.
+
 Tolkara is released under the MIT License. It uses Apple's public SDK frameworks,
 the system zlib library and the Python standard library. The experimental WoW
 manifest reader includes adaptations described below.

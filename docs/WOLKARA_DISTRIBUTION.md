@@ -2,8 +2,9 @@
 
 Assessment: 2026-10-06. Wolkara is a WoW-focused fork of Tolkara. Changing its
 name, home screen or distribution channel does not change iOS code-execution
-requirements. No public Wolkara IPA, source, notarization submission or Reddit
-post has been published as part of this work.
+requirements. The public fork is distributed as source for personal Xcode builds. No tested
+public Wolkara IPA or notarized build is provided. See [Getting started](GETTING_STARTED.md)
+and the [fresh-install checklist](FRESH_INSTALL_TEST.md).
 
 ## What is currently demonstrated
 
@@ -14,8 +15,8 @@ reports do not prove cellular-only startup, the latest updater revision, or a
 fresh install using another user's signing identity. See [COMPATIBILITY.md](../COMPATIBILITY.md).
 
 The updater can check editions and install patches while open. A first full
-real-game download is still unvalidated. The controls editor has simulator and
-signed-build coverage; it needs a physical-game session before a release claim.
+real-game download is still unvalidated. The controls editor has simulator/signed-build coverage and user-confirmed
+physical-game use. A separate clean-install run remains necessary.
 
 Normal launches automatically use the route compiled into the app: Developer
 service for the integrated target, External JIT for the diagnostics/sideload
