@@ -55,9 +55,9 @@ The edition selector includes other WoW clients; their presence is not a
 compatibility claim. See [COMPATIBILITY.md](COMPATIBILITY.md) for dated results.
 
 The updater has synthetic regression coverage, isolated Mac-copy tests and a
-recorded device patch installation. The latest verification-cache fix and a
-complete first download into an empty iPhone installation still need end-to-end
-validation. Follow the [fresh-install checklist](docs/FRESH_INSTALL_TEST.md)
+recorded device patch installations. Xcode logs also confirm that the latest
+metadata-recovery fix completed an on-device update. A complete first download
+into an empty iPhone installation still needs end-to-end validation. Follow the [fresh-install checklist](docs/FRESH_INSTALL_TEST.md)
 and report the exact commit and client build you tried.
 
 ## Current limits
