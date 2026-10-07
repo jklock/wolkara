@@ -1,6 +1,6 @@
 # Wolkara launcher
 
-Current branch: `feature/wolkara`, based on the touch-controller implementation
+Current branch: `main`, based on the touch-controller implementation
 at `b55084a` (2026-10-06). The name, original W/portal icon and home heading are
 now Wolkara. The engine, Xcode targets and bundle IDs retain their existing names
 to preserve signing configuration and installed data. The development history

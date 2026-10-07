@@ -17,6 +17,14 @@ static CGFloat Number(id value, CGFloat fallback) {
     if ((self = [super init])) {
         _defaults = defaults;
         id saved = [defaults objectForKey:LayoutKey];
+        // Import the former app's preferences once; current settings take priority.
+        if (!saved) {
+            id legacy = [defaults objectForKey:@"WowkaraTouchLayoutV1"];
+            if ([legacy isKindOfClass:NSDictionary.class]) {
+                saved = legacy;
+                [defaults setObject:legacy forKey:LayoutKey];
+            }
+        }
         NSDictionary *values = [saved isKindOfClass:NSDictionary.class] ? saved : @{};
         self.opacity = Number(values[@"opacity"],0.8);
         self.rearScale = Number(values[@"rearScale"],1);
