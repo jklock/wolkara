@@ -1,5 +1,8 @@
 # Building and installing Tolkara
 
+For the WoW-focused Wolkara app, start with [GETTING_STARTED.md](GETTING_STARTED.md).
+This page covers the shared engine and its advanced development modes.
+
 Tolkara is meant to be built by you: you build it, you sign it with your own
 Apple developer identity, and it runs on your own iPad or iPhone. (External
 JIT is the one exception to the signing: you build it unsigned and your
@@ -120,8 +123,7 @@ Settings > General > VPN & Device Management.
 
 ## 4. Set up your execution mode
 
-Tolkara runs the application's code in one of three ways; the README's
-[Three ways to run code](../README.md#three-ways-to-run-code) compares them.
+The shared engine has three execution modes, described below.
 Wolkara uses Developer service in the integrated target and External JIT in the
 diagnostics/sideload target. There is no normal startup-mode picker. The other
 routes remain available to explicit development launches; set up only the
