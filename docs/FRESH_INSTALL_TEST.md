@@ -4,32 +4,31 @@ Record the Wolkara commit, Xcode version, device/OS and game version with each
 result. Do not record account names, passwords, pairing records or device IDs.
 A synthetic test or existing configured installation is not a clean-device pass.
 
-## Isolate the test
+## Prepare one installation
 
 Use a new checkout of the published source. Do not copy `build/`, `local.env`,
 Xcode user settings, game files, caches, addons or authorization from an older
 checkout/app. Create your own configuration using [Getting started](GETTING_STARTED.md).
 
-For a second installation on the same phone, use **both** a different
-`TOLKARA_BUNDLE_ID` and a different `TOLKARA_KEYCHAIN_GROUP`. Set
-`TOLKARA_DISPLAY_NAME="Wolkara Test"` to distinguish its icon. This preserves
-the existing installation and prevents shared Keychain authorization from hiding
-a first-run setup problem. Enroll the new installation separately.
+Use the ordinary **Wolkara** app and one bundle ID. There is no separate test
+edition. Start on a device without downloaded game data; if you already use the
+app, explicitly decide what to back up or remove before starting over. Do not
+automatically delete an existing installation or its container to run this test.
 
-A second full installation needs space for another game copy (roughly 70 GB for
-the tested Forever build), plus update headroom. Check iPhone Storage first.
-Never clear the existing app's container to simulate a fresh install. Reusing
-an empty Documents folder alone does not reset preferences or Keychain state.
+The tested Forever build needs roughly 70 GB plus update headroom. Check iPhone
+Storage first. App deletion can leave Keychain authorization behind, so an empty
+download is not proof of first-time enrollment. Record reused authorization
+separately and use a new tester/device to validate the complete first-use setup.
 
 ## Test sequence
 
 1. **Build/install:** follow only the public guide, including signing and USB
    enrollment. Record any undocumented manual intervention as a failure to fix.
-2. **Empty home:** launch the distinct test app. Forever must offer Install,
-   with no inherited installation, addons or user preferences.
+2. **Empty home:** launch Wolkara. Forever must offer Install,
+   with no inherited game installation or addons. Record any retained preferences.
 3. **Download:** choose edition/region/language and Install. Confirm that progress
    is visible and the client comes from the CDN without a Mac game-file copy.
-4. **Resume:** after some content has downloaded, close the test app and reopen.
+4. **Resume:** after some content has downloaded, close Wolkara and reopen.
    It must resume and preserve verified downloads. Also test a brief network loss.
 5. **Complete:** confirm Ready to play and the expected installed client version;
    record elapsed time and final free storage. No partial install may be playable.
