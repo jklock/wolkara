@@ -4,6 +4,7 @@
 #import "LibraryContainer.h"
 #import "RealFunction.h"
 #import <objc/runtime.h>
+#import <objc/message.h>
 #import <CommonCrypto/CommonDigest.h>
 #import <UIKit/UIKit.h>
 #include <stdatomic.h>
@@ -54,7 +55,10 @@ static NSMutableSet *observers;
 // all actual capability queries and resource operations stay on native Metal.
 static BOOL desktopFalse(id self,SEL selector) { (void)self; (void)selector; return NO; }
 static NSUInteger builtInLocation(id self,SEL selector) { (void)self; (void)selector; return 0; }
-static NSUInteger builtInNumber(id self,SEL selector) { (void)self; (void)selector; return 1; }
+// A Mac with Apple silicon reports its GPU as built in, location number 0.
+static NSUInteger builtInNumber(id self,SEL selector) { (void)self; (void)selector; return 0; }
+// What this adapter answered before (--native-gpu-identity keeps it for comparison).
+static NSUInteger previousNumber(id self,SEL selector) { (void)self; (void)selector; return 1; }
 typedef id<MTLLibrary> (*LibraryLoader)(id,SEL,dispatch_data_t,NSError *__autoreleasing *) __attribute__((ns_returns_retained));
 static LibraryLoader originalLibraryLoader;
 static NSCache<NSString *,id<MTLLibrary>> *libraryCache(id<MTLDevice> device) {
@@ -80,8 +84,15 @@ static NSData *translatedLibraryData(NSString *path) {
     NSMutableString *hash=[NSMutableString new]; for(unsigned i=0;i<sizeof digest;i++) [hash appendFormat:@"%02x",digest[i]];
     return [hash isEqual:ready[@"sha256"]] ? bytes : nil;
 }
+extern void AKTraceMetalLibrary(id library);
+static id<MTLLibrary> loadLibrary(id receiver,SEL selector,dispatch_data_t data,NSError *__autoreleasing *error) __attribute__((ns_returns_retained));
 static id<MTLLibrary> captureLibrary(id receiver,SEL selector,dispatch_data_t data,NSError *__autoreleasing *error) __attribute__((ns_returns_retained));
 static id<MTLLibrary> captureLibrary(id receiver,SEL selector,dispatch_data_t data,NSError *__autoreleasing *error) {
+    id<MTLLibrary> library=loadLibrary(receiver,selector,data,error);
+    AKTraceMetalLibrary(library);
+    return library;
+}
+static id<MTLLibrary> loadLibrary(id receiver,SEL selector,dispatch_data_t data,NSError *__autoreleasing *error) {
     size_t length=dispatch_data_get_size(data);
     if(!length || length>64*1024*1024) return originalLibraryLoader(receiver,selector,data,error);
     NSMutableData *bytes=[NSMutableData dataWithLength:length];
@@ -174,6 +185,8 @@ static id<MTLLibrary> captureLibrary(id receiver,SEL selector,dispatch_data_t da
 }
 extern void AKInstallMetalPresentationDiagnostics(id<MTLDevice> device);
 extern void AKInstallManagedStorage(Class device);   // opt-in; see ManagedStorage.m
+extern void AKInstallBCTextureFallback(id<MTLDevice> device);   // GPUs without BC; see BCTextures.m
+extern void AKInstallMetalTrace(Class device);       // opt-in; see MetalTrace.m
 static void addDesktopProperties(id<MTLDevice> device) {
     AKInstallMetalPresentationDiagnostics(device);
     Class cls=object_getClass(device);
@@ -184,11 +197,36 @@ static void addDesktopProperties(id<MTLDevice> device) {
         originalLibraryLoader=(LibraryLoader)method_getImplementation(method);
         class_replaceMethod(cls,selector,(IMP)captureLibrary,method_getTypeEncoding(method));
         AKInstallManagedStorage(cls);
+        AKInstallBCTextureFallback(device);
+        AKInstallMetalTrace(cls);
     });
-    for(NSString *name in @[@"isLowPower",@"isHeadless",@"isRemovable",@"isDepth24Stencil8PixelFormatSupported"])
-        if(![device respondsToSelector:NSSelectorFromString(name)]) class_addMethod(cls,NSSelectorFromString(name),(IMP)desktopFalse,"B@:");
-    if(![device respondsToSelector:NSSelectorFromString(@"location")]) class_addMethod(cls,NSSelectorFromString(@"location"),(IMP)builtInLocation,"Q@:");
-    if(![device respondsToSelector:NSSelectorFromString(@"locationNumber")]) class_addMethod(cls,NSSelectorFromString(@"locationNumber"),(IMP)builtInNumber,"Q@:");
+    // The GPU's place in the machine, as a Mac with Apple silicon describes it:
+    // built in, number 0, neither low power, headless nor removable. Games
+    // infer the GPU's vendor from these when the I/O Registry does not tell
+    // them; iPadOS answers some of these selectors itself, differently.
+    // --native-gpu-identity keeps the iPad's own answers, for comparison.
+    static dispatch_once_t identity;
+    dispatch_once(&identity,^{
+        NSMutableArray *native=[NSMutableArray new];
+        for(NSString *name in @[@"location",@"locationNumber",@"isLowPower",@"isHeadless",@"isRemovable"]) {
+            SEL selector=NSSelectorFromString(name);
+            if(![device respondsToSelector:selector]) { [native addObject:[name stringByAppendingString:@"=absent"]]; continue; }
+            NSUInteger value=((NSUInteger (*)(id,SEL))objc_msgSend)(device,selector);
+            [native addObject:[NSString stringWithFormat:@"%@=%lu",name,(unsigned long)(name.length>8 && [name hasPrefix:@"is"] ? (value&0xff) : value)]];
+        }
+        AKLog(@"Metal device %@: iPadOS answers %@",device.name,[native componentsJoinedByString:@" "]);
+    });
+    BOOL mac=![NSProcessInfo.processInfo.arguments containsObject:@"--native-gpu-identity"];
+    struct { NSString *name; IMP imp; const char *types; } answers[]={
+        {@"isLowPower",(IMP)desktopFalse,"B@:"},{@"isHeadless",(IMP)desktopFalse,"B@:"},{@"isRemovable",(IMP)desktopFalse,"B@:"},
+        {@"isDepth24Stencil8PixelFormatSupported",(IMP)desktopFalse,"B@:"},
+        {@"location",(IMP)builtInLocation,"Q@:"},{@"locationNumber",mac?(IMP)builtInNumber:(IMP)previousNumber,"Q@:"}};
+    for(size_t i=0;i<sizeof answers/sizeof *answers;i++) {
+        SEL selector=NSSelectorFromString(answers[i].name);
+        if(![device respondsToSelector:selector]) class_addMethod(cls,selector,answers[i].imp,answers[i].types);
+        else if(mac && ![answers[i].name isEqualToString:@"isDepth24Stencil8PixelFormatSupported"])
+            class_replaceMethod(cls,selector,answers[i].imp,answers[i].types);
+    }
 }
 NSArray<id<MTLDevice>> *MTLCopyAllDevicesWithObserver(id<NSObject> __strong *observer,
     void (^handler)(id<MTLDevice>,NSString *)) __attribute__((ns_returns_retained));
