@@ -560,6 +560,9 @@ xcrun clang -fobjc-arc -Wall -Wextra -Werror -Wno-deprecated-declarations -O1 -g
     -Itranslation/Metal tests/test_storage_modes.m -o build/emulation/test_storage_modes
 build/emulation/test_storage_modes
 xcrun clang -fobjc-arc -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined \
+    -Itranslation/IOKit -framework Foundation -framework IOKit tests/test_gpu_identity.m -o build/emulation/test_gpu_identity
+build/emulation/test_gpu_identity
+xcrun clang -fobjc-arc -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined \
     -framework Foundation translation/CoreGraphics/DisplayModes.m tests/test_display_modes.m \
     -o build/emulation/test_display_modes
 build/emulation/test_display_modes
