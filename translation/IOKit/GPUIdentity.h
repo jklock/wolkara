@@ -14,6 +14,16 @@ static inline NSData *AKGPUIdentityProperty(NSString *key, id native) {
     }
     return nil;
 }
+// The whole entry, for the stand-in the adapter hands out where the iPad's
+// sandbox shows no accelerator: a Mac's GPU entry names its chip in "model"
+// ("Apple M4 Pro"), which Metal calls "Apple M4 Pro" and iPadOS "Apple M5 GPU".
+static inline NSDictionary<NSString *, id> *AKGPUStandInProperties(NSString *metalName) {
+    NSString *model = [metalName hasSuffix:@" GPU"] ? [metalName substringToIndex:metalName.length - 4] : metalName;
+    NSMutableDictionary *entry = [NSMutableDictionary new];
+    for (NSString *key in AKGPUIdentityKeys()) entry[key] = AKGPUIdentityProperty(key, nil);
+    if (model.length) entry[@"model"] = model;
+    return entry;
+}
 // Keys whose values identify a device or a person: never logged.
 static inline BOOL AKGPUIdentityPrivateKey(NSString *key) {
     NSString *lower = key.lowercaseString;
