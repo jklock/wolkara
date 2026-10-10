@@ -3,7 +3,8 @@
 //
 // Games identify the GPU through the I/O Registry: they find the accelerator
 // (an IOAccelerator) and read its "vendor-id". On a Mac with Apple silicon that
-// entry carries Apple's 0x106b. Every other query, and every other entry, goes
+// entry carries Apple's 0x106b; an iPad app's sandbox shows no accelerator at
+// all (see the stand-in below). Every other query, and every other entry, goes
 // to the iPad's own IOKit unchanged.
 //
 // --trace-iokit (launch argument) logs each distinct registry query the
@@ -99,6 +100,42 @@ static BOOL AKGPUIsMetalDevice(uint64_t identifier) {
     dispatch_once(&once, ^{ device = MTLCreateSystemDefaultDevice().registryID; });
     return identifier && identifier == device;
 }
+// The stand-in for the GPU. The iPad's app sandbox hides the accelerator:
+// matching IOAccelerator finds nothing, and a game that reads the GPU's vendor
+// there guesses instead (World of Warcraft takes AMD and a lower graphics
+// tier). Where the iPad shows no accelerator, the match yields a stand-in, a
+// real registry object the app may see, and every registry query about it is
+// answered as a Mac's GPU entry answers it, never with its own properties.
+static io_object_t standIn;
+static NSDictionary *standInEntry;
+static uint64_t metalRegistryID;
+static BOOL useStandIn(mach_port_t port) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        io_service_t (*get)(mach_port_t, CFDictionaryRef) =
+            (io_service_t (*)(mach_port_t, CFDictionaryRef))realFunction("IOServiceGetMatchingService", (void *)IOServiceGetMatchingService);
+        id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+        metalRegistryID = device.registryID;
+        standInEntry = AKGPUStandInProperties(device.name ?: @"");
+        for (NSString *name in @[@"IOResources", @"IOPlatformExpertDevice"]) {
+            io_service_t object = get ? get(port, IOServiceMatching(name.UTF8String)) : 0;
+            if (object) { standIn = object; break; }
+        }
+        AKLog(@"IOKit: the app sees no accelerator; %@ stands in for the GPU, answered as a Mac's (%@)",
+              standIn ? className(standIn) : @"nothing", [[standInEntry.allKeys sortedArrayUsingSelector:@selector(compare:)] componentsJoinedByString:@", "]);
+    });
+    return standIn != 0;
+}
+static BOOL isStandIn(io_object_t object) { return object && standIn && IOObjectIsEqualTo(object, standIn); }
+static CFTypeRef standInProperty(CFStringRef key) {
+    id value = key ? standInEntry[(__bridge NSString *)key] : nil;
+    return value ? CFBridgingRetain(value) : NULL;
+}
+static BOOL acceleratorMatch(CFDictionaryRef matching) {
+    if (!matching) return NO;
+    id provider = ((__bridge NSDictionary *)matching)[@kIOProviderClassKey];
+    return [provider isKindOfClass:NSString.class] && ([provider isEqual:@"IOAccelerator"] || [provider isEqual:@"IOGPU"]);
+}
 // The accelerator behind the Metal device: what a Mac reports as the GPU.
 static BOOL isGPU(io_registry_entry_t entry) {
     return entry && (IOObjectConformsTo(entry, "IOAccelerator") || IOObjectConformsTo(entry, "IOGPU"));
@@ -113,12 +150,13 @@ static CFTypeRef macGPUProperty(io_registry_entry_t entry, CFStringRef key, CFTy
 kern_return_t IOServiceGetMatchingServices(mach_port_t port, CFDictionaryRef matching, io_iterator_t *existing) {
     REAL(IOServiceGetMatchingServices);
     configure();
-    if (tracing && real && matching) {
-        // List what the application will be given, from a second iterator: each
-        // call consumes one reference to the matching dictionary.
+    BOOL accelerator = macIdentity && acceleratorMatch(matching);
+    if ((tracing || accelerator) && real && matching) {
+        // Count what the application would be given, from a second iterator:
+        // each call consumes one reference to the matching dictionary.
         static io_object_t (*next)(io_iterator_t); static dispatch_once_t once;
         dispatch_once(&once, ^{ next = (io_object_t (*)(io_iterator_t))realFunction("IOIteratorNext", (void *)IOIteratorNext); });
-        NSString *description = matchingSummary(matching);
+        NSString *description = tracing ? matchingSummary(matching) : nil;
         NSMutableOrderedSet *classes = [NSMutableOrderedSet new];
         unsigned count = 0; io_iterator_t copy = 0;
         CFRetain(matching);
@@ -129,6 +167,10 @@ kern_return_t IOServiceGetMatchingServices(mach_port_t port, CFDictionaryRef mat
         }
         trace([NSString stringWithFormat:@"IOServiceGetMatchingServices %@ -> 0x%x count=%u %@", description, listed, count,
                [classes.array componentsJoinedByString:@","]]);
+        if (accelerator && !count && useStandIn(port)) {
+            CFRelease(matching);   // the reference the application handed over
+            return real(port, IOServiceMatching(className(standIn).UTF8String), existing);
+        }
     }
     return real ? real(port, matching, existing) : KERN_FAILURE;
 }
@@ -136,8 +178,14 @@ io_service_t IOServiceGetMatchingService(mach_port_t port, CFDictionaryRef match
     REAL(IOServiceGetMatchingService);
     configure();
     NSString *description = tracing ? matchingSummary(matching) : nil;
+    BOOL accelerator = macIdentity && acceleratorMatch(matching);
+    if (accelerator && matching) CFRetain(matching);
     io_service_t service = real ? real(port, matching) : 0;
     trace([NSString stringWithFormat:@"IOServiceGetMatchingService %@ -> %@", description, className(service)]);
+    if (accelerator && matching) {
+        CFRelease(matching);
+        if (!service && useStandIn(port)) service = real(port, IOServiceMatching(className(standIn).UTF8String));
+    }
     return service;
 }
 io_object_t IOIteratorNext(io_iterator_t iterator) {
@@ -151,6 +199,12 @@ CFTypeRef IORegistryEntryCreateCFProperty(io_registry_entry_t entry, CFStringRef
     REAL(IORegistryEntryCreateCFProperty);
     configure();
     CFTypeRef value = real ? real(entry, key, allocator, options) : NULL;
+    if (isStandIn(entry)) {
+        if (value) CFRelease(value);
+        value = standInProperty(key);
+        trace([NSString stringWithFormat:@"CreateCFProperty (GPU stand-in) %@ -> %@", keyName(key), summary(key, value)]);
+        return value;
+    }
     CFTypeRef mac = macGPUProperty(entry, key, value);
     trace([NSString stringWithFormat:@"CreateCFProperty %@ %@ -> %@%@", className(entry), keyName(key), summary(key, value),
            mac ? [@" (Mac: " stringByAppendingFormat:@"%@)", summary(key, mac)] : @""]);
@@ -161,6 +215,12 @@ CFTypeRef IORegistryEntrySearchCFProperty(io_registry_entry_t entry, const io_na
     REAL(IORegistryEntrySearchCFProperty);
     configure();
     CFTypeRef value = real ? real(entry, plane, key, allocator, options) : NULL;
+    if (isStandIn(entry)) {
+        if (value) CFRelease(value);
+        value = standInProperty(key);
+        trace([NSString stringWithFormat:@"SearchCFProperty (GPU stand-in) %s %@ options=0x%x -> %@", plane ? plane : "(null)", keyName(key), options, summary(key, value)]);
+        return value;
+    }
     CFTypeRef mac = macGPUProperty(entry, key, value);
     trace([NSString stringWithFormat:@"SearchCFProperty %@ %s %@ options=0x%x -> %@%@", className(entry), plane ? plane : "(null)",
            keyName(key), options, summary(key, value), mac ? [@" (Mac: " stringByAppendingFormat:@"%@)", summary(key, mac)] : @""]);
@@ -170,6 +230,11 @@ CFTypeRef IORegistryEntrySearchCFProperty(io_registry_entry_t entry, const io_na
 kern_return_t IORegistryEntryCreateCFProperties(io_registry_entry_t entry, CFMutableDictionaryRef *properties, CFAllocatorRef allocator, IOOptionBits options) {
     REAL(IORegistryEntryCreateCFProperties);
     configure();
+    if (isStandIn(entry) && properties) {
+        *properties = (CFMutableDictionaryRef)CFBridgingRetain([standInEntry mutableCopy]);
+        trace([NSString stringWithFormat:@"CreateCFProperties (GPU stand-in) -> keys=%lu", (unsigned long)standInEntry.count]);
+        return KERN_SUCCESS;
+    }
     kern_return_t result = real ? real(entry, properties, allocator, options) : KERN_FAILURE;
     if (result == KERN_SUCCESS && properties && *properties && macIdentity && isGPU(entry)) {
         for (NSString *key in AKGPUIdentityKeys()) {
@@ -192,7 +257,7 @@ kern_return_t IORegistryEntryGetParentEntry(io_registry_entry_t entry, const io_
     REAL(IORegistryEntryGetParentEntry);
     configure();
     kern_return_t result = real ? real(entry, plane, parent) : KERN_FAILURE;
-    trace([NSString stringWithFormat:@"GetParentEntry %@ %s -> 0x%x %@", className(entry), plane ? plane : "(null)", result,
+    trace([NSString stringWithFormat:@"GetParentEntry %@%@ %s -> 0x%x %@", className(entry), isStandIn(entry) ? @" (GPU stand-in)" : @"", plane ? plane : "(null)", result,
            result == KERN_SUCCESS && parent ? className(*parent) : @""]);
     return result;
 }
@@ -200,19 +265,34 @@ kern_return_t IORegistryEntryGetParentIterator(io_registry_entry_t entry, const 
     REAL(IORegistryEntryGetParentIterator);
     configure();
     kern_return_t result = real ? real(entry, plane, iterator) : KERN_FAILURE;
-    trace([NSString stringWithFormat:@"GetParentIterator %@ %s -> 0x%x", className(entry), plane ? plane : "(null)", result]);
+    trace([NSString stringWithFormat:@"GetParentIterator %@%@ %s -> 0x%x", className(entry), isStandIn(entry) ? @" (GPU stand-in)" : @"", plane ? plane : "(null)", result]);
     return result;
 }
 kern_return_t IORegistryEntryGetChildIterator(io_registry_entry_t entry, const io_name_t plane, io_iterator_t *iterator) {
     REAL(IORegistryEntryGetChildIterator);
     configure();
+    if (isStandIn(entry) && iterator) {
+        // A Mac's GPU entry has only its user clients below it, none with
+        // properties a game reads: the stand-in's children stay out of view.
+        // The real match for accelerators, which the iPad leaves empty.
+        kern_return_t (*match)(mach_port_t, CFDictionaryRef, io_iterator_t *) = (kern_return_t (*)(mach_port_t, CFDictionaryRef, io_iterator_t *))
+            realFunction("IOServiceGetMatchingServices", (void *)IOServiceGetMatchingServices);
+        kern_return_t result = match ? match(kIOMainPortDefault, IOServiceMatching("IOAccelerator"), iterator) : KERN_FAILURE;
+        trace([NSString stringWithFormat:@"GetChildIterator (GPU stand-in) %s -> 0x%x, no children", plane ? plane : "(null)", result]);
+        return result;
+    }
     kern_return_t result = real ? real(entry, plane, iterator) : KERN_FAILURE;
-    trace([NSString stringWithFormat:@"GetChildIterator %@ %s -> 0x%x", className(entry), plane ? plane : "(null)", result]);
+    trace([NSString stringWithFormat:@"GetChildIterator %@%@ %s -> 0x%x", className(entry), isStandIn(entry) ? @" (GPU stand-in)" : @"", plane ? plane : "(null)", result]);
     return result;
 }
 kern_return_t IORegistryEntryGetRegistryEntryID(io_registry_entry_t entry, uint64_t *identifier) {
     REAL(IORegistryEntryGetRegistryEntryID);
     configure();
+    if (isStandIn(entry) && identifier) {
+        *identifier = metalRegistryID;   // the stand-in is the Metal device's GPU
+        trace(@"GetRegistryEntryID (GPU stand-in) -> the Metal device's");
+        return KERN_SUCCESS;
+    }
     kern_return_t result = real ? real(entry, identifier) : KERN_FAILURE;
     trace([NSString stringWithFormat:@"GetRegistryEntryID %@ -> 0x%x%@", className(entry), result,
            result == KERN_SUCCESS && identifier && AKGPUIsMetalDevice(*identifier) ? @" (the Metal device)" : @""]);
