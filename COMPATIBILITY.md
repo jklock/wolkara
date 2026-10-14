@@ -204,6 +204,16 @@ original crash cause remain unknown. No game window or gameplay was validated.
 
 ## Runtime diagnostics
 
+### Add-on manager (2026-10-14)
+
+The native add-on manager build was signed with the configured development
+identity and installed on Dadpad (iPad13,9). The installed app contains the
+ZIPFoundation 0.9.20 archive validator, device-only CurseForge credential
+storage, and managed-package controls. This is installation proof only:
+interactive Files import, a newly approved personal CurseForge key, and WoW's
+AddOns menu have not yet been exercised on the device, so no package or game
+compatibility result is claimed here.
+
 On 2026-09-26, `--sparse-memory-probe` passed on the iPad Pro M5 / iPadOS 27.
 Tolkara's own assembly used 112 GiB of software address ranges and completed
 18,600 scalar, SIMD, addressing and atomic fault/resume operations, using
