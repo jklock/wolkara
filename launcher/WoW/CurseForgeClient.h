@@ -9,7 +9,7 @@ typedef void (^TKCurseForgeCompletion)(id _Nullable value, NSError *_Nullable er
 // returned by that API.
 @interface TKCurseForgeClient : NSObject
 - (instancetype)initWithAPIKey:(NSString *)key;
-- (void)searchMods:(NSString *)query completion:(TKCurseForgeCompletion)completion;
+- (void)categoriesForGameID:(NSInteger)gameID completion:(TKCurseForgeCompletion)completion;
 - (void)browseModsWithQuery:(NSString *)query sortField:(NSInteger)sortField sortOrder:(NSString *)sortOrder categoryID:(nullable NSNumber *)categoryID index:(NSUInteger)index completion:(TKCurseForgeCompletion)completion;
 - (void)latestFileForModID:(NSNumber *)modID gameVersion:(NSString *)gameVersion completion:(TKCurseForgeCompletion)completion;
 - (void)downloadURLForModID:(NSNumber *)modID fileID:(NSNumber *)fileID completion:(TKCurseForgeCompletion)completion;

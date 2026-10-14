@@ -92,6 +92,12 @@ static void stub_forward(id self, SEL command, NSInvocation *invocation) {
 
 static Class stub_class(const char *name) {
     Class existing = objc_getClass(name);
+    // An existing class wins, which is what real Foundation, TextKit and UIKit
+    // classes want. It is a trap for a name AppKit shares with a private UIKit
+    // class of a different shape: the guest then messages the private class,
+    // which is how +[NSFont messageFontOfSize:] (UIFoundation's NSFont) took a
+    // launch down. Implement those in the AppKit adapter and alias the symbol in
+    // translation/AppKit/ldflags, as NSColor and NSFont do.
     if (existing) return existing;
     // The support library has this where the build carries it.
     Class inherited = objc_getClass("AKStubObject");

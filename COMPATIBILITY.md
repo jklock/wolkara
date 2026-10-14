@@ -206,13 +206,61 @@ original crash cause remain unknown. No game window or gameplay was validated.
 
 ### Add-on manager (2026-10-14)
 
-The native add-on manager build was signed with the configured development
-identity and installed on Dadpad (iPad13,9). The installed app contains the
-ZIPFoundation 0.9.20 archive validator, device-only CurseForge credential
-storage, and managed-package controls. This is installation proof only:
-interactive Files import, a newly approved personal CurseForge key, and WoW's
-AddOns menu have not yet been exercised on the device, so no package or game
-compatibility result is claimed here.
+The native add-on manager was signed with the configured development identity
+and installed on Dadpad (iPad13,9); the current build launches and stays
+running. The installed app contains the ZIPFoundation 0.9.20 archive
+validator, device-only CurseForge credential storage, a live CurseForge
+browse surface (search, sort, category filter, pagination) and
+managed-package controls. This is build/launch proof only: interactive Files
+import, an approved personal CurseForge key and WoW's AddOns menu have not yet
+been exercised on the device, so no package or game compatibility result is
+claimed here.
+
+The game launch itself exposed a runtime gap. The guest's `NSFont` class
+reference bound to UIFoundation's private `NSFont`, whose selectors are not
+AppKit's, so `+[NSFont messageFontOfSize:]` raised during the login UI and the
+process ended with no crash report (the guest log's last lines record the
+exception). The AppKit adapter now implements `NSFont` as `AKFont` and aliases
+the AppKit symbol names in its `ldflags`, as it already did for `NSColor`; the
+shipped shim exports the class and a simulator check drives its class methods.
+The rebuilt app was reinstalled and relaunched on Dadpad. Gameplay past the
+login UI is not yet verified on the device.
+
+The same afternoon the client refused to start at all, showing its own "World of
+Warcraft" alert and then exiting cleanly (the launcher ended the session, so it
+looked like a crash). Its `Tact.log` recorded the reason: "Corruption detected in
+KMT file. (invalid sorted hash) ... Failed to initialize dynamic container.
+Error(11): needs repair". Every `.idx` (KMT) file under `Data/data` had been
+rewritten at 15:34 and a `05tempfile.idx` was left behind, so an update had been
+interrupted by the app's termination, leaving one half-written index generation
+and no earlier generation to fall back on. Restoring the complete index set from
+the intact Mac copy (98 files covering all 16 buckets and their earlier
+generations) plus one valid newest-generation index per bucket let the client
+bind the container, run all 13,302 initializers, enter main and play its intro
+cinematic with video and audio on Dadpad. The launcher's update path still needs
+to be checked for this failure mode: an interrupted index write must leave the
+container bootable, and older index generations must be kept (or restored) so the
+client can roll back.
+
+The Metal adapter no longer references a `BCTextures.m` fallback. That file never
+existed in the repository, and clean shim builds failed to link on the dangling
+`AKInstallBCTextureFallback` symbol (see
+`build/black-screen-triage/upstream-gpu-identity-test.log`) while cached shims
+kept the app building, so the add-on commit removed the reference. Whether the
+guest needs BC-texture handling behind the Mac-style GPU identity the adapter
+reports remains an open compatibility question.
+
+A device report said the Add-on Manager's search field raises no keyboard. The
+field does take focus: the fixture now pushes the manager into a window exactly
+as the launcher does and confirms the search field is hit-testable and becomes
+first responder. A plain text field behaves the same in the headless simulator,
+which presents no software keyboard at all, so that probe cannot separate app
+from environment. Nothing in the app suppresses text input: the launcher has a
+single key window when the manager is open, the AppKit adapter installs no
+responder or event swizzles, and the manager is unreachable after a guest
+session. An attached hardware keyboard is the remaining explanation, as iPadOS
+keeps the on-screen keyboard hidden until the keyboard key or Command-K is
+pressed; this is not independently confirmed on the device.
 
 On 2026-09-26, `--sparse-memory-probe` passed on the iPad Pro M5 / iPadOS 27.
 Tolkara's own assembly used 112 GiB of software address ranges and completed

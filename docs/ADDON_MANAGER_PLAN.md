@@ -1,7 +1,10 @@
 # WoW Forever add-on manager: implementation plan
 
-Status: proposal only; researched 2026-10-12. No add-on implementation or device
-installation is part of this planning change.
+Status: partly implemented; plan written 2026-10-12, first implementation
+2026-10-14. The manager, store, ZIP validator and CurseForge client are in the
+launcher; project browsing is populated live from the CurseForge API (search,
+sort, category filter, pagination) instead of a bundled catalog. The sections
+below remain the reference plan.
 
 ## Intended result
 

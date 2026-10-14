@@ -2,6 +2,7 @@
 // run in the simulator (tools/test_translation_sim.sh): no scene is connected,
 // so windows are never put on screen here.
 #import "AppKit.h"
+#import "Fonts.h"
 #import "TouchControls.h"
 #include <assert.h>
 
@@ -278,5 +279,27 @@ int main(void) { @autoreleasepool {
            (NSEventModifierFlagShift | LeftShift | NSEventModifierFlagCapsLock));
     assert(AKModifiersReconciled(held, 0) == 0);
     assert(AKModifiersReconciled(AKModifiersAfterKey(0, 0xE6, YES), NSEventModifierFlagOption) == (NSEventModifierFlagOption | RightOption));
-    puts("display pass, frame rects, panels, tracking areas, layer placement, contents scale, window ordering, Quartz events, window numbers and modifier keys: PASS");
+    // Fonts: the guest's NSFont references resolve to the adapter's AKFont
+    // through its ldflags alias, never to UIFoundation's private class of the
+    // same name, whose selectors are not AppKit's. +[NSFont messageFontOfSize:]
+    // on that one raised and ended a launch, so every class method a guest
+    // reaches is driven here.
+    assert([NSStringFromClass([NSFont class]) isEqual:@"AKFont"]);
+    assert([NSFont systemFontSize] == 13 && [NSFont smallSystemFontSize] == 11 && [NSFont labelFontSize] == 10);
+    NSFont *body = [NSFont messageFontOfSize:13];
+    assert(body != nil && body.pointSize == 13 && body.fontName.length > 0);
+    assert([body.fontName isEqual:[NSFont systemFontOfSize:13].fontName]);
+    assert(body.ascender > 0 && body.descender < 0 && body.capHeight > 0 && body.xHeight > 0);
+    assert(body.boundingRectForFont.size.height > 0 && !body.isFixedPitch);
+    // An unknown face still answers, as AppKit's own replacement font does.
+    assert([NSFont fontWithName:@"NoSuchFaceForTheFixture" size:9].pointSize == 9);
+    assert([NSFont menuFontOfSize:10].pointSize == 10 && [NSFont menuBarFontOfSize:10].pointSize == 10);
+    assert([NSFont labelFontOfSize:10].pointSize == 10 && [NSFont controlContentFontOfSize:10].pointSize == 10);
+    assert([NSFont titleBarFontOfSize:10].pointSize == 10 && [NSFont paletteFontOfSize:10].pointSize == 10);
+    assert([NSFont toolTipsFontOfSize:10].pointSize == 10 && [NSFont userFontOfSize:10].pointSize == 10);
+    assert([NSFont userFixedPitchFontOfSize:10].pointSize == 10);
+    assert([NSFont systemFontOfSize:10 weight:NSFontWeightSemibold].fontName.length > 0);
+    assert([NSFont systemFontOfSize:10 weight:NSFontWeightUltraLight].pointSize == 10);
+    assert([NSFont boldSystemFontOfSize:10].fontName.length > 0);
+    puts("display pass, frame rects, panels, tracking areas, layer placement, contents scale, window ordering, Quartz events, window numbers, modifier keys and the guest's font class: PASS");
 } }
