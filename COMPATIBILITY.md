@@ -223,8 +223,13 @@ process ended with no crash report (the guest log's last lines record the
 exception). The AppKit adapter now implements `NSFont` as `AKFont` and aliases
 the AppKit symbol names in its `ldflags`, as it already did for `NSColor`; the
 shipped shim exports the class and a simulator check drives its class methods.
-The rebuilt app was reinstalled and relaunched on Dadpad. Gameplay past the
-login UI is not yet verified on the device.
+The rebuilt app was reinstalled and relaunched on Dadpad, and with the container
+repaired the client now starts: `Client.log` records `Client Initialize` at
+18:23:33 and reaches the login screen (`Switching to screen="AccountLogin"`,
+with the intro movie at 18:23:40), then a clean `Glues Shutdown` at 18:40:14 when
+the user closed it, with no crash report and no CPU-resource diagnostic for the
+session. Logging in and gameplay past the login screen are not yet verified on
+the device.
 
 The same afternoon the client refused to start at all, showing its own "World of
 Warcraft" alert and then exiting cleanly (the launcher ended the session, so it
@@ -236,8 +241,8 @@ interrupted by the app's termination, leaving one half-written index generation
 and no earlier generation to fall back on. Restoring the complete index set from
 the intact Mac copy (98 files covering all 16 buckets and their earlier
 generations) plus one valid newest-generation index per bucket let the client
-bind the container, run all 13,302 initializers, enter main and play its intro
-cinematic with video and audio on Dadpad. The launcher's update path still needs
+bind the container, run all 13,302 initializers, enter main, play its intro
+cinematic with video and audio, and reach the login screen on Dadpad. The launcher's update path still needs
 to be checked for this failure mode: an interrupted index write must leave the
 container bootable, and older index generations must be kept (or restored) so the
 client can roll back.
