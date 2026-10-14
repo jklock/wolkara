@@ -2,6 +2,10 @@ name: Tolkara
 options:
   bundleIdPrefix: local.tolkara
   deploymentTarget: { iOS: "17.0" }
+packages:
+  ZIPFoundation:
+    url: https://github.com/weichsel/ZIPFoundation.git
+    revision: 22787ffb59de99e5dc1fbfe80b19c97a904ad48d
 settings:
   base:
     # Signing identity and identifiers come from your ignored local.env through
@@ -44,6 +48,7 @@ targetTemplates:
     platform: iOS
     dependencies:
       - sdk: libz.tbd
+      - package: ZIPFoundation
     sources:
       - path: launcher
         excludes: [Info.plist]

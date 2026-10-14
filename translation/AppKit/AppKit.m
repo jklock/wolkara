@@ -45,6 +45,11 @@ static BOOL eventMonitorsEnabled(void) {
 // Where the pointer is, in screen coordinates (bottom-left origin), as the
 // last mouse event left it.
 static NSPoint mouseScreenLocation;
+static BOOL AKTraceGeometry(void) {
+    static BOOL enabled; static dispatch_once_t once;
+    dispatch_once(&once, ^{ enabled = [NSProcessInfo.processInfo.arguments containsObject:@"--trace-appkit-geometry"]; });
+    return enabled;
+}
 @implementation NSEvent { AKQuartzEvent *_quartz; }
 + (NSPoint)mouseLocation { return mouseScreenLocation; }
 // The Quartz view of the event, made once: its location in global display
@@ -117,6 +122,7 @@ static NSPoint mouseScreenLocation;
     _layer.frame = f;
     [CATransaction commit];
     if(_autoresizesSubviews && !CGSizeEqualToSize(oldSize,f.size)) [self resizeSubviewsWithOldSize:oldSize];
+    if(AKTraceGeometry()) AKLog(@"geometry view=%@ frame=(%g,%g,%g,%g) old=(%g,%g) mask=0x%lx", NSStringFromClass(self.class), f.origin.x, f.origin.y, f.size.width, f.size.height, oldSize.width, oldSize.height, (unsigned long)_autoresizingMask);
 }
 - (void)resizeSubviewsWithOldSize:(NSSize)oldSize {
     for(NSView *view in self.subviews) {
@@ -784,6 +790,7 @@ static void logLayer(CALayer *layer,unsigned depth) {
     [_contentView.layer removeFromSuperlayer];
     _contentView = v; v.window = self; v.nextResponder = self;
     if (!v.layer) v.wantsLayer = YES;
+    if(AKTraceGeometry()) AKLog(@"geometry content view=%@ initial=(%g,%g,%g,%g) window=(%g,%g,%g,%g)", NSStringFromClass(v.class), v.frame.origin.x, v.frame.origin.y, v.frame.size.width, v.frame.size.height, _contentRect.origin.x, _contentRect.origin.y, _contentRect.size.width, _contentRect.size.height);
     if (_host) [self ak_attach];
 }
 - (void)ak_attach {
@@ -800,6 +807,7 @@ static void logLayer(CALayer *layer,unsigned depth) {
         ((BOOL (*)(id, SEL, CALayer *, CGFloat, NSWindow *))objc_msgSend)(_contentView, keep, layer, scale, self)))
         layer.contentsScale = scale;
     BOOL resized = !CGSizeEqualToSize(_contentView.frame.size, b.size);
+    if(AKTraceGeometry()) AKLog(@"geometry host=(%g,%g,%g,%g) content-before=(%g,%g,%g,%g) resized=%d", b.origin.x, b.origin.y, b.size.width, b.size.height, _contentView.frame.origin.x, _contentView.frame.origin.y, _contentView.frame.size.width, _contentView.frame.size.height, resized);
     _contentView.frame = b;
     if (resized) {
         AKLog(@"window content size -> %.0fx%.0f @%.0fx", b.size.width, b.size.height, self.backingScaleFactor);

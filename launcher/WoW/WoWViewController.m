@@ -1,5 +1,6 @@
 #import "WoWViewController.h"
 #import "Client.h"
+#import "AddonManager.h"
 #import "Installation.h"
 #import "Updater.h"
 #import "../App/LaunchProgressView.h"
@@ -37,7 +38,7 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     UIStackView *_columns;
     NSLayoutConstraint *_leftWidth;
     UILabel *_stateLabel, *_detailLabel, *_versionLabel, *_startupLabel, *_compatibilityLabel;
-    UIButton *_editionButton, *_preferencesButton, *_primaryButton;
+    UIButton *_editionButton, *_preferencesButton, *_addonsButton, *_primaryButton;
     UIBarButtonItem *_refreshItem;
     UIActivityIndicatorView *_activity;
 }
@@ -86,8 +87,10 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     UILabel *editionLabel=Label(11,UIFontWeightSemibold,Muted()); editionLabel.text=@"GAME EDITION";
     _editionButton=[self button:@"wow.edition" action:@selector(chooseEdition)];
     _preferencesButton=[self button:@"wow.preferences" action:@selector(preferences)];
+    _addonsButton=[self button:@"wow.addons.manage" action:@selector(manageAddons)];
+    [_addonsButton setTitle:@"Add-ons / Manage" forState:UIControlStateNormal];
     _compatibilityLabel=Label(12,UIFontWeightRegular,Muted());
-    UIStackView *left=Stack(@[title,editionLabel,_editionButton,_preferencesButton,_compatibilityLabel],12);
+    UIStackView *left=Stack(@[title,editionLabel,_editionButton,_preferencesButton,_addonsButton,_compatibilityLabel],12);
     [left setCustomSpacing:24 afterView:title];
 
     _activity=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
@@ -285,6 +288,9 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     _editionButton.backgroundColor=[UIColor colorWithWhite:1 alpha:0.055]; _editionButton.layer.cornerRadius=10;
     [self configureButton:_preferencesButton title:[NSString stringWithFormat:@"%@  ·  %@  ▾",_region.uppercaseString,[_locale isEqual:@"esES"]?@"Spanish":@"English"] filled:NO];
     _preferencesButton.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;
+    [self configureButton:_addonsButton title:_installation.app?@"Add-ons / Manage":@"Add-ons / Manage (install game first)" filled:NO];
+    _addonsButton.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;
+    _addonsButton.enabled=_installation.app && !_busy && !_starting && !_sessionUsed;
     _compatibilityLabel.text=([_product[@"id"] isEqual:@"wow"] || [_product[@"id"] isEqual:@"wow_beta"] || [_product[@"id"] isEqual:@"wow_classic"])?
         @"Compatibility with this edition is not yet verified.":
         @"";
@@ -415,6 +421,9 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     UIAlertController *sheet=[UIAlertController alertControllerWithTitle:@"Settings"
         message:@"Updates install automatically while this app is open. Settings and addons are preserved. Startup preparation is separate from downloading updates." preferredStyle:UIAlertControllerStyleActionSheet];
     if(!_busy && !_starting && !_sessionUsed && _installation.app) {
+        [sheet addAction:[UIAlertAction actionWithTitle:@"Manage add-ons" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+            (void)a; [self manageAddons];
+        }]];
         [sheet addAction:[UIAlertAction actionWithTitle:@"Verify and repair game files" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
             (void)a; [self repairInstallation];
         }]];
@@ -432,6 +441,15 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
         [self presentViewController:details animated:YES completion:nil];
     }]];
     [self presentSheet:sheet anchor:nil];
+}
+- (void)manageAddons {
+    NSError *error=nil; NSString *directory=[_library workingDirectoryForApp:_installation.app error:&error];
+    if (!directory) {
+        UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Add-ons unavailable" message:error.localizedDescription preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]]; [self presentViewController:alert animated:YES completion:nil]; return;
+    }
+    TKWoWAddonManagerViewController *manager=[[TKWoWAddonManagerViewController alloc] initWithAddOnsDirectory:[directory stringByAppendingPathComponent:@"Interface/AddOns"] edition:_product[@"name"]];
+    [self.navigationController pushViewController:manager animated:YES];
 }
 - (UILabel *)startupStatusLabel { [self loadViewIfNeeded]; return _detailLabel; }
 - (void)beginStartup {

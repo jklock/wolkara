@@ -35,6 +35,21 @@ It copies only your region and language settings, not account settings, saved
 credentials or add-ons. Pass `--source` if the game is installed elsewhere, and
 `--skip-data` to refresh the client without copying `Data` again.
 
+## Copy add-ons from the Mac
+
+Close Wolkara before copying add-ons. This merges the Mac's existing Forever
+add-ons into the iPad installation without deleting iPad files, settings or
+other add-ons:
+
+```bash
+profiles/wow-forever/sync_addons.sh --source "/Volumes/Storage/World of Warcraft"
+```
+
+The source must contain `_classic_beta_/Interface/AddOns`. The script uses the
+configured `DEVICE` and `TOLKARA_BUNDLE_ID` from `local.env`; pass `--device`
+to select a different paired device. It is a one-way file copy, not an add-on
+catalog or update manager.
+
 Open Tolkara, choose an execution mode if it asks, tap World of Warcraft Forever
 in the library (it appears once the files are copied), and log in inside the
 game as usual.

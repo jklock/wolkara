@@ -3,6 +3,7 @@
 #import <objc/runtime.h>
 #include <stdatomic.h>
 #import "../launcher/WoW/WoWViewController.h"
+#import "../launcher/WoW/AddonManager.h"
 #import "../launcher/WoW/Client.h"
 #import "../launcher/WoW/Updater.h"
 #import "../launcher/App/LaunchProgressView.h"
@@ -87,6 +88,12 @@ static UIView *Find(UIView *view, NSString *identifier) {
     assert([self primary].enabled);
     assert([[self status] isEqual:@"Ready to play"] && self.controller.title.length==0);
     assert([[(UILabel *)Find(self.controller.view,@"wow.title") text] isEqual:@"WOLKARA"]);
+    // The manager must construct its table header before a device user can
+    // reach any add-on action; this caught a live iPad constraint crash.
+    TKWoWAddonManagerViewController *manager=[[TKWoWAddonManagerViewController alloc] initWithAddOnsDirectory:NSTemporaryDirectory() edition:@"Forever · Beta"];
+    [manager loadViewIfNeeded];
+    [manager.view layoutIfNeeded];
+    assert(manager.tableView.tableHeaderView.bounds.size.height==122);
     self.controller.executionMode=TKExecutionModeNone;
     assert(![self primary].enabled);
     self.controller.executionMode=TKExecutionModeDeveloperService;
