@@ -1,5 +1,6 @@
 #import "Updater.h"
 #import "CASC.h"
+#import "UpdateLock.h"
 #include <sys/clonefile.h>
 #include <sys/file.h>
 #include <sys/stdio.h>
@@ -116,10 +117,9 @@ static BOOL SameBuild(NSDictionary *a,NSDictionary *b) {
     NSString *folder=nil;for(NSDictionary *p in TKWoWProducts())if([p[@"id"] isEqual:plan[@"product"]])folder=p[@"folder"];
     if(!folder || ![@[@"eu",@"us",@"kr",@"tw"] containsObject:plan[@"region"]] || ![@[@"enUS",@"esES",@"deDE",@"frFR",@"itIT",@"esMX",@"ptBR",@"ruRU",@"koKR",@"zhTW"] containsObject:plan[@"locale"]] || !root.isAbsolutePath || !TKWoWHashValid(plan[@"version"][@"BuildConfig"]) || !TKWoWHashValid(plan[@"version"][@"CDNConfig"]))return Fail(error,@"Invalid update target.");
     root=root.stringByResolvingSymlinksInPath;NSString *parent=root.stringByDeletingLastPathComponent;
-    NSString *work=Join(parent,@".tolkara-updates");if(!Directory(work,error))return NO;
-    if(![work.stringByResolvingSymlinksInPath isEqual:work])return Fail(error,@"Update directory must not be a symlink.");
-    int lock=open(Join(work,@"update.lock").fileSystemRepresentation,O_CREAT|O_RDWR|O_NOFOLLOW,0600);
-    if(lock<0 || flock(lock,LOCK_EX|LOCK_NB)) { if(lock>=0)close(lock);return Fail(error,@"Another update is finishing. Try again shortly."); }
+    NSString *work=Join(parent,@".tolkara-updates");
+    int lock=TKWoWAcquireUpdateLock(root,error);
+    if(lock<0)return NO;
     BOOL success=NO;TKWoWCASCStore *store=nil;
     NSError *failure=nil;
     @try {
@@ -263,7 +263,7 @@ static BOOL SameBuild(NSDictionary *a,NSDictionary *b) {
             _verificationBytesRead=store.verificationBytesRead;_verificationBytesReused=store.verificationBytesReused;
         }
         if(!success && failure && error)*error=failure;
-        _client.progress=nil;flock(lock,LOCK_UN);close(lock);
+        _client.progress=nil;TKWoWReleaseUpdateLock(lock);
     }
 }
 @end

@@ -185,7 +185,6 @@ static id<MTLLibrary> loadLibrary(id receiver,SEL selector,dispatch_data_t data,
 }
 extern void AKInstallMetalPresentationDiagnostics(id<MTLDevice> device);
 extern void AKInstallManagedStorage(Class device);   // opt-in; see ManagedStorage.m
-extern void AKInstallBCTextureFallback(id<MTLDevice> device);   // GPUs without BC; see BCTextures.m
 extern void AKInstallMetalTrace(Class device);       // opt-in; see MetalTrace.m
 static void addDesktopProperties(id<MTLDevice> device) {
     AKInstallMetalPresentationDiagnostics(device);
@@ -197,7 +196,6 @@ static void addDesktopProperties(id<MTLDevice> device) {
         originalLibraryLoader=(LibraryLoader)method_getImplementation(method);
         class_replaceMethod(cls,selector,(IMP)captureLibrary,method_getTypeEncoding(method));
         AKInstallManagedStorage(cls);
-        AKInstallBCTextureFallback(device);
         AKInstallMetalTrace(cls);
     });
     // The GPU's place in the machine, as a Mac with Apple silicon describes it:
