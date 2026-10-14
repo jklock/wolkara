@@ -17,6 +17,7 @@
 @end
 static atomic_uint requests, revision, updates, repairs;
 static atomic_bool failure, slow, interruptRepair;
+static BOOL keyboardShown;
 static TKFixtureLibrary *fixture;
 static NSDictionary *Plan(id self, SEL selector, NSString *product, NSString *region, NSString *locale, NSError **error) {
     (void)self; (void)selector; (void)region; (void)locale;
@@ -45,6 +46,9 @@ static UIView *Find(UIView *view, NSString *identifier) {
 @interface TKWoWFixtureDelegate : UIResponder <UIWindowSceneDelegate>
 @property(nonatomic) UIWindow *window;
 @property(nonatomic) TKWoWViewController *controller;
+@property(nonatomic) UIWindow *probeWindow;
+@property(nonatomic) UISearchBar *probeSearch;
+@property(nonatomic) UITextField *probePlain;
 @property(nonatomic) NSUInteger launches, setups;
 @end
 @implementation TKWoWFixtureDelegate
@@ -63,6 +67,9 @@ static UIView *Find(UIView *view, NSString *identifier) {
     if (![NSProcessInfo.processInfo.arguments containsObject:@"--preview"]) dispatch_after(dispatch_time(DISPATCH_TIME_NOW,30*NSEC_PER_SEC),dispatch_get_global_queue(QOS_CLASS_UTILITY,0), ^{
         fprintf(stderr,"WoW UIKit TIMEOUT\n"); _Exit(1);
     });
+    // Watching for the software keyboard tells a shim-level input block apart
+    // from a manager that never focuses its search field.
+    [NSNotificationCenter.defaultCenter addObserverForName:UIKeyboardDidShowNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) { (void)note; keyboardShown=YES; }];
     fixture=[TKFixtureLibrary new];
     self.window=[[UIWindow alloc] initWithWindowScene:(UIWindowScene *)scene];
     self.controller=[[TKWoWViewController alloc] initWithLibrary:(id)fixture];
@@ -93,7 +100,53 @@ static UIView *Find(UIView *view, NSString *identifier) {
     TKWoWAddonManagerViewController *manager=[[TKWoWAddonManagerViewController alloc] initWithAddOnsDirectory:NSTemporaryDirectory() edition:@"Forever · Beta"];
     [manager loadViewIfNeeded];
     [manager.view layoutIfNeeded];
-    assert(manager.tableView.tableHeaderView.bounds.size.height==122);
+    assert(manager.tableView.tableHeaderView.bounds.size.height==178);
+    // The launcher pushes the manager into the window's navigation controller.
+    // Reproduce that path on a probe window: loading the manager's view during
+    // the push must not raise, and its search field must be hit-testable and
+    // able to take first responder (a device report said tapping it did nothing).
+    UIWindow *probe=[[UIWindow alloc] initWithWindowScene:(UIWindowScene *)self.window.windowScene];
+    probe.frame=self.window.bounds;
+    UINavigationController *probeNavigation=[[UINavigationController alloc] initWithRootViewController:[UIViewController new]];
+    probe.rootViewController=probeNavigation;
+    probe.hidden=NO;
+    TKWoWAddonManagerViewController *pushed=[[TKWoWAddonManagerViewController alloc] initWithAddOnsDirectory:NSTemporaryDirectory() edition:@"Forever · Beta"];
+    [probeNavigation pushViewController:pushed animated:YES];
+    [probe layoutIfNeeded];
+    UISearchBar *search=(id)[pushed valueForKey:@"search"];
+    assert(search!=nil && search.frame.size.height>0);
+    [search layoutIfNeeded];
+    CGPoint centre=[search convertPoint:CGPointMake(CGRectGetMidX(search.bounds),CGRectGetMidY(search.bounds)) toView:probe];
+    UIView *hit=[probe hitTest:centre withEvent:nil];
+    NSLog(@"ADDONS_SEARCH bar=%@ hit=%@",NSStringFromCGRect(search.frame),NSStringFromClass(hit.class));
+    assert(hit!=nil && ([hit isDescendantOfView:search] || hit==search));
+    // Control: a plain text field in the same window. If it raises no keyboard
+    // either, the simulator itself has a hardware keyboard attached and only a
+    // search bar that behaves differently points at our own layout.
+    UITextField *plain=[[UITextField alloc] initWithFrame:CGRectMake(0,0,300,40)];
+    [pushed.view addSubview:plain];
+    keyboardShown=NO;
+    [probe makeKeyAndVisible];
+    [plain becomeFirstResponder];
+    self.probeWindow=probe; self.probeSearch=search; self.probePlain=plain;
+    [self performSelector:@selector(checkPlainKeyboard) withObject:nil afterDelay:0.6];
+    return;
+}
+- (void)checkPlainKeyboard {
+    NSLog(@"ADDONS_KEYBOARD_PLAIN shown=%d firstResponder=%d",keyboardShown?1:0,[self.probePlain isFirstResponder]?1:0);
+    [self.probePlain resignFirstResponder];
+    [self.probePlain removeFromSuperview];
+    self.probePlain=nil;
+    keyboardShown=NO;
+    assert([self.probeSearch becomeFirstResponder]);
+    [self performSelector:@selector(checkSearchKeyboard) withObject:nil afterDelay:0.6];
+}
+- (void)checkSearchKeyboard {
+    NSLog(@"ADDONS_KEYBOARD shown=%d firstResponder=%d",keyboardShown?1:0,[self.probeSearch isFirstResponder]?1:0);
+    [self.probeSearch resignFirstResponder];
+    self.probeWindow.hidden=YES; self.probeWindow.rootViewController=nil;
+    self.probeWindow=nil; self.probeSearch=nil;
+    [self.window makeKeyAndVisible];
     self.controller.executionMode=TKExecutionModeNone;
     assert(![self primary].enabled);
     self.controller.executionMode=TKExecutionModeDeveloperService;
