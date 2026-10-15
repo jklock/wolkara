@@ -6,13 +6,16 @@
 #     keystroke; without it, dictation is unreachable while a game has focus.
 #   - A window is told when it stops being on screen, as a Mac window is when it is
 #     covered, rather than only when the application itself changes state.
-#   - The draft panel Replace performs one explicit edit through the same event
-#     queue as typed input: select all, delete, insert. No clipboard, no text query.
+#   - Replace types the dictated text into the focused field through the same event
+#     queue as typed input, and does nothing else. No select-all, no delete, no
+#     clipboard, no Return: a synthetic Command+A and a delete was the only thing the
+#     guest received differently on the dictation-then-Replace that ended with the app
+#     quitting, so it is gone.
 # Applies to: translation/AppKit/AppKit.m
 # Upstream: candidate (not submitted).
 #
 diff --git a/translation/AppKit/AppKit.m b/translation/AppKit/AppKit.m
-index da4f8ad..265b3dd 100644
+index da4f8ad..973b014 100644
 --- a/translation/AppKit/AppKit.m
 +++ b/translation/AppKit/AppKit.m
 @@ -279,7 +279,7 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
@@ -24,22 +27,21 @@ index da4f8ad..265b3dd 100644
      AKTouchControls *_touchControls;
      BOOL _touchCursorActive, _touchCursorInitialized, _pressedMiddle;
      NSTimeInterval _lastTouchClickTime;
-@@ -417,6 +417,14 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
+@@ -417,6 +417,13 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
          [self postTextKey:code characters:characters unmodified:unmodified modifiers:modifiers];
      });
  }
 +- (void)touchReplaceText:(NSString *)text {
-+    // macOS field editing through the same event queue as typed input. This
-+    // is one explicit Replace action, with no clipboard, text query or Return.
-+    // Command is carried on the A events only; it cannot stay held for typing.
-+    [self postTextKey:0 characters:@"a" unmodified:@"a" modifiers:NSEventModifierFlagCommand];
-+    [self touchSpecialKey:51 characters:@"\x7f"];
++    // Type the text into the focused field, through the same event queue as typed input.
++    // Nothing else: no select-all, no delete, no clipboard, no Return. A synthetic
++    // Command+A followed by a delete was the only thing the guest received differently on
++    // the dictation then Replace that ended with the app quitting, so it is gone.
 +    [self touchInsertText:text];
 +}
  - (void)touchSpecialKey:(unsigned short)code characters:(NSString *)characters {
      [self postTextKey:code characters:characters unmodified:characters modifiers:0];
  }
-@@ -632,6 +640,20 @@ static BOOL AKIsRight(UIEvent *ev) { return (ev.buttonMask & UIEventButtonMaskSe
+@@ -632,6 +639,20 @@ static BOOL AKIsRight(UIEvent *ev) { return (ev.buttonMask & UIEventButtonMaskSe
          // A modifier key's own press and release set and clear it; other keys carry UIKit's state.
          if (isMod) _mods = AKModifiersAfterKey(_mods, k.keyCode, down);
          else [self reconcileModifiers:AKMods(k.modifierFlags)];
@@ -60,7 +62,7 @@ index da4f8ad..265b3dd 100644
          e.modifierFlags = _mods;
          e.type = isMod || k.keyCode == 0x39 ? NSEventTypeFlagsChanged : down ? NSEventTypeKeyDown : NSEventTypeKeyUp;
          e.characters = k.characters; e.charactersIgnoringModifiers = k.charactersIgnoringModifiers;
-@@ -905,11 +927,14 @@ static void logLayer(CALayer *layer,unsigned depth) {
+@@ -905,11 +926,14 @@ static void logLayer(CALayer *layer,unsigned depth) {
  - (BOOL)isActive { return _active; }
  - (void)ak_becameActive:(NSNotification *)notification {
      (void)notification;
