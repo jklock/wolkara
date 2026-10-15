@@ -1,0 +1,9 @@
+This adapter replaces the real library instead of re-exporting it:
+classify.py classifies the library as a full-shim even though it exists on
+iOS, plans every import so the adapter or a generated stub defines it, and
+build_shims.py emits no LC_REEXPORT_DYLIB to the real library, in builds for
+one application and in generic builds. The real framework still loads beside
+the shim (the AppKit adapter links it for GCMouse raw input), so the guest's
+notification constants must not share names with it; see GameController.m.
+In a generic build, an import this adapter does not define still resolves to
+the real framework through the process-wide fallback.
