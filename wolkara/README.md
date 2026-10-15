@@ -63,14 +63,14 @@ replaces the app in place and the device keeps its data.
 
 ## Open items
 
-- `Bridge/AppKit.m` is our version of the platform's AppKit adapter and is **not**
-  overlaid: it is the source of a pending patch. What is left in it is what genuinely
-  needs the adapter itself - swallowing Control+Option+D in `postKeys:down:` to open the
-  draft keyboard, and the occlusion notifications a guest window gets when the app is
-  switched away. Everything else now lives here: the Touch module stands on its own
-  behind the install hook the platform's own `AppKit.m` already provides, so the toolbar,
-  the gamepad and the settings sheet work with their file untouched.
-- That hook has one thing worth knowing: the platform's adapter implements six of our
-  ten delegate methods, so the four we added are `@optional` and guarded. Dictation's
-  Replace is one of them and needs our adapter back before it does anything.
 - The two touch fixtures still block headless unless run with `--self-test`.
+- Ten root documents are stale forks of upstream's text - `.github/workflows/release.yml`,
+  `AGENTS.md`, `COMPATIBILITY.md`, `NOTICE.md`, `README.md`, `docs/BUILDING.md`,
+  `docs/IPHONE.md`, `docs/TOUCH_INPUT.md`, `local.env.example` and
+  `profiles/wow-forever/README.md`. Documentation and configuration only; upstream's
+  versions stay readable under `platform/`.
+
+The adapter needs no file of ours any more. What it does for us is patch 0009: the
+Control+Option+D dictation trigger, the occlusion a guest window is told about, and the
+draft panel's Replace. The toolbar, the gamepad and the settings sheet come from this
+module behind the platform's own install hook, and its `AKFont` alias is patch 0008.

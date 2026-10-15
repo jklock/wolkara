@@ -70,7 +70,6 @@ wolkara/Touch/tests/test_touch_controls_app.m tests/test_touch_controls_app.m re
 wolkara/Touch/tests/test_touch_gamepad_app.m tests/test_touch_gamepad_app.m add
 #
 # Bridge: what the patched platform files and the public APIs call into
-# not overlaid yet (source of a pending patch): wolkara/Bridge/AppKit.m
 wolkara/Bridge/BackgroundPacing.m translation/Metal/BackgroundPacing.m add
 wolkara/Bridge/LocalServiceRetry.h authorization/App/LocalServiceRetry.h add
 wolkara/Bridge/LocalServiceRetry.m authorization/App/LocalServiceRetry.m add

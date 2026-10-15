@@ -139,15 +139,19 @@ WoW suite and its local-service retry suite both run against the prepared tree a
 the platform's own suite in the prepared tree is 59 PASS plus the accepted codesign
 failure.
 
-**Still open, recorded in `wolkara/README.md`:** the two adapter changes that genuinely
-belong in the adapter - swallowing Control+Option+D in `postKeys:down:` to open the draft
-keyboard, and the occlusion notifications a guest window gets when the app is switched
-away. `Bridge/AppKit.m` holds them. The rest of what it used to hold now lives in the
-Touch module, which was made self-contained: it takes its own layout, owns the gamepad,
-and provides the `+enabled` the platform's install path asks for, so the toolbar and the
-gamepad work with the platform's own `AppKit.m` untouched. Patch 0008 re-adds the
-adapter's `AKFont` alias, which links now that our files are compiled into the adapter
-(measured: `tools/build_shims.py` globs the adapter's directory).
+**Closed on 2026-10-15:** the three adapter features - the Control+Option+D dictation
+trigger, the occlusion a guest window is told about, and the draft panel's Replace - are
+delivered as patch 0009 (one file, +28/-3), built by porting just those changes onto the
+platform's current `AppKit.m` with asserted single-occurrence edits. Everything else our
+adapter file used to hold turned out to be upstream's own work already (the NSView
+emulation: autoresizing, subview ordering, `setHidden:`), or to live in the Touch module
+now, so the file is retired and its changes exist only as the patch.
+
+**Still open:** the two UI fixtures block headless without `--self-test`, and ten root
+documents are stale forks of upstream's text (listed in `AUDIT.md`; documentation and
+configuration only, no behaviour). One deliberate drop is recorded in `AUDIT.md`: our
+`--trace-appkit-geometry` diagnostic, which served the layout work and is no longer
+carried.
 
 
 ## Phase 4 - Prove parity

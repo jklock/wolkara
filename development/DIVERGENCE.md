@@ -46,6 +46,7 @@ platform files, applied by `prepare.sh`, each one an upstream candidate:
 | 0006 | 2 files, +51/-31 | authorization: retry the local service when its first connection fails |
 | 0007 | 2 files, +37/-5 | authorization: retire a failed probe, keeping the old tuple reserved |
 | 0008 | 1 file, +1/-1 | AppKit: alias the adapter's own `AKFont` to `NSFont`, so a guest asking for `NSFont` reaches it and not UIKit's private class of the same name |
+| 0009 | 1 file, +28/-3 | AppKit: Control+Option+D opens the draft keyboard instead of reaching the game (press and release both swallowed), a window is told when it stops being on screen, and the draft panel's Replace performs one explicit edit |
 
 **Replacements** - 9 of our files take a platform path of the same purpose, so our
 version is what the platform's own build compiles. Each one was decided by comparing
