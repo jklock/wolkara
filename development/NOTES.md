@@ -130,3 +130,27 @@ Rules that follow from it:
    `Documents/World of Warcraft/_classic_beta_/Errors/`. A growing guest log is not success; on
    this day two launches were reported as working that had in fact asserted and exited.
 3. When the launcher says "rebuild and verify", that is the repair for exactly this fault.
+## 2026-10-15, later: the dictation crash, and what the enrolment step leaves behind
+
+Dictation finished and the app died instantly. The guest log named it exactly:
+
+    [ak] dictation result: 1 phrases, 14 characters
+    [native] Objective-C exception NSInvalidArgumentException:
+             -[AKKeyboardTextView insertDictationResult:]: unrecognized selector sent to instance
+
+`insertDictationResult:` belongs to `UITextInput`, and `UITextView` does not implement it. Our
+`AKKeyboardTextView` took the result and forwarded the same selector to `super`, which is a send to a
+method that does not exist: fatal every time, the instant a dictation lands. Upstream carries no
+dictation code at all - this file replaces the platform's `TouchControls.m` - so the defect was ours
+alone. The two placeholder callbacks forwarded to `super` in the same way and had never yet been
+called, so they were the next crash waiting; they are now guarded. All three insert the text
+themselves instead.
+
+Rule that follows: a `[super ...]` send is safe only for a method the superclass is known to
+implement. `UITextView` implements the core text-input selectors and none of the dictation family.
+
+Install step 3 runs the platform's `tools/enroll.sh`, which launches the app into its two import modes
+and leaves it there showing the result. On a re-install with a valid pin that screen reads "Enrollment
+import rejected; no existing trust pin was replaced." - the success path, but it reads like a failure,
+and the app is left running, so the next launch is refused as "already running". Stop that process and
+launch the game: the enrolment is fine.
