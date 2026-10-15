@@ -1184,23 +1184,5 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
 @end
 
 int main(int argc, char *argv[]) {
-    // Everything the app says - ours, the runtime's and the guest's - goes to stderr, which
-    // a launch without a console throws away. Keep it in the app's own container instead:
-    // then a run can be watched while it happens, and a failure read afterwards, without
-    // attaching a console first - which restarts the app and loses the guest's session.
-    NSString *documents=[NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES) firstObject];
-    if (documents.length) {
-        NSString *log=[documents stringByAppendingPathComponent:@"wolkara.log"];
-        if (freopen(log.fileSystemRepresentation,"a",stderr) &&
-            freopen(log.fileSystemRepresentation,"a",stdout)) {
-            // A stream redirected to a file is fully buffered by default, which would hold
-            // whole runs back until they ended. Line buffering is what makes this readable
-            // while the app is still going, which is the point of it.
-            setvbuf(stderr,NULL,_IOLBF,0);
-            setvbuf(stdout,NULL,_IOLBF,0);
-            fprintf(stderr,"===== launch %s =====\n",NSDate.date.description.UTF8String);
-            fflush(stderr);
-        }
-    }
     @autoreleasepool { return UIApplicationMain(argc, argv, nil, NSStringFromClass(AKHostAppDelegate.class)); }
 }
