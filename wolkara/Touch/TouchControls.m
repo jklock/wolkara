@@ -219,6 +219,7 @@ static BOOL hardwareKeyboardAttached(void) {
     AKTrackpad _pad;
     AKTouchHaptics *_haptics;
     AKTouchGamepad *_gamepad;
+    BOOL _tookOwnPlace;
 }
 
 // The launcher's switch, and the platform's install path, ask this before the
@@ -312,8 +313,41 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
 }
 - (void)buttonTouchDown { [_haptics buttonPressed]; }
 
+// Place the toolbar from the host's own bounds: centred horizontally, just below the top.
+//
+// Measured on the device: centring on host.safeAreaLayoutGuide put the toolbar 103pt right of
+// the screen centre, so the guide is not the screen here. The bounds are. Frame placement
+// also settles the tug of war with the host's own constraints for us - they are dropped once,
+// by collecting them and deactivating the collection, so the list being walked is not the one
+// being changed.
+- (void)placeToolbarInHost:(UIView *)host {
+    if (self.superview != host) return;
+    if (!_tookOwnPlace) {
+        _tookOwnPlace = YES;
+        NSMutableArray<NSLayoutConstraint *> *theirs = [NSMutableArray array];
+        for (NSLayoutConstraint *constraint in host.constraints)
+            if (constraint.firstItem == self || constraint.secondItem == self)
+                [theirs addObject:constraint];
+        for (NSLayoutConstraint *constraint in theirs) constraint.active = NO;
+        self.translatesAutoresizingMaskIntoConstraints = YES;
+    }
+    static unsigned logged;
+    CGFloat width = 200, height = 44;
+    CGRect bounds = host.bounds;
+    self.frame = CGRectMake(floor((bounds.size.width - width) / 2),
+                            host.safeAreaInsets.top + 8, width, height);
+    if (logged < 3) {
+        logged++;
+        AKLog(@"toolbar host bounds=%.0fx%.0f insets top=%.0f left=%.0f placed x=%.0f centre=%.0f (screen centre %.0f)",
+              bounds.size.width, bounds.size.height, host.safeAreaInsets.top, host.safeAreaInsets.left,
+              self.frame.origin.x, CGRectGetMidX(self.frame), bounds.size.width / 2);
+    }
+}
+
+
 - (void)layoutSubviews {
     [super layoutSubviews];
+    if (self.superview) [self placeToolbarInHost:self.superview];
     _trackpadButton.frame = CGRectMake(0, 0, 44, 44);
     _keyboardButton.frame = CGRectMake(52, 0, 44, 44);
     _gamepadButton.frame = CGRectMake(104, 0, 44, 44);
@@ -521,19 +555,10 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
         [_composer.heightAnchor constraintEqualToConstant:82],
     ]];
 
-    // The host may have laid us out the way its own controls were: a pair of small
-    // buttons in a corner. Ours is a toolbar of five, so we take our own place -
-    // drop any constraint the host set for us, then put ourselves at the top - and
-    // we own the gamepad, which the host knows nothing about.
-    for (NSLayoutConstraint *constraint in host.constraints)
-        if (constraint.firstItem == self || constraint.secondItem == self) constraint.active = NO;
-    self.translatesAutoresizingMaskIntoConstraints = NO;
-    [NSLayoutConstraint activateConstraints:@[
-        [self.widthAnchor constraintEqualToConstant:200],
-        [self.heightAnchor constraintEqualToConstant:44],
-        [self.topAnchor constraintEqualToAnchor:host.safeAreaLayoutGuide.topAnchor constant:8],
-        [self.centerXAnchor constraintEqualToAnchor:host.safeAreaLayoutGuide.centerXAnchor],
-    ]];
+    // Placement happens in layoutSubviews, by frame, from the host's own bounds - see
+    // placeToolbarInHost. Constraints are the host's to set, and Apple says a view must
+    // not set translatesAutoresizingMaskIntoConstraints on itself; frame placement from
+    // the host's bounds is the one thing neither can argue with.
     if (!_gamepad) {
         _gamepad = [[AKTouchGamepad alloc] initWithHostView:host];
         __weak AKTouchControls *weakSelf = self;
