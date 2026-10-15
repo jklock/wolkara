@@ -38,9 +38,10 @@ mkdir -p "$out"
 # refuses a directory there.
 if ! xcrun devicectl device copy from --device "$device" \
         --domain-type appDataContainer --domain-identifier "$bundle" \
-        --source "Documents/$logname" --destination "$out/$logname" > /dev/null 2>&1; then
-    echo "device_log: no $logname on the device yet - install the app (wolkara/tools/install.sh),"
-    echo "            launch it, and start the game; the file appears"
+        --source "Documents/$logname" --destination "$out/$logname"; then
+    echo "device_log: could not fetch Documents/$logname from $device (app $bundle)" >&2
+    echo "device_log: the copy above says why - and note the file only exists once the" >&2
+    echo "            guest has been started at least once" >&2
     exit 1
 fi
 
