@@ -1191,8 +1191,16 @@ int main(int argc, char *argv[]) {
     NSString *documents=[NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES) firstObject];
     if (documents.length) {
         NSString *log=[documents stringByAppendingPathComponent:@"wolkara.log"];
-        if (freopen(log.fileSystemRepresentation,"a",stderr))
+        if (freopen(log.fileSystemRepresentation,"a",stderr) &&
+            freopen(log.fileSystemRepresentation,"a",stdout)) {
+            // A stream redirected to a file is fully buffered by default, which would hold
+            // whole runs back until they ended. Line buffering is what makes this readable
+            // while the app is still going, which is the point of it.
+            setvbuf(stderr,NULL,_IOLBF,0);
+            setvbuf(stdout,NULL,_IOLBF,0);
             fprintf(stderr,"===== launch %s =====\n",NSDate.date.description.UTF8String);
+            fflush(stderr);
+        }
     }
     @autoreleasepool { return UIApplicationMain(argc, argv, nil, NSStringFromClass(AKHostAppDelegate.class)); }
 }
