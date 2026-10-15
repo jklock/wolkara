@@ -63,19 +63,65 @@ else
     [ "$applied" -eq 0 ] || ok "$applied patch(es) apply cleanly"
 fi
 
-# 4. The layer's project builds from the prepared tree, and the modules stay
-#    independent: WoW must not reach into Touch, and both go through Bridge.
-if [ ! -f wolkara/project.yml ]; then
-    notice "no wolkara/project.yml yet: source coverage and module boundaries unchecked"
+# 4. The layer reaches the build exactly once, and only through the overlay: every
+#    layer file is mapped (or deliberately not), every mapped source exists and is
+#    tracked, and nothing in the layer can be silently left out of the build.
+map=wolkara/overlay.map
+if [ ! -f "$map" ]; then
+    bad "no wolkara/overlay.map: the layer would not reach the build at all"
 else
-    if grep -q "build/platform" wolkara/project.yml; then
-        ok "the layer project builds from the prepared tree"
+    orphans=$(while read -r f; do
+                  # A mention anywhere counts, including the map's "not overlaid yet"
+                  # line: a file that reaches the build no other way must be named there.
+                  grep -q "$f" "$map" || echo "$f"
+              done < <(git ls-files 'wolkara/*' | grep -v -e '^wolkara/patches/' -e '^wolkara/tools/' \
+                                              -e '^wolkara/README.md' -e '^wolkara/overlay.map' | head -50) | head -5)
+    if [ -n "$orphans" ]; then
+        bad "layer files that the overlay does not carry (regenerate wolkara/tools/overlay_map.sh):"
+        printf '     %s\n' $orphans
     else
-        bad "wolkara/project.yml does not reference build/platform: sources must come from the prepared tree"
+        ok "every layer file is carried by the overlay"
     fi
-    reach=$(grep -REl "wolkara/Touch/|wolkara/Touch\"" wolkara/WoW 2>/dev/null | head -3)
-    [ -z "$reach" ] || bad "wolkara/WoW reaches into wolkara/Touch: use wolkara/Bridge"
-    [ -n "$reach" ] || ok "no cross-module reach-in from WoW into Touch"
+    gone=$(awk '!/^#/ && NF==3 {print $1}' "$map" | while read -r src; do
+               [ -e "$src" ] || echo "$src"
+           done | head -5)
+    if [ -n "$gone" ]; then
+        bad "the overlay names layer files that are not there:"
+        printf '     %s\n' $gone
+    else
+        ok "every overlayed file exists in the layer"
+    fi
+    # prepare.sh has the final say: it refuses a 'replace' without a platform file and
+    # an 'add' that collides with a path upstream now has. Running it here proves the
+    # overlay still matches the pin without touching the map.
+    if bash wolkara/tools/prepare.sh > /dev/null 2>&1; then
+        ok "prepare.sh accepts the overlay against the pinned platform"
+    else
+        bad "prepare.sh refused the overlay: it no longer matches the pinned platform"
+    fi
+fi
+
+# 5. The layer's modules stay independent: WoW must not reach into Touch, or the other
+#    way round. Shared needs go through Bridge.
+reach=$(grep -REl '#(import|include) +[<"](Touch|Fonts|TouchGamepad|TouchHaptics)' wolkara/WoW 2>/dev/null | head -3)
+[ -z "$reach" ] || bad "wolkara/WoW reaches into wolkara/Touch: use wolkara/Bridge"
+[ -n "$reach" ] || ok "no cross-module reach-in from WoW into Touch"
+reach=$(grep -REl '#(import|include) +[<"](CASC|Client|Updater|Addon|Manifest|Installation|UpdateLock|WoW)' wolkara/Touch 2>/dev/null | head -3)
+[ -z "$reach" ] || bad "wolkara/Touch reaches into wolkara/WoW: use wolkara/Bridge"
+[ -n "$reach" ] || ok "no cross-module reach-in from Touch into WoW"
+
+# 6. The root does not duplicate the platform any more. Documents, profiles and the
+#    layer itself are ours; anything else outside platform/ must have nothing to do
+#    with the platform's paths.
+dupes=$(git ls-files | grep -v -e '^platform/' -e '^wolkara/' -e '^development/' -e '^docs/' -e '^profiles/' -e '^\.github/' \
+                          | grep '/' | while read -r f; do
+            [ -e "platform/$f" ] && echo "$f"
+        done | head -5)
+if [ -n "$dupes" ]; then
+    bad "the root still carries platform paths:"
+    printf '     %s\n' $dupes
+else
+    ok "the root carries no platform path"
 fi
 
 if [ "$fail" -eq 0 ]; then

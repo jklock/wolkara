@@ -7,7 +7,7 @@
 - `authorization/`: Developer service: bundled pairing, transport, tunnel extension and memory-preparation protocol.
 - `launcher/`: the iPad app. `profiles/`: data-only descriptions of tested applications.
 - `tests/`: C, Objective-C, Swift and Python tests; `testguest/`: our synthetic guest fixture.
-- `tools/`: builds, diagnostics and regression scripts. `docs/`: building guide and architecture.
+- `wolkara/tools/`: the layer's scripts - prepare, the gate, and the wrappers that run the platform's own build, install, run and test scripts against the prepared tree. The platform's own tools are `platform/tools/` and run inside that tree. `docs/`: building guide and architecture.
 - `platform/`: upstream tolkara, vendored byte-identical to `upstream/main` and never edited by hand; `wolkara/`: our layer above it. Start at `development/README.md`.
 - `development/`: the split's own record - plan and status, clean-base audit, divergence inventory, operational notes. Update it when a phase moves.
 - `build/` and `logs/` are ignored outputs. Third-party applications and assets are never committed.
@@ -17,17 +17,22 @@
 Requires Xcode, XcodeGen and Python 3. Personal settings (team, bundle ID, device) live in ignored `local.env`; see `local.env.example` and `docs/BUILDING.md`.
 
 ```sh
-tools/test_emulation.sh     # sanitizer regression suite on the Mac
-tools/test_translation_sim.sh   # the UIKit-backed adapters' tests, run in the simulator
-tools/run.sh sim            # loader diagnostics in the simulator (TolkaraDiagnostics scheme)
-TOLKARA_MODE=local-signing tools/run.sh sim   # Local signing: first initializer of testguest (or GUEST_EXE) from an ad-hoc page container
-tools/install.sh            # build, sign and install the Tolkara app on the configured iPad
-tools/probe_guest.sh "/path/to/Executable"   # inspect an unchanged executable
-python3 tools/probe_captured_shaders.py       # compile every shader library a game left on the iPad with the iPad's own Metal (no app code runs)
-python3 tools/build_signed_container.py       # build and sign the Local signing page container for GUEST_EXE
-python3 tools/make_icon.py                    # redraw the app icon at every size and appearance (needs Google Chrome)
-NATIVE_GUEST_SHIMS=GENERIC tools/install.sh   # build for no particular application: one adapter per translation/<Framework>/
-tools/package_ipa.sh                          # unsigned generic TolkaraDiagnostics .ipa for External JIT (sideloaded, e.g. SideStore)
+# Ours: each prepares build/platform, then runs the platform's own script on it.
+wolkara/tools/prepare.sh        # platform/ -> build/platform/, patched and overlaid
+wolkara/tools/check_layers.sh   # the gate for the whole split
+wolkara/tools/test_emulation.sh # sanitizer regression suite on the Mac, then ours
+wolkara/tools/test_translation_sim.sh   # the UIKit-backed adapters' tests, run in the simulator
+wolkara/tools/run.sh sim            # loader diagnostics in the simulator (TolkaraDiagnostics scheme)
+TOLKARA_MODE=local-signing wolkara/tools/run.sh sim   # Local signing: first initializer of testguest (or GUEST_EXE) from an ad-hoc page container
+wolkara/tools/install.sh            # build, sign and install the app on the configured iPad
+NATIVE_GUEST_SHIMS=GENERIC wolkara/tools/install.sh   # build for no particular application: one adapter per translation/<Framework>/
+wolkara/tools/package_ipa.sh        # unsigned generic TolkaraDiagnostics .ipa for External JIT (sideloaded, e.g. SideStore)
+wolkara/tools/make_wolkara_icon.py  # redraw the app icon at every size and appearance (needs Google Chrome)
+
+# The platform's own tools, run inside the prepared tree after prepare.sh.
+build/platform/tools/probe_guest.sh "/path/to/Executable"   # inspect an unchanged executable
+python3 build/platform/tools/probe_captured_shaders.py   # compile every shader library a game left on the iPad with the iPad's own Metal (no app code runs)
+python3 build/platform/tools/build_signed_container.py   # build and sign the Local signing page container for GUEST_EXE
 ```
 
 Device installs replace the app under the same bundle ID and keep its data.

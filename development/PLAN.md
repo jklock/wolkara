@@ -89,36 +89,65 @@ land in the same effort.
    accepted codesign failure, and the generic builds link.
 9. Delete branding-only deltas instead of carrying them. **todo**.
 
-## Phase 3 - Build the Wolkara project on a prepared tree
+## Phase 3 - Build the layer onto a prepared tree
 
-10. `wolkara/tools/prepare.sh`: copy `platform/` to ignored `build/platform/`, apply
-    `wolkara/patches/*.patch`, fail loudly naming a conflicting patch. **done**
-    (`e33f3f4`). It applies with `git apply -p1 --directory=<tree>` from the repository
-    root and asserts each patch really landed with `--check --reverse`.
-11. `wolkara/project.yml`: target `Wolkara` (developer service: `TOLKARA_INTEGRATED_AUTH=1`,
-    authorization sources, embedded `LocalAuthorizationTunnel`, NetworkExtension and
-    memory entitlements) and target `WolkaraDiagnostics` (External JIT). Sources =
-    `wolkara/{Shell,WoW,Touch,Bridge}` plus `build/platform/{runtime,translation,authorization,support}`
-    minus replaced files. `PRODUCT_NAME: Wolkara`, bundle id unchanged,
-    `INFOPLIST_FILE: wolkara/Shell/Info.plist` (Wolkara display name,
-    `UIBackgroundModes: [audio]`, microphone usage), icon `Wolkara`, `NATIVE_GUEST_SHIMS`
-    only where needed, headers into the prepared tree, guest-runtime post-build calling
-    the prepared `build_emulated_guest.sh`. **todo**.
+**Done, with one design change made on the evidence.** The plan had the layer build from
+its own `wolkara/project.yml`. Measuring the platform's build showed why that is the
+wrong shape: the adapters are not compiled by the app target at all - `tools/build_shims.py`
+builds one `ak<Framework>.dylib` per adapter *from tree paths*, and the test scripts
+compile sources the same way. A separate project would have had to re-express all of
+that, and would have left every one of the platform's own scripts unable to build our
+app. So the layer reaches the build by **overlay** instead: `prepare.sh` puts our files
+at the platform's own paths in the prepared tree, and the platform's own `project.yml`,
+shim builder and tests build our app without knowing the layer exists. We own no fork of
+them, which is exactly what an ingest wants.
 
-   Two build settings the patches expect, so they are not forgotten:
-   - the AppKit framework must alias the adapter's `AKFont` to `NSFont` at link time
-     (patch 0004 says why this cannot live in the platform's own `ldflags`);
-   - the layer's startup must call `AKInstallMetalBackgroundPacing()` itself: upstream's
-     `Devices.m` is taken as-is and no longer carries that call.
-12. Move our files into the modules; class names unchanged, only imports and paths adapt.
-    Modules stay independent: `WoW` must not import `Touch` internals, shared needs go
-    through `Bridge`. **todo** - 71 layer-candidate paths are still at the root, and 455
-    upstream duplicates are still present (398 of them byte-identical).
-13. Wrapper tooling `wolkara/tools/{generate,install,run,package_ipa,test_*}.sh`: prepare,
-    then drive xcodegen, xcodebuild and devicectl as today's scripts do. `local.env` keys
-    unchanged. **todo**.
-14. Document the module boundaries in `wolkara/README.md`, and let `check_layers.sh`
-    enforce no cross-module reach-in. **todo**.
+10. `wolkara/tools/prepare.sh` - exports the pinned `platform/` to ignored `build/platform/`,
+    applies `patches/`, then overlays. **done**. Patches apply with
+    `git apply -p1 --directory=<tree>` from the root and each is asserted to have really
+    landed (`--check --reverse`). The overlay is checked before anything is copied: a
+    `replace` entry must find its platform file, an `add` must not collide with one
+    upstream now has, and either mismatch stops the run and names the path.
+11. ~~`wolkara/project.yml`~~ - **superseded by the overlay** (see above): there is no layer
+    project. The platform's project is the app's project, and `wolkara/tools/generate.sh`
+    produces it from the prepared tree. The two build settings it was to carry are
+    handled: the `AKFont` alias now lives in the platform's own `ldflags` in the prepared
+    tree, and the background pacing install belongs at the layer's startup, which is part
+    of the AppKit item below.
+12. Move our files into the modules and stop duplicating the platform. **done** - 43 files
+    moved into `Shell/`, `WoW/`, `Touch/` and `Bridge/`; 337 byte-identical root copies
+    and 23 superseded ones removed, each verified against `platform/` before deletion,
+    and anything that differed without being on a list was reported and left alone. The
+    unused `AppIcon.appiconset` went with them. The root now holds `platform/`, `wolkara/`,
+    `development/`, `docs/`, `profiles/`, `.github/` and the root documents - nothing else.
+    `overlay.map` carries all 64 layer files (12 replace, 52 add).
+13. Wrapper tooling. **done** - `wolkara/tools/{env,generate,install,run,package_ipa,test_emulation,test_translation_sim}.sh`.
+    Each reads the root's ignored `local.env`, prepares the tree, then runs the platform's
+    own script against it, so the build logic stays upstream's and `local.env` keys are
+    unchanged. The layer's own test scripts prepare and run in the prepared tree too, and
+    the UI scripts' simulator default was fixed while there.
+14. Module boundaries. **done** - `wolkara/README.md` documents them and
+    `check_layers.sh` enforces them: platform pristine, no Wolkara strings under
+    `platform/`, every patch applies, every layer file carried by the overlay, every
+    overlayed file present, `prepare.sh` accepts the overlay, no cross-module reach-in
+    either way, and the root carries no platform path.
+
+**Verified on 2026-10-15**: `check_layers.sh` green on all nine checks;
+`wolkara/tools/generate.sh` produces `build/platform/Tolkara.xcodeproj` with our files in
+it; all 22 overlaid sources compile against the iOS SDK in the prepared tree; the layer's
+WoW suite and its local-service retry suite both run against the prepared tree and pass;
+the platform's own suite in the prepared tree is 59 PASS plus the accepted codesign
+failure.
+
+**Open, recorded in `wolkara/README.md`:** the AppKit adapter patch. `Bridge/AppKit.m` is
+our version of it and is deliberately *not* overlaid yet, because a patch may only use
+symbols the platform tree itself has - measured: aliasing our `AKFont` in the platform's
+link flags broke its own generic builds with two link errors. The Touch module must first
+become self-contained behind the install hook upstream's `AppKit.m` already provides (it
+installs our `AKTouchControls` and drives it through a delegate API our class already
+implements). Until then the toolbar installs, but the gamepad and the Control+Option+D
+keyboard request do not.
+
 
 ## Phase 4 - Prove parity
 
