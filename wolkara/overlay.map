@@ -8,8 +8,6 @@
 # Regenerate with wolkara/tools/overlay_map.sh after changing the layer.
 #
 # Shell: the app's own shell, branding, icon art and its test
-wolkara/Shell/AppLibrary.h launcher/App/AppLibrary.h replace
-wolkara/Shell/AppLibrary.m launcher/App/AppLibrary.m replace
 wolkara/Shell/Assets.xcassets/Wolkara.appiconset/Contents.json launcher/Assets.xcassets/Wolkara.appiconset/Contents.json add
 wolkara/Shell/Assets.xcassets/Wolkara.appiconset/Wolkara-dark.png launcher/Assets.xcassets/Wolkara.appiconset/Wolkara-dark.png add
 wolkara/Shell/Assets.xcassets/Wolkara.appiconset/Wolkara-default.png launcher/Assets.xcassets/Wolkara.appiconset/Wolkara-default.png add
@@ -18,7 +16,6 @@ wolkara/Shell/ExecutionMode.h launcher/App/ExecutionMode.h replace
 wolkara/Shell/ExecutionMode.m launcher/App/ExecutionMode.m replace
 wolkara/Shell/Info.plist launcher/Info.plist replace
 wolkara/Shell/Integrated-Info.plist authorization/App/Integrated-Info.plist replace
-wolkara/Shell/LibraryViewController.m launcher/App/LibraryViewController.m replace
 wolkara/Shell/artwork/dark.svg artwork/wolkara/dark.svg add
 wolkara/Shell/artwork/default.svg artwork/wolkara/default.svg add
 wolkara/Shell/artwork/tinted.svg artwork/wolkara/tinted.svg add

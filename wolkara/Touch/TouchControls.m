@@ -2,10 +2,15 @@
 #import "AKSupport.h"
 #import "TouchTrackpad.h"
 #import "TouchGamepadLayout.h"
+#import "TouchGamepad.h"
 #import "TouchHaptics.h"
 #import <objc/message.h>
 
 NSNotificationName const AKTouchKeyboardRequestNotification = @"AKTouchKeyboardRequestNotification";
+// The keys the launcher's and the platform's switches read. The trackpad string
+// is the one the platform already stored, so an existing choice carries over.
+NSString *const AKTouchControlsDefaultsKey = @"AKTouchControls";
+static NSString *const AKTouchTrackpadDefaultsKey = @"TKTouchTrackpadEnabled";
 // A software keyboard's keys are several hundred points tall; a keyboard frame
 // this small is the shortcut bar alone, which is what iPadOS shows for a
 // hardware keyboard. Its microphone key is part of the keys that are hidden.
@@ -213,6 +218,15 @@ static BOOL hardwareKeyboardAttached(void) {
     AKKeyboardTextView *_keyboardInput;
     AKTrackpad _pad;
     AKTouchHaptics *_haptics;
+    AKTouchGamepad *_gamepad;
+}
+
+// The launcher's switch, and the platform's install path, ask this before the
+// controls are added. A stored choice wins; without one they are on, because
+// this product wants them on every device it runs on.
++ (BOOL)enabled {
+    NSNumber *saved = [NSUserDefaults.standardUserDefaults objectForKey:AKTouchControlsDefaultsKey];
+    return [saved isKindOfClass:NSNumber.class] ? saved.boolValue : YES;
 }
 
 static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double y, unsigned button) {
@@ -275,7 +289,7 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
             }]];
         }
         _trackpadButton.menu = [UIMenu menuWithTitle:@"Mouse buttons" children:actions];
-        NSNumber *saved = [NSUserDefaults.standardUserDefaults objectForKey:@"TKTouchTrackpadEnabled"];
+        NSNumber *saved = [NSUserDefaults.standardUserDefaults objectForKey:AKTouchTrackpadDefaultsKey];
         self.trackpadEnabled = saved ? saved.boolValue : UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPhone;
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(suspendInput:) name:UIApplicationWillResignActiveNotification object:nil];
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(backgroundInput:) name:UIApplicationDidEnterBackgroundNotification object:nil];
@@ -315,11 +329,15 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
 }
 - (void)toggleTrackpad {
     self.trackpadEnabled = !self.trackpadEnabled;
-    [NSUserDefaults.standardUserDefaults setBool:self.trackpadEnabled forKey:@"TKTouchTrackpadEnabled"];
+    [NSUserDefaults.standardUserDefaults setBool:self.trackpadEnabled forKey:AKTouchTrackpadDefaultsKey];
 }
 - (BOOL)gamepadEnabled { return _gamepadEnabled; }
 - (void)showControlSettings {
-    [self cancelTouches]; [self dismissKeyboard]; [self.delegate touchControlSettings];
+    [self cancelTouches]; [self dismissKeyboard];
+    // The gamepad owns the settings sheet, so we open it here rather than asking a
+    // host that may have no such thing.
+    [_gamepad toggleSettings];
+    if ([self.delegate respondsToSelector:@selector(touchControlSettings)]) [self.delegate touchControlSettings];
 }
 - (void)setGamepadVisible:(BOOL)visible {
     _gamepadButton.tintColor = visible ? UIColor.systemCyanColor : UIColor.whiteColor;
@@ -328,14 +346,18 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
 - (void)toggleGamepad {
     _gamepadEnabled = !_gamepadEnabled;
     [NSUserDefaults.standardUserDefaults setBool:_gamepadEnabled forKey:@"TKTouchGamepadEnabled"];
-    [self setGamepadVisible:NO];
-    [self.delegate touchGamepadPreferenceChanged:_gamepadEnabled];
+    _gamepad.enabled = _gamepadEnabled;
+    [self setGamepadVisible:_gamepad.visible];
+    if ([self.delegate respondsToSelector:@selector(touchGamepadPreferenceChanged:)])
+        [self.delegate touchGamepadPreferenceChanged:_gamepadEnabled];
 }
 - (BOOL)canBecomeFirstResponder { return YES; }
 - (BOOL)keyboardVisible { return _keyboardInput.isFirstResponder; }
 - (BOOL)becomeFirstResponder {
     _composer.hidden = NO;
-    [self.delegate touchKeyboardVisibilityChanged:YES];
+    _gamepad.keyboardVisible = YES;
+    if ([self.delegate respondsToSelector:@selector(touchKeyboardVisibilityChanged:)])
+        [self.delegate touchKeyboardVisibilityChanged:YES];
     _keyboardRequested = YES;
     _systemKeyboardSeen = NO;
     BOOL accepted = [_keyboardInput becomeFirstResponder];
@@ -368,7 +390,9 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
     [self updateDraftButtons];
     [_keyboardButton setImage:[UIImage systemImageNamed:self.keyboardVisible ? @"keyboard.chevron.compact.down" : @"keyboard"] forState:UIControlStateNormal];
     _keyboardButton.accessibilityLabel = self.keyboardVisible ? @"Hide keyboard" : @"Show keyboard";
-    [self.delegate touchKeyboardVisibilityChanged:self.keyboardVisible];
+    _gamepad.keyboardVisible = self.keyboardVisible;
+    if ([self.delegate respondsToSelector:@selector(touchKeyboardVisibilityChanged:)])
+        [self.delegate touchKeyboardVisibilityChanged:self.keyboardVisible];
 }
 - (void)toggleKeyboard {
     [self cancelTouches];
@@ -386,7 +410,11 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
 // Accessory keys still allow editing existing text directly in the guest.
 - (BOOL)hasText { return YES; }
 - (void)insertText:(NSString *)text { [self.delegate touchInsertText:text]; }
-- (void)replaceGameText:(NSString *)text { [self.delegate touchReplaceText:text]; }
+- (void)replaceGameText:(NSString *)text {
+    // A host with no draft panel leaves this out; the button then does nothing
+    // rather than crashing.
+    if ([self.delegate respondsToSelector:@selector(touchReplaceText:)]) [self.delegate touchReplaceText:text];
+}
 - (void)deleteBackward { [self.delegate touchSpecialKey:51 characters:@"\x7f"]; }
 
 - (UIView *)inputAccessoryView {
@@ -492,6 +520,33 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
         width, [_composer.widthAnchor constraintLessThanOrEqualToConstant:800],
         [_composer.heightAnchor constraintEqualToConstant:82],
     ]];
+
+    // The host may have laid us out the way its own controls were: a pair of small
+    // buttons in a corner. Ours is a toolbar of five, so we take our own place -
+    // drop any constraint the host set for us, then put ourselves at the top - and
+    // we own the gamepad, which the host knows nothing about.
+    for (NSLayoutConstraint *constraint in host.constraints)
+        if (constraint.firstItem == self || constraint.secondItem == self) constraint.active = NO;
+    self.translatesAutoresizingMaskIntoConstraints = NO;
+    [NSLayoutConstraint activateConstraints:@[
+        [self.widthAnchor constraintEqualToConstant:200],
+        [self.heightAnchor constraintEqualToConstant:44],
+        [self.topAnchor constraintEqualToAnchor:host.safeAreaLayoutGuide.topAnchor constant:8],
+        [self.centerXAnchor constraintEqualToAnchor:host.safeAreaLayoutGuide.centerXAnchor],
+    ]];
+    if (!_gamepad) {
+        _gamepad = [[AKTouchGamepad alloc] initWithHostView:host];
+        __weak AKTouchControls *weakSelf = self;
+        _gamepad.visibilityChanged = ^(BOOL visible) {
+            AKTouchControls *controls = weakSelf;
+            if (!controls) return;
+            [controls cancelTouches];
+            [controls setGamepadVisible:visible];
+        };
+        _gamepad.enabled = _gamepadEnabled;
+    }
+    _gamepad.keyboardVisible = self.keyboardVisible;
+    [_gamepad refresh];
 }
 
 - (void)processTouches:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
