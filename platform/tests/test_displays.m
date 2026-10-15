@@ -1,0 +1,41 @@
+// The Core Graphics adapter's one display, as Wine's Mac driver queries and
+// captures it; run in the simulator (tools/test_translation_sim.sh).
+#import <UIKit/UIKit.h>
+#import <Metal/Metal.h>
+#include <assert.h>
+typedef uint32_t CGDirectDisplayID;
+typedef CFDictionaryRef CGDisplayModeRef;
+extern CGError CGGetOnlineDisplayList(uint32_t, CGDirectDisplayID *, uint32_t *);
+extern CGSize CGDisplayScreenSize(CGDirectDisplayID);
+extern uint32_t CGDisplayIDToOpenGLDisplayMask(CGDirectDisplayID);
+extern CGDirectDisplayID CGOpenGLDisplayMaskToDisplayID(uint32_t);
+extern CGDirectDisplayID CGDisplayMirrorsDisplay(CGDirectDisplayID);
+extern id<MTLDevice> CGDirectDisplayCopyCurrentMetalDevice(CGDirectDisplayID);
+extern CGError CGCaptureAllDisplays(void), CGReleaseAllDisplays(void);
+extern int32_t CGShieldingWindowLevel(void);
+extern CGDisplayModeRef CGDisplayCopyDisplayMode(CGDirectDisplayID), CGDisplayModeRetain(CGDisplayModeRef);
+extern void CGDisplayModeRelease(CGDisplayModeRef);
+extern bool CGDisplayModeIsUsableForDesktopGUI(CGDisplayModeRef);
+extern CGError CGDisplaySetDisplayMode(CGDirectDisplayID, CGDisplayModeRef, CFDictionaryRef);
+int main(void) { @autoreleasepool {
+    CGDirectDisplayID displays[2]={0}; uint32_t count=0;
+    assert(CGGetOnlineDisplayList(2,displays,&count)==kCGErrorSuccess && count==1 && displays[0]==1);
+    assert(CGGetOnlineDisplayList(0,NULL,&count)==kCGErrorSuccess && count==1);
+    assert(CGGetOnlineDisplayList(1,NULL,&count)==kCGErrorIllegalArgument);
+    // 132 points an inch, in millimetres.
+    CGSize points=UIScreen.mainScreen.bounds.size, size=CGDisplayScreenSize(1);
+    assert(fabs(size.width-points.width*25.4/132)<0.01 && fabs(size.height-points.height*25.4/132)<0.01);
+    assert(CGSizeEqualToSize(CGDisplayScreenSize(2),CGSizeZero));
+    assert(CGDisplayIDToOpenGLDisplayMask(1)==1 && CGOpenGLDisplayMaskToDisplayID(1)==1 && !CGOpenGLDisplayMaskToDisplayID(2) && !CGDisplayIDToOpenGLDisplayMask(2));
+    assert(!CGDisplayMirrorsDisplay(1) && CGDirectDisplayCopyCurrentMetalDevice(1) && !CGDirectDisplayCopyCurrentMetalDevice(2));
+    assert(CGCaptureAllDisplays()==kCGErrorSuccess && CGReleaseAllDisplays()==kCGErrorSuccess && CGShieldingWindowLevel()>0);
+    // The screen's own mode is the only one to set.
+    CGDisplayModeRef mode=CGDisplayCopyDisplayMode(1); assert(mode && CGDisplayModeIsUsableForDesktopGUI(mode));
+    assert(CGDisplayModeRetain(mode)==mode); CGDisplayModeRelease(mode);
+    assert(CGDisplaySetDisplayMode(1,mode,NULL)==kCGErrorSuccess);
+    NSMutableDictionary *other=[(__bridge NSDictionary *)mode mutableCopy]; other[@"width"]=@800;
+    assert(CGDisplaySetDisplayMode(1,(__bridge CGDisplayModeRef)other,NULL)==kCGErrorIllegalArgument);
+    assert(CGDisplaySetDisplayMode(2,mode,NULL)==kCGErrorIllegalArgument && CGDisplaySetDisplayMode(1,NULL,NULL)==kCGErrorIllegalArgument);
+    CGDisplayModeRelease(mode);
+    puts("online displays, physical size, OpenGL masks, capture and display modes: PASS");
+} }
