@@ -286,7 +286,7 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
 @property (nonatomic, weak) NSWindow *nsWindow;
 @end
 
-@implementation AKHostView { CGPoint _last; NSEventModifierFlags _mods; BOOL _pressedRight, _pressedLeft, _pointerInside, _softwareCursor; UIImageView *_cursorView; UIPointerInteraction *_pointer; UIPointerStyle *_gamePointerStyle; unsigned _hoverUpdates, _pointerUpdates, _cursorVisibilityReasons; NSTimeInterval _pointerReportTime;
+@implementation AKHostView { CGPoint _last; NSEventModifierFlags _mods; BOOL _pressedRight, _pressedLeft, _pointerInside, _softwareCursor; UIImageView *_cursorView; UIPointerInteraction *_pointer; UIPointerStyle *_gamePointerStyle; unsigned _hoverUpdates, _pointerUpdates, _cursorVisibilityReasons; NSTimeInterval _pointerReportTime; unsigned short _swallowedKey;
     AKTouchControls *_touchControls;
     AKTouchGamepad *_touchGamepad;
     BOOL _touchCursorActive, _touchCursorInitialized, _pressedMiddle;
@@ -323,6 +323,12 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
             [_touchControls.centerXAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.centerXAnchor],
         ]];
         _touchGamepad = [[AKTouchGamepad alloc] initWithHostView:self];
+        // Development: open the draft keyboard at guest start, so a device run can
+        // check that the iOS keyboard and its microphone appear over the game.
+        if ([NSProcessInfo.processInfo.arguments containsObject:@"--touch-keyboard-open"])
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                [NSNotificationCenter.defaultCenter postNotificationName:AKTouchKeyboardRequestNotification object:self];
+            });
         __weak AKHostView *weakSelf = self;
         _touchGamepad.visibilityChanged = ^(BOOL visible) {
             AKHostView *host = weakSelf;
@@ -647,12 +653,26 @@ static BOOL AKIsRight(UIEvent *ev) { return (ev.buttonMask & UIEventButtonMaskSe
 - (void)postKeys:(NSSet<UIPress *> *)presses down:(BOOL)down {
     for (UIPress *p in presses) {
         UIKey *k = p.key; if (!k) continue;
-        NSEvent *e = [NSEvent new];
-        e.window = self.nsWindow; e.keyCode = AKKeyCode(k.keyCode); e.timestamp = p.timestamp;
         BOOL isMod = k.keyCode >= 0xE0 && k.keyCode <= 0xE7;
         // A modifier key's own press and release set and clear it; other keys carry UIKit's state.
         if (isMod) _mods = AKModifiersAfterKey(_mods, k.keyCode, down);
         else [self reconcileModifiers:AKMods(k.modifierFlags)];
+        // Control+Option+D is the dictation trigger: it opens the draft keyboard
+        // instead of reaching the game, so a game macro bound to it (or the keys
+        // themselves) reaches Apple's dictation without the toolbar. Its release
+        // is swallowed with the press so the guest never sees half a keystroke.
+        if (!isMod && k.keyCode == 0x07 &&
+            (_mods & (NSEventModifierFlagControl | NSEventModifierFlagOption)) == (NSEventModifierFlagControl | NSEventModifierFlagOption)) {
+            if (down && !_swallowedKey) {
+                _swallowedKey = k.keyCode;
+                AKLog(@"dictation trigger (control+option+D) opens the draft keyboard");
+                [NSNotificationCenter.defaultCenter postNotificationName:AKTouchKeyboardRequestNotification object:self];
+            }
+            continue;
+        }
+        if (!isMod && !down && _swallowedKey == k.keyCode) { _swallowedKey = 0; continue; }
+        NSEvent *e = [NSEvent new];
+        e.window = self.nsWindow; e.keyCode = AKKeyCode(k.keyCode); e.timestamp = p.timestamp;
         e.modifierFlags = _mods;
         e.type = isMod || k.keyCode == 0x39 ? NSEventTypeFlagsChanged : down ? NSEventTypeKeyDown : NSEventTypeKeyUp;
         e.characters = k.characters; e.charactersIgnoringModifiers = k.charactersIgnoringModifiers;
@@ -931,11 +951,18 @@ static void logLayer(CALayer *layer,unsigned depth) {
 - (BOOL)isActive { return _active; }
 - (void)ak_becameActive:(NSNotification *)notification {
     (void)notification;
-    if(!_active) { _active=YES; AKLog(@"application became active"); [self ak_notify:@"NSApplicationDidBecomeActiveNotification" sel:@selector(applicationDidBecomeActive:)]; }
+    if(!_active) { _active=YES; AKLog(@"application became active"); [self ak_notify:@"NSApplicationDidBecomeActiveNotification" sel:@selector(applicationDidBecomeActive:)]; [self ak_occlusionChanged]; }
 }
 - (void)ak_resignedActive:(NSNotification *)notification {
     (void)notification;
-    if(_active) { _active=NO; [self ak_notify:@"NSApplicationDidResignActiveNotification" sel:@selector(applicationDidResignActive:)]; }
+    if(_active) { _active=NO; AKLog(@"application resigned active"); [self ak_notify:@"NSApplicationDidResignActiveNotification" sel:@selector(applicationDidResignActive:)]; [self ak_occlusionChanged]; }
+}
+// A window's visibility follows the scene's activation state, so the guest learns
+// that its window went away and came back, as it would on a Mac for a hidden or
+// covered window. An application that pauses rendering while occluded needs it,
+// and it is what makes switching to another app safe.
+- (void)ak_occlusionChanged {
+    for (NSWindow *window in _windows) [window ak_notify:@"NSWindowDidChangeOcclusionStateNotification" selector:@selector(windowDidChangeOcclusionState:)];
 }
 - (void)activateIgnoringOtherApps:(BOOL)f { (void)f; if(UIApplication.sharedApplication.applicationState==UIApplicationStateActive) [self ak_becameActive:nil]; }
 - (void)ak_notify:(NSString *)name sel:(SEL)sel {

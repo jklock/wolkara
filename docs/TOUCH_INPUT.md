@@ -125,6 +125,30 @@ be read afterwards: `dictation placeholder inserted/removed`, `dictation result:
 N phrases, M characters` (lengths only, never the dictated text), `dictation
 recognition failed`, and `system keyboard shown/hidden draftFirstResponder=…`.
 
+From inside the game, **Control+Option+D** opens the draft keyboard and the game
+never sees the key, so a game macro bound to that combination (or the keys
+themselves) reaches Apple's dictation without leaving the game to tap the
+toolbar. Its release is swallowed with the press. `--touch-keyboard-open` does the
+same at guest start, for a device check of the keyboard and its microphone.
+
+Apple's dictation is reached through the iOS keyboard's own microphone. A hardware
+keyboard attached to the iPad makes iPadOS hide those keys, and the microphone with
+them - the touch row above them is ours and stays. Rather than leave a keyboard
+that cannot dictate, Wolkara says so in the draft's label and in
+`native-guest.log` (`hardware keyboard attached`, `software keyboard keys are not
+on screen (height 0 ...)`): pressing the keyboard key (**⌘K**, or the keyboard key
+on our own row) brings the keys and the microphone back. With no hardware keyboard
+the keyboard appears with its microphone, and a Magic Keyboard's own dictation key
+starts dictation directly.
+
+The app declares the **audio** background mode and keeps its audio session active,
+so iPadOS treats a running guest as an audio app and does not suspend it when the
+user switches to another app: the game keeps running, keeps its connection and is
+where it was on return (a suspended app is what gets killed for memory and lands
+back on the library). The guest is also told when its window becomes occluded and
+visible again, as a Mac application is when a window is hidden or covered, so one
+that pauses rendering off-screen can do so.
+
 The `feature/keyboard-dictation` branch starts at `9483e1a`, before the native
 mouse experiment; `feature/native-mouse` remains separate. On 2026-10-04,
 the first change (`72d7468`) made the microphone visible, but the user reported
