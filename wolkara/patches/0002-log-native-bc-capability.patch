@@ -1,0 +1,12 @@
+diff --git a/translation/Metal/BCTextures.m b/translation/Metal/BCTextures.m
+index 6a335ea..2d0c0de 100644
+--- a/translation/Metal/BCTextures.m
++++ b/translation/Metal/BCTextures.m
+@@ -577,6 +577,7 @@ void AKInstallBCTextureFallback(id<MTLDevice> device) {
+         BOOL native = deviceSamplesBC(device);
+         if (setting == AKBCSettingOff || (setting == AKBCSettingAuto && native)) {
+             if (!native) AKLog(@"Metal BC fallback: off (TOLKARA_BC_FALLBACK=off) although %@ cannot sample BC textures", device.name);
++            else AKLog(@"Metal BC: %@ samples BC textures natively, nothing installed", device.name);
+             return;
+         }
+         findSharedCache();
