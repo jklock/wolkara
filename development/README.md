@@ -34,7 +34,7 @@ wolkara/tools/check_layers.sh     # the gate: run this before and after any chan
 | --- | --- | --- |
 | 0 | Ground truth, pre-split tag, baseline | **done** |
 | 1 | `platform/` vendored + the gate | **done** |
-| 2 | Every delta classified layer / replace / patch / drop | **partial** - classification done and measured against the pin: 57 paths differ; the prefer-upstream comparison and the branding-delta deletions remain |
+| 2 | Every delta classified layer / replace / patch / drop | **partial** - classification done and measured; seven patches now carry the platform-side changes and six paths need nothing, so what remains is the branding-delta deletions and the three Phase 3 files |
 | 3 | `wolkara/project.yml`, the modules, the wrappers | **partial** - only `prepare.sh` exists |
 | 4 | Parity on the Mac suites and on Dadpad | **todo** (blocked by 3) |
 | 5 | Ingest upstream through the ritual | **partial** - the pin is already current upstream; arrivals partly verified |
@@ -54,7 +54,7 @@ sources. Measured on 2026-10-15:
 | ...of those, we actually differ from upstream on (the real delta set) | 57 |
 | ...changed lines across those 57 | ~4034 |
 | ...with no counterpart in `platform/` (layer candidates) | 71 |
-| Files under `wolkara/` | 4 (2 patches, 2 tools) |
+| Files under `wolkara/` | 9 (7 patches, 2 tools) |
 | References to `build/platform` in the root `project.yml` | 0 |
 
 So the split has established *where* our code will live but has not moved it there,

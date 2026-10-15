@@ -62,7 +62,8 @@ so `platform/` is byte-identical to upstream `00a8501`: 513 files.
 | `tests/test_bc_textures` with `TOLKARA_BC_FALLBACK=off` | PASS: native BC textures, nothing installed |
 | `tests/test_bc_textures` with `TOLKARA_BC_FALLBACK=on` | PASS: guest sees BC formats; replaceRegion, slices, 3D, blit uploads, texture copies, views, heaps handled |
 | BC1-BC7 CPU reference decode (inside the same test) | PASS: reference blocks, punch-through, signed, partial blocks, padded rows, mip chains |
-| `tools/test_emulation.sh` | **aborts** (SIGABRT) at the first `tests/test_bc_textures` run |
+| `tools/test_emulation.sh` on the pristine `platform/` | **aborts** (SIGABRT) at the first `tests/test_bc_textures` run - which is what patch 0001 fixes |
+| `tools/test_emulation.sh` on the prepared tree (patches 0001-0007 applied) | 59 PASS and the one accepted codesign failure below; the generic builds link; all three BC runs PASS |
 
 The abort is upstream's native-GPU assertion (`tests/test_bc_textures.m:87`,
 `assert(worst <= allowed)` in `referenceDecoding`): BC1, BC2, BC3 and BC6 match the
