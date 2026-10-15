@@ -6,7 +6,37 @@
 typedef UInt32 AudioDeviceID;
 typedef OSStatus (*HardwareListener)(UInt32,void *);
 static _Atomic(UInt32) defaultOutputDevice;
+// The app declares the audio background mode, and iPadOS only honours it while
+// the audio session is active: that is what keeps a running game alive (and its
+// connection up) when the user switches to another app. Nothing here deactivates
+// the session, so it stays active across the switch; these observers put it back
+// only when something else took it away.
+static void keepSession(void) {
+    AVAudioSession *session=AVAudioSession.sharedInstance;NSError *error=nil;
+    if(![session.category isEqualToString:AVAudioSessionCategoryPlayback] && ![session setCategory:AVAudioSessionCategoryPlayback error:&error]) {
+        AKLog(@"audio session category failed: %@",error.localizedDescription);return;
+    }
+    if(![session setActive:YES error:&error]) AKLog(@"audio session activate failed: %@",error.localizedDescription);
+}
+static void observeSession(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once,^{
+        // AVFAudio notifications only: this adapter stays UIKit-free. The audio
+        // background mode plus an active session is what lets iPadOS keep a
+        // running guest alive (and online) while another app is in front; an
+        // interruption ending is the one thing that takes the session away.
+        NSNotificationCenter *center=NSNotificationCenter.defaultCenter;
+        [center addObserverForName:AVAudioSessionInterruptionNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
+            NSNumber *type=note.userInfo[AVAudioSessionInterruptionTypeKey];
+            if(type.unsignedIntegerValue==AVAudioSessionInterruptionTypeEnded) keepSession();
+        }];
+        [center addObserverForName:AVAudioSessionMediaServicesWereResetNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
+            (void)note; keepSession();
+        }];
+    });
+}
 static NSString *outputName(void) {
+    observeSession();
     AVAudioSession *session=AVAudioSession.sharedInstance; NSError *error=nil;
     if(![session.category isEqualToString:AVAudioSessionCategoryPlayback] || session.sampleRate<=0 || !session.currentRoute.outputs.count)
         if(![session setCategory:AVAudioSessionCategoryPlayback error:&error] || ![session setActive:YES error:&error])return nil;

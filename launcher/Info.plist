@@ -14,5 +14,9 @@
 	<string>$(TOLKARA_MODE)</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Allow World of Warcraft in Wolkara to use the microphone for in-game voice chat.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
 </dict>
 </plist>
