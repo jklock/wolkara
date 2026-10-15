@@ -120,7 +120,7 @@ them, which is exactly what an ingest wants.
     and anything that differed without being on a list was reported and left alone. The
     unused `AppIcon.appiconset` went with them. The root now holds `platform/`, `wolkara/`,
     `development/`, `docs/`, `profiles/`, `.github/` and the root documents - nothing else.
-    `overlay.map` carries all 64 layer files (12 replace, 52 add).
+    `overlay.map` carries all 61 layer files (9 replace, 52 add).
 13. Wrapper tooling. **done** - `wolkara/tools/{env,generate,install,run,package_ipa,test_emulation,test_translation_sim}.sh`.
     Each reads the root's ignored `local.env`, prepares the tree, then runs the platform's
     own script against it, so the build logic stays upstream's and `local.env` keys are
@@ -139,14 +139,15 @@ WoW suite and its local-service retry suite both run against the prepared tree a
 the platform's own suite in the prepared tree is 59 PASS plus the accepted codesign
 failure.
 
-**Open, recorded in `wolkara/README.md`:** the AppKit adapter patch. `Bridge/AppKit.m` is
-our version of it and is deliberately *not* overlaid yet, because a patch may only use
-symbols the platform tree itself has - measured: aliasing our `AKFont` in the platform's
-link flags broke its own generic builds with two link errors. The Touch module must first
-become self-contained behind the install hook upstream's `AppKit.m` already provides (it
-installs our `AKTouchControls` and drives it through a delegate API our class already
-implements). Until then the toolbar installs, but the gamepad and the Control+Option+D
-keyboard request do not.
+**Still open, recorded in `wolkara/README.md`:** the two adapter changes that genuinely
+belong in the adapter - swallowing Control+Option+D in `postKeys:down:` to open the draft
+keyboard, and the occlusion notifications a guest window gets when the app is switched
+away. `Bridge/AppKit.m` holds them. The rest of what it used to hold now lives in the
+Touch module, which was made self-contained: it takes its own layout, owns the gamepad,
+and provides the `+enabled` the platform's install path asks for, so the toolbar and the
+gamepad work with the platform's own `AppKit.m` untouched. Patch 0008 re-adds the
+adapter's `AKFont` alias, which links now that our files are compiled into the adapter
+(measured: `tools/build_shims.py` globs the adapter's directory).
 
 
 ## Phase 4 - Prove parity
