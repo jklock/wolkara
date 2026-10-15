@@ -89,3 +89,44 @@ versus 161 of wolkara/Wolkara in 43. The heaviest are `docs/WINDOWS.md` (31),
 - The touch and gamepad fixtures still block under `simctl launch --console` without
   `--self-test`, so a headless run of those two can hang.
 - Everything else in this file is unchanged and still open.
+
+## Branch-wide audit against upstream (2026-10-15)
+
+Done after a mistake of ours surfaced: three files had been treated as "ours" when we
+had never modified them, so overlaying them silently dropped upstream's newer work. The
+same mistake could have been made anywhere, so every path this branch touches was
+re-checked against upstream by comparing three versions - ours, upstream's, and the
+pre-split base - and asking which side actually changed.
+
+| Group | Count | Result |
+| --- | --- | --- |
+| The vendored platform | 513 files | byte-identical to `upstream/main` today (checked live on every gate run) |
+| Our patches | 8 | each is a three-way merge of our change onto upstream's current file, and every one merged clean, so no upstream line was dropped |
+| Our replacements | 9 | decided one by one: 3 dropped (we had not changed them), 5 merged with theirs, 2 ours-only (branding plists) |
+| Our additions | 52 | upstream has no file at those paths; the overlay refuses an `add` that would collide with one it has |
+| Files deleted as superseded | 22 | 7 we had not changed; 9 covered by a patch; 3 tools whose only change was branding and the display name, now the layer's; 2 tests of ours dropped on purpose; **1 real gap** |
+| Root documents, docs, profiles, CI | 46 | 10 are stale forks (below); the rest are our product's own text |
+
+**The gap the audit found:** `translation/Metal/Devices.m` was taken as upstream's, and
+our copy had also carried the call that installs the background frame pacing. Nothing
+installed it after that, so the background-survival feature would have quietly lost its
+pacing. Fixed in the layer: `Bridge/BackgroundPacing.m` installs itself from a load-time
+constructor, which is the right place anyway - the file is compiled into the Metal
+adapter, which the guest loads before it draws, and there is no call site to keep in
+step in a platform file.
+
+**Checks that came out clean, for the record:** our `tools/install.sh` change was a
+workaround for `SYMROOT`/`OBJROOT` overrides we no longer make, so upstream's script is
+self-consistent under our wrapper; `tools/generate.sh` and `tools/package_ipa.sh` only
+carried branding, which `wolkara/tools/env.sh` sets; our `test_emulation.sh` change was
+additive (the layer's suites have their own entry point) and upstream's version is used;
+`tests/test_appkit_views.m` tested the platform's own layout and is superseded by our
+fixture in `Touch/tests/`.
+
+**Stale forks to fold in** (upstream's text has moved on and our copy has not been
+merged): `.github/workflows/release.yml`, `AGENTS.md`, `COMPATIBILITY.md`, `NOTICE.md`,
+`README.md`, `docs/BUILDING.md`, `docs/IPHONE.md`, `docs/TOUCH_INPUT.md`,
+`local.env.example`, `profiles/wow-forever/README.md`. These are documentation and
+configuration, so nothing here changes how the app builds or behaves; upstream's versions
+are readable at any time under `platform/`. Merging them is Phase 6 work.
+

@@ -49,3 +49,11 @@ void AKInstallMetalBackgroundPacing(void) {
         if(!originalNextDrawable) AKLog(@"background pacing could not install");
     });
 }
+
+// Installed from here, not from a call site: this file is compiled into the Metal
+// adapter, which the guest loads before it draws anything, and the platform's own
+// files are used as they are. Loading the adapter is therefore the earliest and the
+// only place this needs to happen, and the install is idempotent.
+__attribute__((constructor)) static void AKBackgroundPacingLoad(void) {
+    AKInstallMetalBackgroundPacing();
+}
