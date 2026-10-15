@@ -58,11 +58,20 @@ install: THE GAME IS RUNNING (pid $pid). Installing now would replace the app un
 MESSAGE
         exit 2
     fi
-    echo "   the game is running (pid $pid): stopping it cleanly (SIGTERM) and waiting"
-    xcrun devicectl device process signal --device "$DEVICE" --pid "$pid" --signal SIGTERM >/dev/null 2>&1 || true
-    xcrun devicectl device process awaitTermination --device "$DEVICE" --pid "$pid" --timeout 30 >/dev/null 2>&1 || true
+    echo "   the game is running (pid $pid): stopping it before anything is replaced"
+    # SIGTERM first, to give the client the chance to close its stores itself. This app
+    # does not act on it - measured: the process survived SIGTERM and 30 s - so SIGKILL
+    # follows. Either way the app is gone before the install, which is the point: the
+    # 2026-10-15 damage came from replacing the app underneath a client that was still
+    # running, not from stopping it first.
+    for sig in SIGTERM SIGKILL; do
+        xcrun devicectl device process signal --device "$DEVICE" --pid "$pid" --signal "$sig" >/dev/null 2>&1 || true
+        xcrun devicectl device process awaitTermination --device "$DEVICE" --pid "$pid" --timeout 20 >/dev/null 2>&1 || true
+        [ -z "$(app_pid || true)" ] && break
+        echo "   it survived $sig"
+    done
     if [ -n "$(app_pid || true)" ]; then
-        echo "install: the game did not exit within 30s; quit it on the iPad and try again" >&2
+        echo "install: the game would not stop; close it on the iPad and try again" >&2
         exit 2
     fi
     echo "   the game has exited"
