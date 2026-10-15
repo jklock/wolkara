@@ -79,3 +79,5 @@ wolkara/Bridge/tests/test_packet_service_retry.swift tests/test_packet_service_r
 # Controller: what the pad reports, and every change to it (diagnostic)
 wolkara/Controller/ControllerInspector.h launcher/Controller/ControllerInspector.h add
 wolkara/Controller/ControllerInspector.m launcher/Controller/ControllerInspector.m add
+wolkara/Controller/ControllerWindow.h launcher/Controller/ControllerWindow.h add
+wolkara/Controller/ControllerWindow.m launcher/Controller/ControllerWindow.m add
