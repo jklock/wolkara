@@ -64,31 +64,41 @@ so `platform/` is byte-identical to upstream `00a8501`: 513 files.
 | BC1-BC7 CPU reference decode (inside the same test) | PASS: reference blocks, punch-through, signed, partial blocks, padded rows, mip chains |
 | `tools/test_emulation.sh` | **aborts** (SIGABRT) at the first `tests/test_bc_textures` run |
 
-The abort is upstream's new native-GPU assertion (`tests/test_bc_textures.m:87`,
+The abort is upstream's native-GPU assertion (`tests/test_bc_textures.m:87`,
 `assert(worst <= allowed)` in `referenceDecoding`): BC1, BC2, BC3 and BC6 match the
 CPU decode exactly, BC4/BC5 sit inside the documented half-step, and **BC7 differs
-by 255.0 steps** on this Mac's GPU - i.e. the native BC7 path does not decode as
-the test expects on macOS 26.7.1 with Xcode 27.0.
+by 255.0 steps** on this Mac's GPU.
 
-This is not ours and not caused by the split:
+**Diagnosed in Phase 2** (see `docs/GPU_SUPPORT.md` for the measurements): the
+difference is not a decode error on either side. `randomBlocks` deliberately forces
+one BC7 block in nine into the format's *reserved* mode (a zero first byte), whose
+decoded value the BC7 specification leaves undefined - and the test then requires
+the CPU decoder and the GPU to agree on it. On this M1 the GPU answers alpha 1.0 for
+such a block and the CPU decoder answers alpha 0.0, which is exactly the 255.0 step
+difference. All **eight defined BC7 modes decode bit-exactly** against Apple's
+hardware here (0.000 steps, through both `texture.read()` and a nearest sampler, in
+shared and default storage), so the fallback decoder is correct.
 
-- `platform/` is byte-identical to upstream, and our pre-split tree never contained
-  the BC work at all, so this test ran here for the first time;
-- both fallback paths - the ones that matter for the iPads - pass;
-- it is host/driver-dependent in the same way as the accepted codesign failure.
+Our fix is `wolkara/patches/0001-bc7-reserved-mode-not-comparable.patch`: generate
+only the eight defined modes for the cross-check (the reserved mode's robustness is
+still covered by `tests/test_bc_decode.c`), and make `TOLKARA_BC_FALLBACK=off`
+actually run the comparison instead of printing PASS without measuring anything.
+With the patches applied all three runs PASS, so the platform BC test joins the gate
+as a required pass rather than an accepted abort. `wolkara/patches/0002` logs the
+host's BC capability once per run so every device reports it.
 
-Follow-ups (Phase 6 and 7): either teach the test to skip the native comparison
-when the GPU reports no BC7 support, or report it upstream as a genuine macOS-beta
-finding. Both are contribution candidates.
+Both patches are upstream candidates (Phase 7).
 
 ## The gate for every later phase
 
 1. `tools/test_wow_launcher.sh` and `tools/test_translation_sim.sh`: exit 0.
 2. `tools/test_emulation.sh`: same 62 PASS and the same single accepted failure (the
    codesign byte-for-byte comparison). It must not gain or lose any other failure.
-3. Platform suite inside `platform/`: `tools/test_translation_sim.sh` exit 0, and the
-   BC test's two fallback runs PASS. `tools/test_emulation.sh` there is expected to
-   abort at the native BC7 comparison on this Mac, exactly as recorded above.
+3. Platform suite, run against the **prepared tree** (`build/platform`, our patches
+   applied): `tools/test_translation_sim.sh` exit 0, and all three
+   `tests/test_bc_textures` runs PASS. Inside the pristine `platform/` the native
+   comparison still aborts on BC7's reserved mode, which is why patch 0001 exists;
+   the prepared tree is the tree we build and test.
 4. Device checks above, repeated on the installed app with the same bundle id.
 5. `wolkara/tools/check_layers.sh` (new): platform pristine, patches apply,
    source coverage complete, no cross-module reach-in.
