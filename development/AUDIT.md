@@ -128,7 +128,7 @@ and three call sites in the adapter) is not carried into patch 0009. It was a de
 tool for the layout work, which is finished and tested; if layout work resumes it can be
 restored from this branch's history.
 
-**Stale forks, reviewed and decided** (upstream's text had moved on and our copy had not
+## Stale forks, reviewed and decided (upstream's text had moved on and our copy had not
 been merged). Each was put through the same three-way merge; nine conflict heavily
 because upstream's documents are about *their* product - the launcher folder, Tolkara
 Management, iPhone specifics - while ours documents ours:
@@ -141,3 +141,35 @@ Management, iPhone specifics - while ours documents ours:
 
 Nothing here changes how the app builds or behaves.
 
+## Found by the live device test (2026-10-15)
+
+Three defects that only building and installing on the iPad could show. All are fixed.
+
+1. **The layer's project settings were never carried over.** `project.yml` had been
+   classified "the layer gets its own", and when that plan became the overlay, the
+   settings our app needs went missing. The build stopped with `Unable to resolve module
+   dependency: 'ZIPFoundation'`. Fixed as patch 0010, which puts on upstream's project the
+   package and its dependency (the add-on manager unpacks archives), the licence and
+   notice the app carries, this product's icon and display name, and the scheme setting
+   that keeps Xcode's Metal debug device from forwarding macOS-only selectors past the
+   adapter.
+
+2. **The build location.** The platform's script asks xcodebuild for
+   `-derivedDataPath build/device` and installs from `build/device/Build/Products/...`. A
+   machine-wide Xcode build location overrides that - this Mac has
+   `IDEBuildLocationStyle = Custom` with `IDECustomDerivedDataLocation =
+   /Volumes/Storage/XCode` - so the build succeeded and the install found nothing. Fixed
+   in our wrapper, not in their script: `wolkara/tools/install.sh` hands xcodebuild an
+   xcconfig through `XCODE_XCCONFIG_FILE` that pins `SYMROOT` and `OBJROOT` to the layout
+   their script expects. Measured before adopting it: with the xcconfig, `BUILD_DIR`
+   becomes `<tree>/build/device/Build/Products`; without it, `/Volumes/Storage/XCode/Build/Products`.
+
+3. **The package was resolved and then thrown away.** Resolving from our wrapper looked
+   right and did work - "Resolved source packages: ZIPFoundation @ 22787ff" - but the
+   platform's script regenerates the project at the top of its own run, which invalidates
+   that resolution, and the build then cannot find the module. Fixed as patch 0011: the
+   resolve happens inside their script, right after the regeneration. A project with no
+   packages resolves to nothing, so for the platform itself the step costs nothing.
+
+None of the three was visible to the suites: all are properties of the *build*, not of the
+code. That is the argument for making the device install part of the phase gate.
