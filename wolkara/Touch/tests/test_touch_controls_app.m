@@ -220,6 +220,15 @@ static void AKFixtureInputSource(void *context) {
                 _Exit(EXIT_FAILURE);
             });
     }
+    // A plain launch is for looking at the fixture. Without --stay it closes itself
+    // after a minute anyway, so a headless run cannot sit on it for ever.
+    if (!selfTest && ![NSProcessInfo.processInfo.arguments containsObject:@"--stay"]) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 60 * NSEC_PER_SEC),
+            dispatch_get_main_queue(), ^{
+                fprintf(stderr, "TOUCH_UI_LIFETIME_REACHED (pass --stay to keep it open)\n");
+                _Exit(EXIT_SUCCESS);
+            });
+    }
     if ([NSProcessInfo.processInfo.arguments containsObject:@"--tracking-progress-test"]) {
         [NSTimer scheduledTimerWithTimeInterval:2 repeats:NO block:^(NSTimer *timer) {
             (void)timer; [self.pump invalidate]; self.pump = nil;

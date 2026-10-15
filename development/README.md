@@ -46,9 +46,9 @@ its internals are Wolkara.
 | 1 | `platform/` vendored + the gate | **done** |
 | 2 | Every delta classified layer / replace / patch / drop | **partial** - classification done and measured; seven patches now carry the platform-side changes and six paths need nothing, so what remains is the branding-delta deletions and the three Phase 3 files |
 | 3 | The modules, the overlay, the wrappers | **done** - by overlay onto the prepared tree rather than a layer project; `PLAN.md` says why |
-| 4 | Parity on the Mac suites and on Dadpad | **todo** (blocked by 3) |
+| 4 | Parity on the Mac suites and on Dadpad | **partial** - the suites, the compile checks and the project generation pass; the one check left is installing and running the app on the device since the split |
 | 5 | Ingest upstream through the ritual | **partial** - the pin is already current upstream; arrivals partly verified |
-| 6 | Clean base from the audit | **todo** |
+| 6 | Clean base from the audit | **done** - every audit item is fixed or decided; see `AUDIT.md` |
 | 7 | Upstream contribution pipeline | **partial** - 7 patches ready, none submitted |
 
 **Is Wolkara modularised on top of tolkara? Yes, as of 2026-10-15.** Our sources live
@@ -70,6 +70,7 @@ tree. The one piece still open is the AppKit adapter patch, recorded in
 | File | Contents |
 | --- | --- |
 | `PLAN.md` | The full end-to-end plan, every phase and step, with status and the decisions taken. |
+| `VALIDATION.md` | Every phase checked against the design, with the evidence for each claim and the exceptions that are accepted. |
 | `AUDIT.md` | The clean-base findings (Phase 6) - quality problems to fix, with status. |
 | `DIVERGENCE.md` | What we changed versus upstream: statistics, themes, and where the two ran over each other. |
 | `NOTES.md` | Operational knowledge that is easy to lose: the CASC index repair, background survival, dictation, and tool gotchas. |

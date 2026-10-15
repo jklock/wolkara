@@ -46,5 +46,7 @@ if [[ " $* " == *" --self-test "* || " $* " == *" --self-test-input "* ]]; then
     xcrun simctl launch --terminate-running-process --console "$SIM_ID" org.tolkara.tests.touch-gamepad "$@" 2>&1 | tee "$LOG"
     grep -Eq 'TOUCH_GAMEPAD_(LIFECYCLE|INPUT)_PASS:' "$LOG"
 else
-    xcrun simctl launch --terminate-running-process --console "$SIM_ID" org.tolkara.tests.touch-gamepad "$@"
+    # Looking at it by hand: keep it open. Without --stay the fixture closes itself
+    # after a minute, so an unattended run cannot sit on the console for ever.
+    xcrun simctl launch --terminate-running-process --console "$SIM_ID" org.tolkara.tests.touch-gamepad --stay "$@"
 fi

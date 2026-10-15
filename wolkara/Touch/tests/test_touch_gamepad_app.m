@@ -385,6 +385,16 @@ static void TestLifecycle(UIView *host) {
     if (test || [NSProcessInfo.processInfo.arguments containsObject:@"--self-test-input"])
         [NSUserDefaults.standardUserDefaults removeObjectForKey:@"WolkaraTouchLayoutV1"];
     if (test) { TestLifecycle(self.window.rootViewController.view); fflush(stdout); exit(0); }
+    // A plain launch is for looking at the fixture. Without --stay it closes itself
+    // after a minute anyway, so a headless run cannot sit on it for ever. (The
+    // --self-test-input path above has its own shorter watchdog.)
+    if (![NSProcessInfo.processInfo.arguments containsObject:@"--stay"]) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 60 * NSEC_PER_SEC),
+            dispatch_get_main_queue(), ^{
+                fprintf(stderr, "TOUCH_GAMEPAD_LIFETIME_REACHED (pass --stay to keep it open)\n");
+                _Exit(EXIT_SUCCESS);
+            });
+    }
     self.gamepad=[[AKPreviewGamepad alloc] initWithHostView:self.window.rootViewController.view];
     UIButton *settings=[UIButton buttonWithType:UIButtonTypeSystem];
     [settings setImage:[UIImage systemImageNamed:@"gearshape"] forState:UIControlStateNormal];
