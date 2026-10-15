@@ -93,3 +93,40 @@ keeps accepting input, and the keyboard is taken back when the session ends.
 - `xcrun devicectl` needs the device UDID; `local.env` carries it as `DEVICE`.
 - The simulator set on this Mac is iOS 27.0 only, and there is no "iPhone 17 Pro" - see
   `AUDIT.md` for which scripts default to it.
+
+## Never install while the game is running (2026-10-15)
+
+The hardest lesson of this project so far, learned by breaking a working install.
+
+An install (`wolkara/tools/install.sh`) was run at 11:30 while the game was live on the iPad.
+Replacing the app underneath a running client left its CASC index update slot occupied. The
+next launch then aborted with
+
+    BC_ASSERT(targetUpdateSlot.hash == 0)
+
+and that aborted commit left an index generation the client would not accept, so every launch
+afterwards failed with
+
+    BC_ASSERT(!m_exists)
+
+- the client's own logs show the run: `---- Startup ----` at 11:32:25, `---- Shutdown ----` at
+11:33:08, and an `Errors/` file at 11:33:09 naming `targetUpdateSlot.hash == 0`;
+- the newest index generations in the store carry that same 11:33 timestamp;
+- and then ten more installs were run, each replacing the app and re-staging the installation
+over the half-committed store, which kept the damage in place.
+
+Recovery was the game's own rebuild-and-verify, not anything in this repository.
+
+`wolkara/tools/install.sh` now has a guard as its first step: it refuses to install unless the
+game is gone, and `--replace-running` stops it cleanly (SIGTERM, then waits for the process to
+exit so the client can close its store) before anything is replaced. The detection uses
+`grep -E`, not `sed` - BSD `sed` has no `\|` alternation and a pattern that silently matches
+nothing would report "nothing running" for a live game, which is the one case that matters.
+
+Rules that follow from it:
+
+1. Never run an install while a game session is live - not to save time, not to test quickly.
+2. Judge a launch by whether a NEW file appears in
+   `Documents/World of Warcraft/_classic_beta_/Errors/`. A growing guest log is not success; on
+   this day two launches were reported as working that had in fact asserted and exited.
+3. When the launcher says "rebuild and verify", that is the repair for exactly this fault.
