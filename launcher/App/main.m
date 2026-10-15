@@ -7,6 +7,7 @@
 #import "DiagnosticsViewController.h"
 #import "ExecutionMode.h"
 #import "LibraryViewController.h"
+#import "../WoW/CASC.h"
 #import "../WoW/WoWViewController.h"
 #import "LaunchProgressView.h"
 #import "NativeGuest.h"
@@ -776,6 +777,13 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     // A profile's caseAliases: folders the application names in another case
     // than its installer wrote them, which only macOS's file system ignores.
     for (NSString *line in [self.library linkCaseAliasesForApp:app]) fprintf(log,"[host] %s\n",line.UTF8String);
+    // A CASC install's index set can be left truncated by the client's own
+    // interrupted index commit, which then refuses to bind that mapping table and
+    // aborts the launch. Repair the generations before the guest runs; only index
+    // files in a directory shaped like Data/data are touched, so an application
+    // without a CASC store is unaffected.
+    NSString *cascDataDir=[directory.stringByDeletingLastPathComponent stringByAppendingPathComponent:@"Data/data"];
+    for (NSString *line in TKWoWCASCRepairIndexGenerations(cascDataDir)) fprintf(log,"[host] %s\n",line.UTF8String);
     // A profile's command line for a compatibility runtime (data from the
     // profile; nothing here changes the application). `${Documents}` in a
     // variable's value stands for the absolute Documents folder.
