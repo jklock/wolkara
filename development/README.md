@@ -34,7 +34,7 @@ wolkara/tools/check_layers.sh     # the gate: run this before and after any chan
 | --- | --- | --- |
 | 0 | Ground truth, pre-split tag, baseline | **done** |
 | 1 | `platform/` vendored + the gate | **done** |
-| 2 | Every delta classified layer / replace / patch / drop | **partial** - 29 contested paths listed, several rows still unverified |
+| 2 | Every delta classified layer / replace / patch / drop | **partial** - classification done and measured against the pin: 57 paths differ; the prefer-upstream comparison and the branding-delta deletions remain |
 | 3 | `wolkara/project.yml`, the modules, the wrappers | **partial** - only `prepare.sh` exists |
 | 4 | Parity on the Mac suites and on Dadpad | **todo** (blocked by 3) |
 | 5 | Ingest upstream through the ritual | **partial** - the pin is already current upstream; arrivals partly verified |
@@ -51,7 +51,8 @@ sources. Measured on 2026-10-15:
 | Tracked files outside `platform/` | 526 |
 | ...whose path also exists in `platform/` (upstream's copies we still carry) | 455 |
 | ...of those, byte-identical to the pinned platform (pure dead weight today) | 398 |
-| ...of those, we actually differ from upstream on | 57 |
+| ...of those, we actually differ from upstream on (the real delta set) | 57 |
+| ...changed lines across those 57 | ~4034 |
 | ...with no counterpart in `platform/` (layer candidates) | 71 |
 | Files under `wolkara/` | 4 (2 patches, 2 tools) |
 | References to `build/platform` in the root `project.yml` | 0 |
