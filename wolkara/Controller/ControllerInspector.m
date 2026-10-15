@@ -70,8 +70,29 @@ static double const AKCIAxisBucket = 2.0;
     }
 
     AKCILog(@"inspector: watching for controller input");
+
+    // The pad's Share button is a Print Screen key, and iPadOS spends that key on
+    // the screenshot gesture before any app is offered it. The screenshot itself
+    // is announced to the app, though, so Share is reachable after all: this is
+    // the only route to it that the system provides.
+    [center addObserver:self selector:@selector(screenshotTaken:) name:UIApplicationUserDidTakeScreenshotNotification object:nil];
+    // And the hold gesture, which the system spends on screen recording.
+    [center addObserver:self selector:@selector(screenCaptureChanged:) name:UIScreenCapturedDidChangeNotification object:nil];
     [self attachEverything];
     [self logInventories];
+}
+
+- (void)screenshotTaken:(NSNotification *)notification {
+    (void)notification;
+    // A press of the pad's Share button, as far as this app can tell.
+    [self reportLine:@"Share (system screenshot)" element:@"Share" value:1 pressed:YES];
+}
+
+- (void)screenCaptureChanged:(NSNotification *)notification {
+    (void)notification;
+    AKCILog(@"inspector: screen capture changed, captured=%d", UIScreen.mainScreen.isCaptured);
+    [self reportLine:[NSString stringWithFormat:@"Share held (screen capture %@)", UIScreen.mainScreen.isCaptured ? @"on" : @"off"]
+              element:@"Share" value:(UIScreen.mainScreen.isCaptured ? 1 : 0) pressed:UIScreen.mainScreen.isCaptured];
 }
 
 - (void)padsChanged:(NSNotification *)notification {
@@ -95,6 +116,24 @@ static double const AKCIAxisBucket = 2.0;
         AKCILog(@"inspector: keyboard=%@ mouse=%@",
                 keyboard ? (keyboard.vendorName ?: @"present") : @"none",
                 mouse ? (mouse.vendorName ?: @"present") : @"none");
+        // Which keys does the system say this keyboard has? A GameSir pad sends
+        // its Share button as a Print Screen key, so this is where we find out
+        // whether that key exists to us at all, before anyone presses it.
+        if (keyboard) {
+            GCKeyboardInput *input = keyboard.keyboardInput;
+            NSArray<NSString *> *names = [input.buttons.allKeys sortedArrayUsingSelector:@selector(compare:)];
+            NSArray<NSString *> *printScreen = [names filteredArrayUsingPredicate:
+                [NSPredicate predicateWithFormat:@"SELF CONTAINS[c] 'print'"]];
+            AKCILog(@"inspector: keyboard keys=%lu printScreen=%@",
+                    (unsigned long)names.count,
+                    printScreen.count ? [printScreen componentsJoinedByString:@","] : @"absent");
+            AKCILog(@"inspector: keyboard key names=%@", [names componentsJoinedByString:@" | "]);
+            // Attach to the object we just enumerated, not to whichever one
+            // existed when we started: the coalesced keyboard is replaced when a
+            // keyboard comes or goes, and a handler left on the old object would
+            // make every press look like silence.
+            [self attachKeyboard:keyboard];
+        }
     }
 }
 
