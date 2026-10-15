@@ -71,16 +71,20 @@ land in the same effort.
 
 ## Phase 2 - Classify every delta: layer / replace / patch / drop / platform-owned
 
-7. One row per changed path in `docs/LAYER_DELTAS.md`. **partial** - all 29 contested
-   paths have a class, but three rows still need the diff checked before the class is
-   final: `translation/AKSupport/AKSupport.{h,m}` (patch only if the diff is small),
-   `translation/AppKit/AppKit.h`, `translation/AppKit/ldflags`. The platform-owned
-   decisions are made but not executed: our `translation/IOKit/{GPUIdentity.h,Registry.m,ldflags}`,
-   `translation/Metal/MetalTrace.m` and `tests/test_gpu_identity.m` are dropped in
-   favour of upstream's maintained versions.
-8. Prefer upstream's newer version where it already covers our intent. **todo** - needs
-   a per-file comparison of upstream's pointer/touch fixes (`f9d1f8b`, `048ed60`,
-   `2ba90b5`) against ours (`c19dbc4`), and of upstream `f54662e` against our `ad3f6c5`.
+7. One row per changed path in `docs/LAYER_DELTAS.md`. **done** - and the set is now
+   measured by content rather than by commit: of the 455 paths we share with
+   `platform/`, only **57 differ** (about 4034 lines; `docs/LAYER_DELTAS.md` has the
+   list and the reproduce recipe). The rows that were still unverified are resolved:
+   `translation/AKSupport/AKSupport.{h,m}`, `translation/AppKit/AppKit.h`,
+   `translation/IOKit/{GPUIdentity.h,Registry.m,ldflags}`, `translation/Metal/MetalTrace.m`
+   and `tests/test_gpu_identity.m` are already byte-identical to the pin, so those
+   "drop ours" decisions are no-ops. Only `translation/AppKit/ldflags` needs a patch,
+   and it is one line.
+8. Prefer upstream's newer version where it already covers our intent. **todo** - the
+   comparison list is now precise: the 57 paths in `docs/LAYER_DELTAS.md`, of which the
+   platform-code ones are `translation/` 6, `authorization/` 5 and `runtime/` 4. The
+   same-title pairs to resolve first are upstream `f9d1f8b`/`048ed60`/`2ba90b5` against
+   our `c19dbc4`, and upstream `f54662e` against our `ad3f6c5`.
 9. Delete branding-only deltas instead of carrying them. **todo**.
 
 ## Phase 3 - Build the Wolkara project on a prepared tree
