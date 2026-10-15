@@ -101,7 +101,29 @@ else
     fi
 fi
 
-# 5. The layer's modules stay independent: WoW must not reach into Touch, or the other
+# 5. Every replacement must really be ours. A file we never changed must not take a
+#    platform path: overlaying it would silently drop whatever upstream has done to
+#    theirs since the split. This is the mistake this check exists to prevent.
+base=$(git merge-base upstream/main HEAD 2>/dev/null)
+if [ -z "$base" ]; then
+    notice "no merge base with upstream/main: the replacement check cannot run"
+else
+    unchanged=""
+    while read -r src dst intent; do
+        [ "$intent" = replace ] || continue
+        if git cat-file -e "$base:$dst" 2>/dev/null && cmp -s "$src" <(git show "$base:$dst"); then
+            unchanged="$unchanged $dst"
+        fi
+    done < <(awk '!/^#/ && NF==3' "$map")
+    if [ -n "$unchanged" ]; then
+        bad "these replacements are identical to the pre-split base, so we never changed them - take upstream's instead:"
+        printf '     %s\n' $unchanged
+    else
+        ok "every replacement is a change of ours"
+    fi
+fi
+
+# 6. The layer's modules stay independent: WoW must not reach into Touch, or the other
 #    way round. Shared needs go through Bridge.
 reach=$(grep -REl '#(import|include) +[<"](Touch|Fonts|TouchGamepad|TouchHaptics)' wolkara/WoW 2>/dev/null | head -3)
 [ -z "$reach" ] || bad "wolkara/WoW reaches into wolkara/Touch: use wolkara/Bridge"
@@ -110,7 +132,7 @@ reach=$(grep -REl '#(import|include) +[<"](CASC|Client|Updater|Addon|Manifest|In
 [ -z "$reach" ] || bad "wolkara/Touch reaches into wolkara/WoW: use wolkara/Bridge"
 [ -n "$reach" ] || ok "no cross-module reach-in from Touch into WoW"
 
-# 6. The root does not duplicate the platform any more. Documents, profiles and the
+# 7. The root does not duplicate the platform any more. Documents, profiles and the
 #    layer itself are ours; anything else outside platform/ must have nothing to do
 #    with the platform's paths.
 dupes=$(git ls-files | grep -v -e '^platform/' -e '^wolkara/' -e '^development/' -e '^docs/' -e '^profiles/' -e '^\.github/' \
