@@ -17,9 +17,13 @@ cd build/platform
 # XCODE_XCCONFIG_FILE pins the layout the platform's script expects without touching that
 # script, and does the same on a machine with no such override.
 location=$(mktemp -t wolkara-location)
-cat > "$location" <<'XCCONFIG'
-SYMROOT = $(SRCROOT)/build/device/Build/Products
-OBJROOT = $(SRCROOT)/build/device/Build/Intermediates.noindex
+# Absolute, not $(SRCROOT): the Swift package is a project of its own, so a path relative
+# to the source root resolves differently inside it and its products end up in its own
+# checkout, where the app's compiler cannot find them. One shared products directory is
+# also the layout Xcode uses by default.
+cat > "$location" <<XCCONFIG
+SYMROOT = $PWD/build/device/Build/Products
+OBJROOT = $PWD/build/device/Build/Intermediates.noindex
 XCCONFIG
 export XCODE_XCCONFIG_FILE="$location"
 
