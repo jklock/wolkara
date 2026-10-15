@@ -233,7 +233,50 @@ version — and Apple lists the GameSir X3, not the G7 Pro. On macOS that meant 
 pad was ignored until patched. Here it appeared as `GCXboxGamepad` on its own, so
 iPadOS 27 accepts it as it is.
 
-### Closed by measurement
+### Why macOS can see Share and iPadOS cannot
+
+On macOS the pad is *also* a raw HID device, and any app may open it:
+
+- Apple's own Game Controller documentation assumes exactly that mix. It publishes
+  `class func supportsHIDDevice(_ device: IOHIDDevice) -> Bool`, whose discussion
+  says *"if the Game Controller framework supports the input device, you can use
+  the Game Controller APIs to interact with the device instead of the IOKit
+  APIs"* — the framework is designed to sit beside IOKit HID, not instead of it.
+- It also publishes `kIOHIDGCSyntheticDeviceKey` for use with **IOHIDManager** and
+  **IOServiceGetMatchingServices**, telling apps how to filter the framework's own
+  synthetic devices out of a HID search. You only need that if you are running
+  such a search.
+- `GCControllerLiveInput.capture()` returns a snapshot of the physical device's
+  inputs, device-level rather than profile-level.
+
+That is the door macOS userspace tools walk through, and it is the whole
+difference: `IOHIDManager` discovers, **grabs (seizes)** and reads any HID device,
+so a remapper can be handed the pad's PrintScreen usage and re-emit it as whatever
+it likes.
+
+- On macOS and Windows the tools that do this are ordinary applications: Steam
+  Input's "Enable Steam Input for Generic Gamepads" — which **GameSir's own FAQ
+  recommends for this exact pad in HID mode** — plus reWASD, ControllerMate, the
+  macOS installer written for this pad, and general remappers such as `keymapper`,
+  whose macOS daemon *"uses IOKit's IOHIDManager to discover, grab (seize), and
+  read events from physical input devices"*.
+- This is why Share works there: something with raw access sees the keyboard usage
+  the pad sends and turns it into an action. It was never a gamepad button.
+
+On iPadOS that door does not exist. Apps receive **only** the Game Controller
+framework; there is no public IOKit HID, no device seizure, no re-emission. The
+developer community's own answer to "is there an IOHIDManager equivalent on iOS?"
+is the MFi program, which is a hardware programme, not an API. The only remapping
+iPadOS offers is its own controller-customisation settings, which permute buttons
+the framework has already recognised — it cannot discover a usage the framework
+never surfaced, which is precisely Share's and Home's situation.
+
+**So on iPad the answer to "how is this solved elsewhere" is: it isn't.** Nothing
+in the platform can expose those two buttons. The only lever left is the one on
+the pad itself — its own firmware mapping — which changes what the pad *sends*
+instead of trying to read more than iPadOS gives out. That is why mapping a back
+button onto `L3`/`R3` is the route, and not a workaround.
+
 
 - **Share.** Pressed repeatedly in the Android Bluetooth descriptor: **0 keys
   reached the host boundary and 0 reached the game**, and the element list never
