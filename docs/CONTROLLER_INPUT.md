@@ -194,6 +194,45 @@ Consequence for the trigger, given Share and the paddles are unavailable:
 3. **`Button Home`** is in the list, and iPadOS usually keeps it for itself —
    worth exactly one test before ruling it out.
 
+### Why Share works on macOS and not here, and the undocumented mode
+
+A reverse-engineering write-up of this exact pad
+(`arcataroger/gamesir-g7-pro-bluetooth-for-macos`) documents what the G7 Pro's
+Bluetooth mode actually sends, and it explains every dead button:
+
+- The pad's Bluetooth mode **is its Android mode**, and it presents a **composite
+  HID device**: a Consumer Control collection first, then gamepad, keyboard and
+  mouse collections.
+- **Share is sent as a keyboard PrintScreen keystroke**, not as a gamepad button —
+  *"which no game sees as a gamepad button"*. That is why it works on macOS, where
+  it arrives as an ordinary key, and why no `Button Share` element exists here.
+- **The Xbox button is sent as a Consumer Control "AC Home" key**, which the OS
+  keeps for itself as the system button. That is why pressing it produced nothing
+  at all in our capture.
+- **The back buttons L4/R4/L5/R5 mirror other buttons** in this mode, and *"only
+  GameSir's own software can reassign them, and that software runs on Windows
+  only for now"* — consistent with the pad's own mapping sequence being the route
+  for those.
+
+And the finding worth acting on: **the pad has an undocumented real Xbox
+Bluetooth mode.** The write-up credits a Reddit post for it, and the steps are:
+
+1. Set the mode switch to Bluetooth.
+2. Hold the pairing button until the Xbox light blinks and swirls.
+3. **Hold B and the Xbox button together for about five seconds** — the light goes
+   out for a second and comes back on.
+4. Finish pairing. macOS then lists it as an Xbox controller, rumble included.
+
+If that mode also changes what iPadOS reports, `Button Share` could become a real
+element here — which would be the ideal trigger, since the game cannot bind it and
+our inspector already releases it from the system gesture.
+
+The write-up also notes Apple's daemon `gamecontrollerd` adopts a third-party HID
+pad only when its database lists the pad's vendor ID, product ID and firmware
+version — and Apple lists the GameSir X3, not the G7 Pro. On macOS that meant the
+pad was ignored until patched. Here it appeared as `GCXboxGamepad` on its own, so
+iPadOS 27 accepts it as it is.
+
 ### The pad maps its own extra buttons — no software needed
 
 GameSir's manual for the G7 Pro documents on-pad mapping, so GameSir Nexus (which
