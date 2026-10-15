@@ -136,6 +136,50 @@ while read -r f; do
 done < /tmp/shared.txt
 ```
 
+## Progress: seven patches, six paths that need nothing (2026-10-15)
+
+Every delta was worked through by merging our changes onto the pin (base = `05035cc`,
+ours = `HEAD`, theirs = `HEAD:platform`), never by diffing our file against the pin:
+our copies predate upstream's newer edits to the same files, so a plain diff would
+have reverted those edits instead of expressing our change.
+
+Seven patches now carry the platform-side changes, and the platform suite in the
+prepared tree is green: 59 PASS plus the one accepted codesign failure, with the
+generic builds linking.
+
+| Patch | Paths | Why |
+| --- | --- | --- |
+| 0001 | `tests/test_bc_textures.m` | BC7's reserved mode has no defined decode, so it cannot be compared; `off` now really measures instead of printing PASS |
+| 0002 | `translation/Metal/BCTextures.m` | log the host's BC capability once per run |
+| 0003 | `runtime/GuestFixups.c`, `tests/test_fixups.c` | a rebase program may end exactly at `rebase_size` with no DONE opcode |
+| 0004 | `runtime/GuestStubs.m` | write down why an existing class wins, and the NSFont trap that follows |
+| 0005 | `translation/CoreAudio/Hardware.m` | keep the audio session alive across an app switch |
+| 0006 | `authorization/App/LocalAuthorization.{h,m}` | retry the local service when its first connection fails |
+| 0007 | `authorization/Tunnel/LocalPacketProvider.m`, `PacketServiceProbe.swift` | retire a failed probe, keeping the old tuple reserved |
+
+Six paths in the list above need no work, because our copy is already upstream's:
+
+| Path | Why nothing is needed |
+| --- | --- |
+| `runtime/NativeGuest.h`, `runtime/NativeGuest.m` | upstream already carries our changes |
+| `tests/test_app_library.m`, `tests/test_profile.py` | the same |
+| `translation/Metal/Devices.m` | our copy only *removed* upstream's BC fallback install; taking upstream's restores it, and the layer installs the background pacing itself |
+| `translation/AppKit/ldflags` | the AKFont alias is a build setting of whatever compiles the adapter: the platform's generic builds have no AKFont, and aliasing it there breaks their link (measured: two link errors) |
+
+Of what is left, ten paths are carried by the patches above, three are the Phase 3
+files, and the rest are our own content - root documents, profiles, tools, the
+launcher shell and our tests - which moves into the layer or stays at the root.
+
+Deliberately left for Phase 3: `translation/AppKit/AppKit.m` and
+`translation/AppKit/TouchControls.{h,m}`. Our AppKit delta is 21 hunks and about 200
+lines mixing NSView emulation (autoresizing masks, subview ordering, `setHidden:`),
+the touch host wiring, dictation Replace, pointer handling and diagnostics - while
+upstream has since rewritten its own touch controls and installs them through an API
+our class already provides (`+enabled`, `trackpadEnabled`, `cancelTouches`,
+`processTouches:withEvent:`, `AKTouchControlsDelegate`). The patch has to be derived
+against the layer's TouchControls API, which Phase 3 creates; deriving it first would
+mean writing it twice.
+
 ## Contested at commit level: 29 paths and their class
 
 These are the paths *commits* on both sides touched. Being touched by both is not the
@@ -147,7 +191,7 @@ same as differing now - see "The measured delta set" below for what actually dif
 | `launcher/App/main.m` | replace | The layer supplies the Wolkara app shell; the platform's entry point stays for platform builds |
 | `launcher/App/ExecutionMode.h`, `ExecutionMode.m` | replace | Our shell owns mode glue and branding; upstream's version serves platform builds |
 | `launcher/Info.plist` | layer | Our branded plist, with `UIBackgroundModes: [audio]` and the microphone usage string; the platform's stays under `platform/` |
-| `translation/AppKit/AppKit.m` | patch | Touch-controls install, the Control+Option+D trigger in `postKeys:down:`, occlusion reporting in `ak_becameActive:`/`ak_resignedActive:` |
+| `translation/AppKit/AppKit.m` | patch | Touch-controls install, the Control+Option+D trigger in `postKeys:down:`, occlusion reporting in `ak_becameActive:`/`ak_resignedActive:`. **Re-derived in Phase 3** - see "Progress: seven patches" above for why, and for what upstream's rewritten version already gives us |
 | `translation/AppKit/AppKit.h` | platform-owned | Measured 2026-10-15: our copy is byte-identical to the pin, so there is nothing to patch |
 | `translation/AppKit/TouchControls.h`, `TouchControls.m` | replace | The layer's own touch/keyboard/dictation module is compiled instead of the platform's |
 | `translation/AKSupport/AKSupport.h`, `AKSupport.m` | platform-owned | Measured 2026-10-15: byte-identical to the pin, so there is nothing to patch |
@@ -170,7 +214,7 @@ same as differing now - see "The measured delta set" below for what actually dif
 | `authorization/App/LocalAuthorization.h`, `LocalAuthorization.m`, `authorization/Tunnel/LocalPacketProvider.m`, `authorization/Tunnel/PacketServiceProbe.swift` | patch | LocalServiceRetry wiring - a good upstream contribution candidate |
 | `launcher/Info.plist` | layer | Branded plist with `UIBackgroundModes: [audio]` and the microphone string |
 | `tools/generate.sh`, `tools/install.sh`, `tools/package_ipa.sh`, `tools/test_touch_controls_ui.sh` | layer | The layer's own wrapper scripts under `wolkara/tools/` |
-| `translation/AppKit/ldflags` | patch | Re-export additions the layer's files need |
+| `translation/AppKit/ldflags` | layer | The AKFont alias is a build setting for the target that compiles the adapter, not a platform change: the platform's own generic builds carry no AKFont and fail to link if it is aliased there |
 | `LICENSE` | layer | Our notice; the platform's stays under `platform/` |
 | `tests/test_fixups.c` | patch | Follows the runtime delta |
 

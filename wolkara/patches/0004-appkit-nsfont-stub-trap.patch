@@ -1,0 +1,31 @@
+# Wolkara layer patch 0004 - runtime: write down why an existing class wins
+#
+# Why: objc_getClass lets an existing class win, which is right for real Foundation,
+# TextKit and UIKit classes, but it is a trap for a name AppKit shares with a private
+# UIKit class of a different shape. Messaging that private class is how
+# +[NSFont messageFontOfSize:] (UIFoundation NSFont) took a launch down. The comment
+# records the rule where the stub class is chosen.
+#
+# Note: the link-time alias for the adapter own NSFont is a build setting of whatever
+# compiles the adapter, not a platform change: the platform generic builds have no
+# such class, and aliasing it there breaks their link.
+# Applies to: runtime/GuestStubs.m
+# Upstream: candidate (not submitted).
+#
+diff --git a/runtime/GuestStubs.m b/runtime/GuestStubs.m
+index c77e7fb..f1a88c3 100644
+--- a/runtime/GuestStubs.m
++++ b/runtime/GuestStubs.m
+@@ -92,6 +92,12 @@ static void stub_forward(id self, SEL command, NSInvocation *invocation) {
+ 
+ static Class stub_class(const char *name) {
+     Class existing = objc_getClass(name);
++    // An existing class wins, which is what real Foundation, TextKit and UIKit
++    // classes want. It is a trap for a name AppKit shares with a private UIKit
++    // class of a different shape: the guest then messages the private class,
++    // which is how +[NSFont messageFontOfSize:] (UIFoundation's NSFont) took a
++    // launch down. Implement those in the AppKit adapter and alias the symbol at
++    // link time, as translation/AppKit/ldflags does for NSColor.
+     if (existing) return existing;
+     // The support library has this where the build carries it.
+     Class inherited = objc_getClass("AKStubObject");
