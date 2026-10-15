@@ -13,17 +13,19 @@ Start with `PLAN.md` for the end-to-end plan and its per-step status.
 | --- | --- | --- |
 | `platform/` | upstream | The whole tolkara tree, vendored, byte-identical to `upstream/main` (`00a8501`). Never edited by hand - a change here is a patch instead. |
 | `wolkara/patches/` | us | Small brand-free patches against `platform/`. Each one is an upstream candidate and carries why it exists. |
-| `wolkara/tools/` | us | `prepare.sh` builds the tree we compile; `check_layers.sh` is the gate for the whole split. |
-| `wolkara/{Shell,WoW,Touch,Bridge}/` | us | Our features, one module per feature. **Not created yet** (Phase 3). |
-| `wolkara/project.yml` | us | The `Wolkara` / `WolkaraDiagnostics` project. **Not created yet** (Phase 3). |
-| the rest of the root | us | Our tools, docs, profiles, `local.env` contract. Currently still holds all of our sources *and* upstream's duplicates. |
+| `wolkara/overlay.map` | us | Which layer file takes which path in the prepared tree, and whether it replaces a platform file or adds a new one. |
+| `wolkara/tools/` | us | `prepare.sh` builds the tree we compile, `check_layers.sh` is the gate, `overlay_map.sh` regenerates the map, and the rest prepare and then run the platform's own build, install, run and test scripts. |
+| `wolkara/{Shell,WoW,Touch,Bridge}/` | us | Our features, one module per feature, reaching the build by overlay. `wolkara/README.md` documents the boundaries. |
+| the rest of the root | us | Our docs, profiles, the `local.env` contract and this `development/` record. No platform source lives here any more. |
 
-Never build from `platform/` directly. Build from the prepared tree, which is a
-pristine export of `platform/` with our patches applied:
+Never build from `platform/` directly. Build from the prepared tree: a pristine export
+of `platform/`, with our patches applied and our files overlaid at the platform's own
+paths, so the platform's own project, shim builder and tests build our app.
 
 ```sh
-wolkara/tools/prepare.sh          # platform/ -> build/platform/, patches applied
+wolkara/tools/prepare.sh          # platform/ -> build/platform/, patched and overlaid
 wolkara/tools/check_layers.sh     # the gate: run this before and after any change
+wolkara/tools/generate.sh         # the app's Xcode project, in build/platform
 ```
 
 `build/` is ignored output, so the prepared tree can be deleted at any time.
@@ -43,30 +45,25 @@ its internals are Wolkara.
 | 0 | Ground truth, pre-split tag, baseline | **done** |
 | 1 | `platform/` vendored + the gate | **done** |
 | 2 | Every delta classified layer / replace / patch / drop | **partial** - classification done and measured; seven patches now carry the platform-side changes and six paths need nothing, so what remains is the branding-delta deletions and the three Phase 3 files |
-| 3 | `wolkara/project.yml`, the modules, the wrappers | **partial** - only `prepare.sh` exists |
+| 3 | The modules, the overlay, the wrappers | **done** - by overlay onto the prepared tree rather than a layer project; `PLAN.md` says why |
 | 4 | Parity on the Mac suites and on Dadpad | **todo** (blocked by 3) |
 | 5 | Ingest upstream through the ritual | **partial** - the pin is already current upstream; arrivals partly verified |
 | 6 | Clean base from the audit | **todo** |
-| 7 | Upstream contribution pipeline | **partial** - 2 patches ready, none submitted |
+| 7 | Upstream contribution pipeline | **partial** - 7 patches ready, none submitted |
 
-**Is Wolkara modularised on top of tolkara yet? No.** The substrate exists (pinned
-platform, patches, gate, prepare step) but not one of our source files has moved
-into a layer module, and the root project still builds `Tolkara` from the root
-sources. Measured on 2026-10-15:
+**Is Wolkara modularised on top of tolkara? Yes, as of 2026-10-15.** Our sources live
+in `wolkara/{Shell,WoW,Touch,Bridge}`, no platform source is duplicated at the root,
+and the platform's own project, shim builder and tests build our app from the prepared
+tree. The one piece still open is the AppKit adapter patch, recorded in
+`wolkara/README.md`. Measured on 2026-10-15, after the move:
 
 | Measure | Count |
 | --- | --- |
-| Tracked files outside `platform/` | 526 |
-| ...whose path also exists in `platform/` (upstream's copies we still carry) | 455 |
-| ...of those, byte-identical to the pinned platform (pure dead weight today) | 398 |
-| ...of those, we actually differ from upstream on (the real delta set) | 57 |
-| ...changed lines across those 57 | ~4034 |
-| ...with no counterpart in `platform/` (layer candidates) | 71 |
-| Files under `wolkara/` | 9 (7 patches, 2 tools) |
-| References to `build/platform` in the root `project.yml` | 0 |
-
-So the split has established *where* our code will live but has not moved it there,
-and it has not yet deleted a single one of the 455 upstream duplicates.
+| Files under `wolkara/` | 80 |
+| Layer files carried by `overlay.map` (12 replace, 52 add) | 64 |
+| Root copies of a platform path (455 before the split; 398 of them byte-identical) | 0 |
+| Patches against the platform | 7 |
+| Tracked files at the root outside `platform/` and `wolkara/` | 46 - `docs/`, `profiles/`, `development/`, `.github/` and the root documents |
 
 ## Files here
 
