@@ -219,6 +219,7 @@ static BOOL hardwareKeyboardAttached(void) {
     AKTrackpad _pad;
     AKTouchHaptics *_haptics;
     AKTouchGamepad *_gamepad;
+    BOOL _claimedPlace;
 }
 
 // The launcher's switch, and the platform's install path, ask this before the
@@ -312,8 +313,30 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
 }
 - (void)buttonTouchDown { [_haptics buttonPressed]; }
 
+// Claim the toolbar's own place: centred at the top, wide enough for its five buttons.
+// The host's constraints for us are collected first and deactivated afterwards, so the
+// list being walked is not the one being changed.
+- (void)claimToolbarPlaceIn:(UIView *)host {
+    if (_claimedPlace || self.superview != host) return;
+    _claimedPlace = YES;
+    NSMutableArray<NSLayoutConstraint *> *theirs = [NSMutableArray array];
+    for (NSLayoutConstraint *constraint in host.constraints)
+        if (constraint.firstItem == self || constraint.secondItem == self)
+            [theirs addObject:constraint];
+    for (NSLayoutConstraint *constraint in theirs) constraint.active = NO;
+    self.translatesAutoresizingMaskIntoConstraints = NO;
+    [NSLayoutConstraint activateConstraints:@[
+        [self.widthAnchor constraintEqualToConstant:200],
+        [self.heightAnchor constraintEqualToConstant:44],
+        [self.topAnchor constraintEqualToAnchor:host.safeAreaLayoutGuide.topAnchor constant:8],
+        [self.centerXAnchor constraintEqualToAnchor:host.safeAreaLayoutGuide.centerXAnchor],
+    ]];
+}
+
+
 - (void)layoutSubviews {
     [super layoutSubviews];
+    if (!_claimedPlace && self.superview) [self claimToolbarPlaceIn:self.superview];
     _trackpadButton.frame = CGRectMake(0, 0, 44, 44);
     _keyboardButton.frame = CGRectMake(52, 0, 44, 44);
     _gamepadButton.frame = CGRectMake(104, 0, 44, 44);
@@ -521,19 +544,11 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
         [_composer.heightAnchor constraintEqualToConstant:82],
     ]];
 
-    // The host may have laid us out the way its own controls were: a pair of small
-    // buttons in a corner. Ours is a toolbar of five, so we take our own place -
-    // drop any constraint the host set for us, then put ourselves at the top - and
-    // we own the gamepad, which the host knows nothing about.
-    for (NSLayoutConstraint *constraint in host.constraints)
-        if (constraint.firstItem == self || constraint.secondItem == self) constraint.active = NO;
-    self.translatesAutoresizingMaskIntoConstraints = NO;
-    [NSLayoutConstraint activateConstraints:@[
-        [self.widthAnchor constraintEqualToConstant:200],
-        [self.heightAnchor constraintEqualToConstant:44],
-        [self.topAnchor constraintEqualToAnchor:host.safeAreaLayoutGuide.topAnchor constant:8],
-        [self.centerXAnchor constraintEqualToAnchor:host.safeAreaLayoutGuide.centerXAnchor],
-    ]];
+    // The host lays us out the way its own controls were: a pair of small buttons in a
+    // corner. Ours is a toolbar of five and belongs centred at the top - the top left is
+    // where a game keeps its own controls. The host activates its own constraints just
+    // after adding us, so the claim is made in layoutSubviews: the first pass that is
+    // known to come after theirs, and a normal time to adjust constraints.
     if (!_gamepad) {
         _gamepad = [[AKTouchGamepad alloc] initWithHostView:host];
         __weak AKTouchControls *weakSelf = self;
