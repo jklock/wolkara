@@ -186,8 +186,11 @@ static id<MTLLibrary> loadLibrary(id receiver,SEL selector,dispatch_data_t data,
 extern void AKInstallMetalPresentationDiagnostics(id<MTLDevice> device);
 extern void AKInstallManagedStorage(Class device);   // opt-in; see ManagedStorage.m
 extern void AKInstallMetalTrace(Class device);       // opt-in; see MetalTrace.m
+extern void AKInstallMetalBackgroundPacing(void);    // see BackgroundPacing.m
 static void addDesktopProperties(id<MTLDevice> device) {
     AKInstallMetalPresentationDiagnostics(device);
+    // Keeps a backgrounded guest inside the system's background CPU budget.
+    AKInstallMetalBackgroundPacing();
     Class cls=object_getClass(device);
     static dispatch_once_t once;
     dispatch_once(&once,^{

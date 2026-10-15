@@ -3,6 +3,22 @@
 #import "TouchTrackpad.h"
 #import "TouchGamepadLayout.h"
 #import "TouchHaptics.h"
+#import <objc/message.h>
+
+NSNotificationName const AKTouchKeyboardRequestNotification = @"AKTouchKeyboardRequestNotification";
+// A software keyboard's keys are several hundred points tall; a keyboard frame
+// this small is the shortcut bar alone, which is what iPadOS shows for a
+// hardware keyboard. Its microphone key is part of the keys that are hidden.
+static CGFloat const AKKeyboardKeysHeight = 150;
+static NSString *const AKComposerDefaultLabel = @"Draft · Replaces the field; empty clears it";
+// GameController's own class, asked by name: this adapter's headers carry a
+// GCKeyboard of their own for the guest.
+static BOOL hardwareKeyboardAttached(void) {
+    Class cls = NSClassFromString(@"GCKeyboard"); if (!cls) return NO;
+    SEL sel = NSSelectorFromString(@"coalescedKeyboard"); if (![cls respondsToSelector:sel]) return NO;
+    id (*call)(id, SEL) = (id (*)(id, SEL))objc_msgSend;
+    return call((id)cls, sel) != nil;
+}
 
 @interface AKTouchControls (KeyboardState)
 - (void)updateKeyboardButton;
@@ -189,7 +205,9 @@
 @implementation AKTouchControls {
     UIButton *_keyboardButton, *_trackpadButton, *_gamepadButton, *_settingsButton;
     UIButton *_insertDraftButton, *_clearDraftButton;
+    UILabel *_composerLabel;
     BOOL _gamepadEnabled, _keyboardRequested, _systemKeyboardSeen;
+    CGFloat _systemKeyboardHeight;
     UIView *_accessory, *_composer;
     NSTimer *_holdTimer;
     AKKeyboardTextView *_keyboardInput;
@@ -266,7 +284,8 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
             name:AKGamepadLayoutDidChangeNotification object:NSUserDefaults.standardUserDefaults];    // Whether the system keyboard (and so its dictation button) exists at all on
     // this device, and whether UIKit is talking to our draft editor when it does.
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(systemKeyboardShown:) name:UIKeyboardDidShowNotification object:nil];
-    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(systemKeyboardHidden:) name:UIKeyboardDidHideNotification object:nil];        [self controlAppearanceChanged:nil];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(systemKeyboardHidden:) name:UIKeyboardDidHideNotification object:nil];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(keyboardRequestedByGuest:) name:AKTouchKeyboardRequestNotification object:nil];        [self controlAppearanceChanged:nil];
     }
     return self;
 }
@@ -322,12 +341,19 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
     BOOL accepted = [_keyboardInput becomeFirstResponder];
     [self updateKeyboardButton];
     // A hardware keyboard hides the software keyboard, and with it the dictation
-    // button. Record it once instead of leaving a keyboard that cannot dictate.
+    // button. Record it once instead of leaving a keyboard that cannot dictate,
+    // and point at the keyboard key when only the shortcut bar is on screen.
     __weak AKTouchControls *weakSelf = self;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         AKTouchControls *controls = weakSelf;
-        if (controls && !controls->_systemKeyboardSeen && controls.keyboardVisible)
+        if (!controls || !controls.keyboardVisible) return;
+        AKLog(@"hardware keyboard %@", hardwareKeyboardAttached() ? @"attached" : @"absent");
+        if (!controls->_systemKeyboardSeen) {
             AKLog(@"software keyboard did not appear (hardware keyboard attached?); it carries the dictation button");
+        } else if (controls->_systemKeyboardHeight < AKKeyboardKeysHeight) {
+            AKLog(@"software keyboard keys are not on screen (height %.0f, hardware keyboard attached?); pressing the keyboard key shows them", controls->_systemKeyboardHeight);
+            controls->_composerLabel.text = @"Draft · Press the keyboard key (⌘K) for the keyboard's microphone; a hardware keyboard hides it";
+        }
     });
     return accepted;
 }
@@ -410,8 +436,8 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
     _composer.backgroundColor = [UIColor colorWithWhite:0.08 alpha:0.98];
     _composer.layer.cornerRadius = 12;
     _composer.layer.zPosition = self.layer.zPosition;
-    UILabel *label = [UILabel new];
-    label.text = @"Draft · Replaces the field; empty clears it";
+    UILabel *label = _composerLabel = [UILabel new];
+    label.text = AKComposerDefaultLabel;
     label.font = [UIFont systemFontOfSize:12];
     label.textColor = UIColor.lightGrayColor;
     label.adjustsFontSizeToFitWidth = YES;
@@ -507,13 +533,25 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
     AKLog(@"input suspended (draftFirstResponder=%d)", _keyboardInput.isFirstResponder);
 }
 - (void)systemKeyboardShown:(NSNotification *)notification {
-    (void)notification;
+    NSValue *frame = notification.userInfo[UIKeyboardFrameEndUserInfoKey];
+    _systemKeyboardHeight = [frame CGRectValue].size.height;
     _systemKeyboardSeen = YES;
-    AKLog(@"system keyboard shown draftFirstResponder=%d markedText=%d", _keyboardInput.isFirstResponder, _keyboardInput.markedTextRange != nil);
+    // With the keys on screen the microphone is one tap away again.
+    if (_systemKeyboardHeight >= AKKeyboardKeysHeight) _composerLabel.text = AKComposerDefaultLabel;
+    AKLog(@"system keyboard shown draftFirstResponder=%d markedText=%d height=%.0f", _keyboardInput.isFirstResponder, _keyboardInput.markedTextRange != nil, _systemKeyboardHeight);
 }
 - (void)systemKeyboardHidden:(NSNotification *)notification {
     (void)notification;
+    _systemKeyboardHeight = 0;
     AKLog(@"system keyboard hidden draftFirstResponder=%d", _keyboardInput.isFirstResponder);
+}
+// A game macro or key combination asked for the draft keyboard: open it so the
+// iOS keyboard (and its microphone) is one tap away. Never closes an open one.
+- (void)keyboardRequestedByGuest:(NSNotification *)notification {
+    (void)notification;
+    [self cancelTouches];
+    AKLog(@"draft keyboard requested from the guest");
+    if (!self.keyboardVisible) [self becomeFirstResponder];
 }
 - (void)backgroundInput:(NSNotification *)notification {
     [self suspendInput:notification];

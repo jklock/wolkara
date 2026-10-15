@@ -1,5 +1,9 @@
 #import <UIKit/UIKit.h>
 
+// Posted when the guest asks for the draft keyboard - the AppKit adapter's
+// dictation trigger, a key combination the game itself never sees.
+extern NSNotificationName const AKTouchKeyboardRequestNotification;
+
 @protocol AKTouchControlsDelegate <NSObject>
 - (void)touchMoveBy:(CGPoint)delta;
 - (void)touchScrollBy:(CGPoint)delta;
