@@ -233,6 +233,30 @@ version — and Apple lists the GameSir X3, not the G7 Pro. On macOS that meant 
 pad was ignored until patched. Here it appeared as `GCXboxGamepad` on its own, so
 iPadOS 27 accepts it as it is.
 
+### Closed by measurement
+
+- **Share.** Pressed repeatedly in the Android Bluetooth descriptor: **0 keys
+  reached the host boundary and 0 reached the game**, and the element list never
+  gained a Share entry. The hidden Xbox Bluetooth mode (B + Xbox ~5 s during
+  pairing, then pair) was tried on the iPad and **changed nothing**: the pad pairs
+  with the same Android descriptor and `share=absent` again. macOS can read the
+  pad's raw HID device directly, which is the whole difference; iPadOS offers no
+  such door, and Share exists only as a keyboard PrintScreen usage inside a
+  compound descriptor that iPadOS does not route anywhere.
+- **Home / Xbox.** A Consumer Control "AC Home" key, held by the system. It is
+  declared (`Button Home` appears in the element list) but never delivered.
+- **The four extra buttons.** Null inputs until mapped, and mapping can only
+  duplicate a standard button.
+- **Chords.** Not free: the game's own guide documents modifier combinations
+  (LB + RB + L3 among them), so a chord is not automatically collision-free —
+  and Share + Menu is the pad's own input-mode toggle, which a trigger must not
+  collide with either.
+- **What is left, measured working:** every standard input, including
+  `Left Thumbstick Button` and `Right Thumbstick Button` (L3/R3), which arrive
+  cleanly as presses. A back button mapped onto one of them is a dedicated
+  physical trigger.
+
+
 ### The pad maps its own extra buttons — no software needed
 
 GameSir's manual for the G7 Pro documents on-pad mapping, so GameSir Nexus (which
