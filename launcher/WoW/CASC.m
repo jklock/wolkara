@@ -237,6 +237,21 @@ BOOL TKWoWCASCCloneVerification(NSDictionary *snapshot,NSString *source,NSString
     if(![NSFileManager.defaultManager fileExistsAtPath:destination])return YES;
     return WriteVerification(@{@"version":@1,@"segments":segments,@"buckets":buckets},destination,error);
 }}
+// One local index file's rows, or nil with the reason. Opening the store and
+// repairing a generation both come through here, so they agree on validity.
+static NSData *LocalIndexEntries(NSData *data, unsigned bucket, NSError **error) {
+    const uint8_t *p=data.bytes;
+    if(data.length<40 || data.length>64*1024*1024 || LE(p,4)!=16 || LE(p+8,2)!=7 || p[10]!=bucket || p[12]!=4 || p[13]!=5 || p[14]!=9 || p[15]!=30 || TKWoWJenkins(p+8,16,NULL,0)!=LE(p+4,4)) { Fail(error,@"Unsupported or damaged local CASC index."); return nil; }
+    NSUInteger size=(NSUInteger)LE(p+32,4);
+    if(size%18 || size>data.length-40) { Fail(error,@"Truncated local CASC index."); return nil; }
+    uint32_t high=0,low=0;
+    for(NSUInteger i=0;i<size;i+=18) {
+        high=TKWoWJenkins(p+40+i,18,&low,high);
+        if(i && memcmp(p+40+i-18,p+40+i,9)>0) { Fail(error,@"Unsorted or conflicting local CASC index."); return nil; }
+    }
+    if(high!=LE(p+36,4)) { Fail(error,@"Local CASC index checksum mismatch."); return nil; }
+    return [NSData dataWithBytes:p+40 length:size];
+}
 @implementation TKWoWCASCStore {
     NSString *_directory;
     NSMutableArray<NSMutableData *> *_buckets;
@@ -265,16 +280,8 @@ BOOL TKWoWCASCCloneVerification(NSDictionary *snapshot,NSString *source,NSString
         NSMutableData *entries=[NSMutableData new]; NSString *name=latest[@(bucket)];
         if(name) {
             NSData *data=[NSData dataWithContentsOfFile:[directory stringByAppendingPathComponent:name] options:NSDataReadingMappedIfSafe error:error];
-            const uint8_t *p=data.bytes;
-            if(data.length<40 || data.length>64*1024*1024 || LE(p,4)!=16 || LE(p+8,2)!=7 || p[10]!=bucket || p[12]!=4 || p[13]!=5 || p[14]!=9 || p[15]!=30 || TKWoWJenkins(p+8,16,NULL,0)!=LE(p+4,4))return Fail(error,@"Unsupported or damaged local CASC index.");
-            NSUInteger size=(NSUInteger)LE(p+32,4); if(size%18 || size>data.length-40)return Fail(error,@"Truncated local CASC index.");
-            uint32_t high=0,low=0;
-            for(NSUInteger i=0;i<size;i+=18) {
-                high=TKWoWJenkins(p+40+i,18,&low,high);
-                if(i && memcmp(p+40+i-18,p+40+i,9)>0) return Fail(error,@"Unsorted or conflicting local CASC index.");
-            }
-            if(high!=LE(p+36,4))return Fail(error,@"Local CASC index checksum mismatch.");
-            [entries appendBytes:p+40 length:size];
+            NSData *rows=LocalIndexEntries(data,bucket,error); if(!rows)return nil;
+            [entries appendData:rows];
         }
         [_buckets addObject:entries];
     }
@@ -472,3 +479,53 @@ BOOL TKWoWCASCCloneVerification(NSDictionary *snapshot,NSString *source,NSString
     return YES;
 }
 @end
+
+// The client's own index commit can leave a truncated generation behind — a bare
+// header, or a header with no rows — and it then refuses to bind that mapping
+// table ("Truncated updated section in KMT file", then "needs repair"), so the
+// next launch shows the client's alert and exits. Rewrite each bucket's newest
+// generation from the newest generation that validates and carries rows, keeping
+// the name the client already prefers, and drop its leftover index temp files.
+NSArray<NSString *> *TKWoWCASCRepairIndexGenerations(NSString *directory) {
+    NSMutableArray<NSString *> *lines=[NSMutableArray new];
+    NSArray<NSString *> *names=[NSFileManager.defaultManager contentsOfDirectoryAtPath:directory error:NULL];
+    if(!names.count)return lines;
+    NSCharacterSet *hexDigits=[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdef"];
+    NSMutableArray<NSString *> *generations[16], *temps=[NSMutableArray new];
+    for(unsigned bucket=0;bucket<16;bucket++)generations[bucket]=[NSMutableArray new];
+    for(NSString *name in names) {
+        if(name.length==14 && [name hasSuffix:@"tempfile.idx"]) {
+            NSString *bucketText=[name substringToIndex:2];
+            if([bucketText rangeOfCharacterFromSet:hexDigits.invertedSet].location==NSNotFound)[temps addObject:name];
+            continue;
+        }
+        if(name.length!=14 || ![name hasSuffix:@".idx"])continue;
+        NSString *hex=[name substringToIndex:10];
+        if([hex rangeOfCharacterFromSet:hexDigits.invertedSet].location!=NSNotFound)continue;
+        unsigned bucket=(unsigned)strtoul([[hex substringToIndex:2] UTF8String],NULL,16);
+        if(bucket<16)[generations[bucket] addObject:name];
+    }
+    for(unsigned bucket=0;bucket<16;bucket++) {
+        NSArray<NSString *> *candidates=[generations[bucket] sortedArrayUsingComparator:^NSComparisonResult(NSString *a,NSString *b){
+            uint32_t x=(uint32_t)strtoul([[a substringWithRange:NSMakeRange(2,8)] UTF8String],NULL,16);
+            uint32_t y=(uint32_t)strtoul([[b substringWithRange:NSMakeRange(2,8)] UTF8String],NULL,16);
+            return x>y?NSOrderedAscending:(x<y?NSOrderedDescending:NSOrderedSame);
+        }];
+        if(!candidates.count)continue;
+        NSData *newest=[NSData dataWithContentsOfFile:[directory stringByAppendingPathComponent:candidates.firstObject] options:0 error:NULL];
+        if(LocalIndexEntries(newest,bucket,NULL).length)continue;
+        NSString *source=nil; NSData *valid=nil;
+        for(NSString *candidate in candidates) {
+            NSData *contents=[NSData dataWithContentsOfFile:[directory stringByAppendingPathComponent:candidate] options:0 error:NULL];
+            if(LocalIndexEntries(contents,bucket,NULL).length) { source=candidate; valid=contents; break; }
+        }
+        if(!valid) { [lines addObject:[NSString stringWithFormat:@"CASC index bucket %u has no usable generation (%@ is truncated); an update or repair is required.",bucket,candidates.firstObject]]; continue; }
+        if([valid writeToFile:[directory stringByAppendingPathComponent:candidates.firstObject] options:NSDataWritingAtomic error:NULL])
+            [lines addObject:[NSString stringWithFormat:@"CASC index %@ was truncated; rewrote it from %@.",candidates.firstObject,source]];
+        else
+            [lines addObject:[NSString stringWithFormat:@"CASC index %@ is truncated and could not be rewritten.",candidates.firstObject]];
+    }
+    for(NSString *name in temps) if([NSFileManager.defaultManager removeItemAtPath:[directory stringByAppendingPathComponent:name] error:NULL])
+        [lines addObject:[NSString stringWithFormat:@"removed interrupted CASC index temp %@.",name]];
+    return lines;
+}

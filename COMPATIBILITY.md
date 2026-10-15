@@ -247,6 +247,20 @@ to be checked for this failure mode: an interrupted index write must leave the
 container bootable, and older index generations must be kept (or restored) so the
 client can roll back.
 
+The launcher now repairs that state instead of leaving it to a manual copy of the
+index set. The client's own interrupted index commit leaves a truncated
+generation as a bucket's newest, and TACT then refuses to bind that mapping table,
+so the next launch aborts with the client's own alert. Before the guest runs,
+`runNativeGame:` rewrites each bucket's newest generation from the newest
+generation that validates and carries rows, using the same validity checks the
+CASC store applies when it opens, and removes the client's leftover
+`<bucket>tempfile.idx` (`TKWoWCASCRepairIndexGenerations`, `launcher/WoW/CASC.m`).
+Verified on Dadpad by planting the exact damage and launching three times in a
+row: each launch from a planted truncated generation (buckets `0b` and `0c`) logged
+the rewrite and reached the client's intro cinematic with no TACT error and no
+NeedsRepair, and a fourth relaunch after killing a running session needed no
+repair at all.
+
 The Metal adapter no longer references a `BCTextures.m` fallback. That file never
 existed in the repository, and clean shim builds failed to link on the dangling
 `AKInstallBCTextureFallback` symbol (see
