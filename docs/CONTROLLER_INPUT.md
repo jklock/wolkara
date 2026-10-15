@@ -148,3 +148,61 @@ against observed events, and gaps in that table are findings too.
 - Tolkara stays byte-identical: the guest-side change is patch `0012`.
 - The inspector is a diagnostic. Nothing is enabled for the user by default, and
   nothing appears on screen during normal play.
+
+## Measured on the device, 2026-10-15
+
+Pad: GameSir G7 Pro, paired over Bluetooth. iPadOS reports it as **"Xbox
+Bluetooth Gamepad"**, category `Xbox One`, profile `GCXboxGamepad`.
+
+Everything the pad declares, in full — **34 elements**:
+
+- **25 buttons**: `Button A`, `Button B`, `Button X`, `Button Y`;
+  `Left Shoulder`, `Right Shoulder`; `Left Trigger`, `Right Trigger` (both
+  `[analog]`); `Left Thumbstick Button`, `Right Thumbstick Button`; `Button
+  Menu`, `Button Options`, `Button Home`; `Direction Pad Up/Down/Left/Right`;
+  and eight stick-direction buttons — `Left/Right Thumbstick Up/Down/Left/Right`,
+  all `[analog]`.
+- **6 axes**: `Left/Right Thumbstick X/Y Axis`, `Direction Pad X/Y Axis`.
+- **3 d-pads**: `Left Thumbstick`, `Right Thumbstick`, `Direction Pad`.
+
+What is *not* there, which is the answer to the two dead buttons:
+
+- **`Button Share` is absent**, and so are paddles (`xbox paddles=none`,
+  `share=absent`). The pad's firmware never declares Share or any back button to
+  iPadOS, so no app can see them — and neither can the game. That is why Share
+  and the extra top button do nothing. They can only be useful if GameSir's own
+  software remaps them onto a standard input.
+- No touchpad and no motion element are declared either.
+
+Presses, live, as they happened: `Button Options`, `Button Menu`, `Button Y`,
+`Button B`, `Button A` — each reported twice, press then release, with
+timestamps. Reading the pad in real time works.
+
+What the game received from those same presses: **nothing**. Zero key deliveries.
+
+That settles the mapping question. A pad press does **not** reach the game as a
+keystroke: the game reads the controller itself, and any button-to-action mapping
+happens inside its own code, where nothing outside it can see or hook it. Our
+layer sees the pad directly, and that is what a trigger needs.
+
+Consequence for the trigger, given Share and the paddles are unavailable:
+
+1. **Remap an extra button** in GameSir's own software onto a standard input
+   (L3/R3, for instance). Then it is a real element again and we can watch it.
+2. **A two-button chord** the game cannot have bound, because the Gamepad UI
+   binds single presses only.
+3. **`Button Home`** is in the list, and iPadOS usually keeps it for itself —
+   worth exactly one test before ruling it out.
+
+## Operational notes
+
+- `AKLog` writes to **stderr**, and `Documents/native-guest.log` *is* that
+  stderr, attached in `runNativeGame:` after the game starts. Anything logged
+  before that attachment goes nowhere, which is why the inspector reports its
+  inventory twice.
+- Our module's lines carry an `NSLog`-style prefix rather than the platform's
+  `[ak]` because `AKSupport.h` is not on that module's include path. Cosmetic;
+  the lines land in the same file.
+- The inspector's on-screen panel appears with `--inspect-controller`, and the
+  guest-side key trace needs the same flag.
+
