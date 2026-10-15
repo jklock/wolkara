@@ -140,6 +140,47 @@ On the device, with the interposer off the game's own input path:
 One clean run proves nothing on its own; the output is a table of controls
 against observed events, and gaps in that table are findings too.
 
+## Share, measured step by step
+
+- The pad's Share button is a **Print Screen** key (HID usage 0x46) in this
+  Bluetooth personality, which the reverse-engineering write-up states and
+  everything measured here agrees with.
+- **iPadOS does act on it.** A press takes a screenshot; a hold raises the screen
+  recording gesture, which asked for permission from inside the app. So the
+  button works — the *system* is what spends it.
+- **It never reaches the app as a key.** The window's responder chain is now
+  instrumented (`wolkara/Controller/ControllerWindow.m`), logging every press it
+  is given. Across two captures it saw 42 presses and **zero** of them carried a
+  key: `UIKey` never appeared. The guest-side boundary log (patch 0013) saw none
+  either.
+- Those 42 presses are `UIPressType` values 0–6 — the four D-pad arrows, Select,
+  Menu, PlayPause — plus undocumented values 34 and 35, in a sequence that
+  repeated **byte-identically** across two separate captures. A human cannot
+  reproduce a sequence exactly twice, so that burst is the device or the system
+  enumerating press types, not a person pressing buttons.
+- Apple's own documentation explains the reservation, in `GCXboxGamepad.buttonShare`:
+  *"The system reserves the Share button for screenshot and video recording
+  gestures, which can be disabled by setting the button's `preferredSystemGestureState`
+  to disabled."* That property exists **only on a controller element**, and this
+  pad declares no Share element (`share=absent`, three separate measurements), so
+  there is nothing to set.
+- `UIKeyInputPrintScreen` does not exist, so a key command cannot name the key
+  either. `wantsPriorityOverSystemBehavior` (iOS 15+) is the documented way for an
+  app to beat the system for a key, but it needs an input string to claim.
+
+### The one route left, and its cost
+
+`UIApplicationUserDidTakeScreenshotNotification` (iOS 7+) is documented as
+*"posted after the user takes a screenshot"*. Since Share takes a screenshot,
+that notification is the only signal the system offers for this button, and the
+inspector now watches it and reports `Share (system screenshot)`.
+
+- **If it fires**, Share is a working trigger, and the cost is one screenshot in
+  Photos per use.
+- **If it does not fire** for a controller-driven screenshot, then Share cannot
+  reach an app on iPadOS by any route, and the only remaining fix is the pad
+  declaring Share as a real button — a question for GameSir, not for code.
+
 ## Constraints this respects
 
 - The original executable is never modified, and no application memory is
@@ -232,73 +273,6 @@ pad only when its database lists the pad's vendor ID, product ID and firmware
 version — and Apple lists the GameSir X3, not the G7 Pro. On macOS that meant the
 pad was ignored until patched. Here it appeared as `GCXboxGamepad` on its own, so
 iPadOS 27 accepts it as it is.
-
-### Why macOS can see Share and iPadOS cannot
-
-On macOS the pad is *also* a raw HID device, and any app may open it:
-
-- Apple's own Game Controller documentation assumes exactly that mix. It publishes
-  `class func supportsHIDDevice(_ device: IOHIDDevice) -> Bool`, whose discussion
-  says *"if the Game Controller framework supports the input device, you can use
-  the Game Controller APIs to interact with the device instead of the IOKit
-  APIs"* — the framework is designed to sit beside IOKit HID, not instead of it.
-- It also publishes `kIOHIDGCSyntheticDeviceKey` for use with **IOHIDManager** and
-  **IOServiceGetMatchingServices**, telling apps how to filter the framework's own
-  synthetic devices out of a HID search. You only need that if you are running
-  such a search.
-- `GCControllerLiveInput.capture()` returns a snapshot of the physical device's
-  inputs, device-level rather than profile-level.
-
-That is the door macOS userspace tools walk through, and it is the whole
-difference: `IOHIDManager` discovers, **grabs (seizes)** and reads any HID device,
-so a remapper can be handed the pad's PrintScreen usage and re-emit it as whatever
-it likes.
-
-- On macOS and Windows the tools that do this are ordinary applications: Steam
-  Input's "Enable Steam Input for Generic Gamepads" — which **GameSir's own FAQ
-  recommends for this exact pad in HID mode** — plus reWASD, ControllerMate, the
-  macOS installer written for this pad, and general remappers such as `keymapper`,
-  whose macOS daemon *"uses IOKit's IOHIDManager to discover, grab (seize), and
-  read events from physical input devices"*.
-- This is why Share works there: something with raw access sees the keyboard usage
-  the pad sends and turns it into an action. It was never a gamepad button.
-
-On iPadOS that door does not exist. Apps receive **only** the Game Controller
-framework; there is no public IOKit HID, no device seizure, no re-emission. The
-developer community's own answer to "is there an IOHIDManager equivalent on iOS?"
-is the MFi program, which is a hardware programme, not an API. The only remapping
-iPadOS offers is its own controller-customisation settings, which permute buttons
-the framework has already recognised — it cannot discover a usage the framework
-never surfaced, which is precisely Share's and Home's situation.
-
-**So on iPad the answer to "how is this solved elsewhere" is: it isn't.** Nothing
-in the platform can expose those two buttons. The only lever left is the one on
-the pad itself — its own firmware mapping — which changes what the pad *sends*
-instead of trying to read more than iPadOS gives out. That is why mapping a back
-button onto `L3`/`R3` is the route, and not a workaround.
-
-
-- **Share.** Pressed repeatedly in the Android Bluetooth descriptor: **0 keys
-  reached the host boundary and 0 reached the game**, and the element list never
-  gained a Share entry. The hidden Xbox Bluetooth mode (B + Xbox ~5 s during
-  pairing, then pair) was tried on the iPad and **changed nothing**: the pad pairs
-  with the same Android descriptor and `share=absent` again. macOS can read the
-  pad's raw HID device directly, which is the whole difference; iPadOS offers no
-  such door, and Share exists only as a keyboard PrintScreen usage inside a
-  compound descriptor that iPadOS does not route anywhere.
-- **Home / Xbox.** A Consumer Control "AC Home" key, held by the system. It is
-  declared (`Button Home` appears in the element list) but never delivered.
-- **The four extra buttons.** Null inputs until mapped, and mapping can only
-  duplicate a standard button.
-- **Chords.** Not free: the game's own guide documents modifier combinations
-  (LB + RB + L3 among them), so a chord is not automatically collision-free —
-  and Share + Menu is the pad's own input-mode toggle, which a trigger must not
-  collide with either.
-- **What is left, measured working:** every standard input, including
-  `Left Thumbstick Button` and `Right Thumbstick Button` (L3/R3), which arrive
-  cleanly as presses. A back button mapped onto one of them is a dedicated
-  physical trigger.
-
 
 ### The pad maps its own extra buttons — no software needed
 

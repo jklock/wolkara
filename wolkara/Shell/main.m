@@ -8,6 +8,7 @@
 #import "ExecutionMode.h"
 #import "LibraryViewController.h"
 #import "../Controller/ControllerInspector.h"
+#import "../Controller/ControllerWindow.h"
 #import "../WoW/CASC.h"
 #import "../WoW/WoWViewController.h"
 #import "LaunchProgressView.h"
@@ -218,7 +219,7 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     // Any Local signing launch makes the container folder, so a fresh install
     // can receive containers (tools/install.sh launches once if needed).
     if (self.executionMode==TKExecutionModeLocalSigning) PrepareLocalSigningFolder();
-    self.window = [[UIWindow alloc] initWithWindowScene:(UIWindowScene *)scene];
+    self.window = [[AKControllerWindow alloc] initWithWindowScene:(UIWindowScene *)scene];
     [self reserveExecutableMemory];
     self.library = OpenLibrary();
 #if TOLKARA_INTEGRATED_AUTH
