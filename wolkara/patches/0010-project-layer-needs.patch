@@ -1,0 +1,60 @@
+# Wolkara layer patch 0010 - project: what this product app needs
+#
+# Why: the platform project builds the platform app, and this layer adds an add-on
+# manager that unpacks archives, its own icon and display name, the licence and notice
+# it should carry, and one scheme setting. All of it has to be declared here, because
+# the platform project is what builds our app.
+#
+# Applies to: project.yml
+# Upstream: candidate (not submitted) - the package, the licence resources and the
+# scheme setting are the parts upstream might want for itself.
+#
+diff --git a/project.yml b/project.yml
+index 0d350d7..80f4b01 100644
+--- a/project.yml
++++ b/project.yml
+@@ -2,6 +2,10 @@ name: Tolkara
+ options:
+   bundleIdPrefix: local.tolkara
+   deploymentTarget: { iOS: "17.0" }
++packages:
++  ZIPFoundation:
++    url: https://github.com/weichsel/ZIPFoundation.git
++    revision: 22787ffb59de99e5dc1fbfe80b19c97a904ad48d
+ settings:
+   base:
+     # Signing identity and identifiers come from your ignored local.env through
+@@ -31,6 +35,7 @@ schemes:
+       executable: Tolkara
+       # Guest execution must not keep Xcode's debugger attached.
+       debugEnabled: false
++      enableGPUValidationMode: false
+     management:
+       shared: true
+       isShown: true
+@@ -45,9 +50,14 @@ targetTemplates:
+       - path: runtime
+       # The shader-container rewrap, for the Diagnostics menu's captured-shader check.
+       - path: translation/Metal/LibraryContainer.m
++      - path: LICENSE
++        buildPhase: resources
++      - path: NOTICE.md
++        buildPhase: resources
+     dependencies:
+       - sdk: Security.framework
+       - sdk: libz.tbd
++      - package: ZIPFoundation
+     entitlements:
+       path: launcher/App.entitlements
+       properties:
+@@ -57,8 +67,9 @@ targetTemplates:
+       base:
+         PRODUCT_BUNDLE_IDENTIFIER: $(TOLKARA_BUNDLE_ID)
+         GENERATE_INFOPLIST_FILE: YES
+-        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
++        ASSETCATALOG_COMPILER_APPICON_NAME: Wolkara
+         INFOPLIST_FILE: launcher/Info.plist
++        INFOPLIST_KEY_CFBundleDisplayName: ${TOLKARA_DISPLAY_NAME}
+         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+         INFOPLIST_KEY_UILaunchScreen_Generation: YES
+         INFOPLIST_KEY_UIRequiresFullScreen: NO

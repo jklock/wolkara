@@ -9,4 +9,21 @@ cd "$(dirname "$0")/../.."
 . wolkara/tools/env.sh
 wolkara/tools/prepare.sh
 cd build/platform
+# The platform's script asks xcodebuild for `-derivedDataPath build/device` and then
+# installs from `build/device/Build/Products/Debug-iphoneos/Tolkara.app`. A machine-wide
+# Xcode build location overrides that: this Mac has IDEBuildLocationStyle = Custom with
+# IDECustomDerivedDataLocation = /Volumes/Storage/XCode, so products land there, the build
+# succeeds and the install step finds nothing. An xcconfig handed over through
+# XCODE_XCCONFIG_FILE pins the layout the platform's script expects without touching that
+# script, and does the same on a machine with no such override.
+location=$(mktemp -t wolkara-location)
+cat > "$location" <<'XCCONFIG'
+SYMROOT = $(SRCROOT)/build/device/Build/Products
+OBJROOT = $(SRCROOT)/build/device/Build/Intermediates.noindex
+XCCONFIG
+export XCODE_XCCONFIG_FILE="$location"
+
+# Fetching the Swift package the layer's add-on manager needs happens inside the
+# platform's own script, as patch 0011: it regenerates the project, so a resolution done
+# out here would be stale before the build looked for it.
 exec tools/install.sh "$@"
