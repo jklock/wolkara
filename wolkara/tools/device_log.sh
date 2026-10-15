@@ -6,11 +6,12 @@
 #   lines    how many of the newest matching lines to print (default 40)
 #   pattern  an egrep pattern to filter on (default: everything)
 #
-# The app keeps everything - its own messages, the runtime's and the guest's - in
-# Documents/wolkara.log inside its container (wolkara/Shell/main.m opens it as stderr at
-# start). Fetching it is a file copy, so this can be run as often as wanted while the app
-# keeps running: it is how a device run is watched, and how a failure is read afterwards
-# without attaching a console, which would restart the app and lose the guest's session.
+# The host opens Documents/native-guest.log and hands it to the runtime as the guest's log
+# (platform/launcher/App/main.m, ng_initialize). So that one file carries the host's own
+# lines, the runtime's, and everything the guest application prints - which is why it is
+# the file to read for a device run. Fetching it is a file copy, so this can be run as
+# often as wanted while the app keeps running; it does not attach a console, which would
+# restart the app and lose the guest's session.
 set -eu
 cd "$(dirname "$0")/../.." || exit 2
 
@@ -29,6 +30,7 @@ if [ -z "$bundle" ]; then
 fi
 [ -n "$device" ] || { echo "device_log: set DEVICE in local.env (see local.env.example)" >&2; exit 2; }
 
+logname=native-guest.log
 out=build/device-log
 rm -rf "$out"
 mkdir -p "$out"
@@ -36,13 +38,13 @@ mkdir -p "$out"
 # refuses a directory there.
 if ! xcrun devicectl device copy from --device "$device" \
         --domain-type appDataContainer --domain-identifier "$bundle" \
-        --source Documents/wolkara.log --destination "$out/wolkara.log" > /dev/null 2>&1; then
-    echo "device_log: no log on the device yet - install the app once (wolkara/tools/install.sh),"
-    echo "            then launch it, and the file appears"
+        --source "Documents/$logname" --destination "$out/$logname" > /dev/null 2>&1; then
+    echo "device_log: no $logname on the device yet - install the app (wolkara/tools/install.sh),"
+    echo "            launch it, and start the game; the file appears"
     exit 1
 fi
 
-log="$out/wolkara.log"
+log="$out/$logname"
 [ -f "$log" ] || { echo "device_log: the copy did not produce $log" >&2; exit 1; }
 echo "device_log: $log ($(wc -l < "$log" | tr -d ' ') lines)"
 grep -E -- "$pattern" "$log" | tail -n "$lines"
