@@ -70,3 +70,22 @@ versus 161 of wolkara/Wolkara in 43. The heaviest are `docs/WINDOWS.md` (31),
 - `docs/LAYER_BASELINE.md` recorded the platform BC test's native comparison as an
   accepted abort. Diagnosed and fixed by `wolkara/patches/0001`, verified in the
   prepared tree: see `docs/GPU_SUPPORT.md`.
+- The three UI scripts' `SIMULATOR` default: fixed to `iPad Pro 13-inch (M5)` when the
+  layer's own copies moved to `wolkara/tools/`. The platform's copies are upstream's,
+  and their default is upstream's to set.
+- `launcher/Assets.xcassets/AppIcon.appiconset` (48 unused PNGs): dropped from the layer
+  in Phase 3; the layer ships only `Shell/Assets.xcassets/Wolkara.appiconset`, which is
+  what `ASSETCATALOG_COMPILER_APPICON_NAME: Wolkara` asks for.
+- `AGENTS.md` still named `make_icon.py` for the app icon: fixed. The layer's icon tool
+  is `wolkara/tools/make_wolkara_icon.py`, and the platform's `make_icon.py` stays
+  upstream's under `platform/tools/`.
+
+## Still open
+
+- The doc references that point at the pre-split `tools/` paths, for example
+  `docs/TOUCH_INPUT.md:192` and `docs/WOW_LAUNCHER.md`; the layer's scripts live at
+  `wolkara/tools/` and the platform's at `build/platform/tools/` after
+  `wolkara/tools/prepare.sh`.
+- The touch and gamepad fixtures still block under `simctl launch --console` without
+  `--self-test`, so a headless run of those two can hang.
+- Everything else in this file is unchanged and still open.
