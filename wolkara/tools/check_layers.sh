@@ -48,8 +48,14 @@ else
     git archive HEAD:platform | tar -x -C "$scratch" || bad "cannot export platform/ for the patch check"
     applied=0
     for patch in $patches; do
+        # The scratch tree is outside the repository, so paths resolve against it.
         if git -C "$scratch" apply --check "$root/$patch" 2>/dev/null; then
-            git -C "$scratch" apply "$root/$patch" 2>/dev/null && applied=$((applied + 1))
+            if git -C "$scratch" apply "$root/$patch" 2>/dev/null &&
+               git -C "$scratch" apply --check --reverse "$root/$patch" 2>/dev/null; then
+                applied=$((applied + 1))
+            else
+                bad "$(basename "$patch") applied but changed nothing: does apply silently skip it?"
+            fi
         else
             bad "$(basename "$patch") does not apply to platform/ as pinned"
         fi
