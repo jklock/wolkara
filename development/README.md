@@ -28,6 +28,14 @@ wolkara/tools/check_layers.sh     # the gate: run this before and after any chan
 
 `build/` is ignored output, so the prepared tree can be deleted at any time.
 
+## Scope and naming
+
+The product is a WoW Forever client: WoW Forever (and the classic-era profiles) are
+what we ship for. The display name is moving to **Wolkara Forever**; the bundle ID
+stays as it is (`$(TOLKARA_BUNDLE_ID)`), so installs replace in place and the device
+keeps its data. The platform keeps its own Tolkara names - only the product layer and
+its internals are Wolkara.
+
 ## Status at a glance
 
 | Phase | What it delivers | Status |
