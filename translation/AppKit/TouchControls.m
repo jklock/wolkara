@@ -1,4 +1,5 @@
 #import "TouchControls.h"
+#import "AKSupport.h"
 #import "TouchTrackpad.h"
 #import "TouchGamepadLayout.h"
 #import "TouchHaptics.h"
@@ -7,6 +8,10 @@
 - (void)updateKeyboardButton;
 - (void)updateDraftButtons;
 - (void)replaceGameText:(NSString *)text;
+// YES while the user has asked for the draft keyboard and it has not been
+// dismissed: the draft editor uses it to decide whether to take focus back when
+// a system panel (dictation) has finished with it.
+- (BOOL)keyboardRequested;
 @end
 
 // A normal, visible UIKit document. Editing and dictation stay local until
@@ -21,7 +26,7 @@
 
 @implementation AKKeyboardTextView {
     NSMutableSet *_dictationPlaceholders;
-    BOOL _acceptingInput, _didSubmitDraft;
+    BOOL _acceptingInput, _didSubmitDraft, _resignedForDictation;
     NSUInteger _session;
 }
 - (instancetype)initWithFrame:(CGRect)frame textContainer:(NSTextContainer *)container {
@@ -86,13 +91,36 @@
 - (BOOL)resignFirstResponder {
     BOOL accepted = [super resignFirstResponder];
     if (accepted) {
-        _acceptingInput = NO;
         _session++;
-        [_dictationPlaceholders removeAllObjects];
-        [self discardDraft];
+        if (_dictationPlaceholders.count) {
+            // The system dictation UI takes focus while the microphone listens.
+            // The draft and the pending result are the user's: keep both, and
+            // take focus back when the session ends (endDictationSessionIfIdle).
+            // Only a pending dictation placeholder says so: text a keyboard is
+            // still composing is discarded like any other draft.
+            _resignedForDictation = YES;
+            AKLog(@"draft editor resigned with dictation pending; keeping the draft");
+        } else {
+            _acceptingInput = NO;
+            [_dictationPlaceholders removeAllObjects];
+            [self discardDraft];
+        }
     }
     [self.inputOwner updateKeyboardButton];
     return accepted;
+}
+// The dictation session has finished. If it left the editor without focus, take
+// it back so the dictated draft is visible and Replace works, as it was before.
+- (void)endDictationSessionIfIdle {
+    if (_dictationPlaceholders.count || self.markedTextRange || !_resignedForDictation) return;
+    _resignedForDictation = NO;
+    if (!self.inputOwner.keyboardRequested) return;
+    AKLog(@"dictation session ended without focus; restoring the draft keyboard");
+    __weak AKKeyboardTextView *weakSelf = self;
+    [NSRunLoop.mainRunLoop performInModes:@[NSRunLoopCommonModes] block:^{
+        AKKeyboardTextView *input = weakSelf;
+        if (input && input.inputOwner.keyboardRequested && !input.isFirstResponder) [input becomeFirstResponder];
+    }];
 }
 - (BOOL)textView:(UITextView *)textView shouldChangeTextInRange:(NSRange)range replacementText:(NSString *)text {
     (void)textView; (void)range;
@@ -118,9 +146,14 @@
 }
 - (void)unmarkText { if (_acceptingInput) [super unmarkText]; }
 - (id)insertDictationResultPlaceholder {
-    if (!_acceptingInput) return nil;
+    // Dictation can start while the system panel, not this editor, holds focus:
+    // the result is still the user's draft, so accept it from here on. UIKit also
+    // requires a placeholder for the session to start at all: refusing it is how
+    // "the microphone is visible but tapping it does nothing" looks.
+    _acceptingInput = YES;
     id placeholder = [super insertDictationResultPlaceholder];
     if (placeholder) [_dictationPlaceholders addObject:placeholder];
+    AKLog(@"dictation placeholder inserted=%d pending=%lu accepting=%d", placeholder != nil, (unsigned long)_dictationPlaceholders.count, _acceptingInput);
     [self.inputOwner updateDraftButtons];
     return placeholder;
 }
@@ -128,9 +161,19 @@
     if (![_dictationPlaceholders containsObject:placeholder]) return;
     [super removeDictationResultPlaceholder:placeholder willInsertResult:willInsert];
     [_dictationPlaceholders removeObject:placeholder];
+    AKLog(@"dictation placeholder removed willInsertResult=%d pending=%lu", willInsert, (unsigned long)_dictationPlaceholders.count);
     [self.inputOwner updateDraftButtons];
+    [self endDictationSessionIfIdle];
+}
+// Lengths only: never log or retain what was dictated.
+- (void)insertDictationResult:(NSArray<UIDictationPhrase *> *)dictationResult {
+    NSUInteger characters = 0;
+    for (UIDictationPhrase *phrase in dictationResult) characters += phrase.text.length;
+    AKLog(@"dictation result: %lu phrases, %lu characters", (unsigned long)dictationResult.count, (unsigned long)characters);
+    [super insertDictationResult:dictationResult];
 }
 - (void)dictationRecognitionFailed {
+    AKLog(@"dictation recognition failed (markedText=%d, placeholders=%lu)", self.markedTextRange != nil, (unsigned long)_dictationPlaceholders.count);
     // UITextView does not implement this optional callback. Preserve the
     // completed draft; only discard the provisional recognition segment.
     if (self.markedTextRange) {
@@ -139,13 +182,14 @@
     }
     [_dictationPlaceholders removeAllObjects];
     [self.inputOwner updateDraftButtons];
+    [self endDictationSessionIfIdle];
 }
 @end
 
 @implementation AKTouchControls {
     UIButton *_keyboardButton, *_trackpadButton, *_gamepadButton, *_settingsButton;
     UIButton *_insertDraftButton, *_clearDraftButton;
-    BOOL _gamepadEnabled;
+    BOOL _gamepadEnabled, _keyboardRequested, _systemKeyboardSeen;
     UIView *_accessory, *_composer;
     NSTimer *_holdTimer;
     AKKeyboardTextView *_keyboardInput;
@@ -219,8 +263,10 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(backgroundInput:) name:UIApplicationDidEnterBackgroundNotification object:nil];
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(windowResigned:) name:UIWindowDidResignKeyNotification object:nil];
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(controlAppearanceChanged:)
-            name:AKGamepadLayoutDidChangeNotification object:NSUserDefaults.standardUserDefaults];
-        [self controlAppearanceChanged:nil];
+            name:AKGamepadLayoutDidChangeNotification object:NSUserDefaults.standardUserDefaults];    // Whether the system keyboard (and so its dictation button) exists at all on
+    // this device, and whether UIKit is talking to our draft editor when it does.
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(systemKeyboardShown:) name:UIKeyboardDidShowNotification object:nil];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(systemKeyboardHidden:) name:UIKeyboardDidHideNotification object:nil];        [self controlAppearanceChanged:nil];
     }
     return self;
 }
@@ -271,10 +317,21 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
 - (BOOL)becomeFirstResponder {
     _composer.hidden = NO;
     [self.delegate touchKeyboardVisibilityChanged:YES];
+    _keyboardRequested = YES;
+    _systemKeyboardSeen = NO;
     BOOL accepted = [_keyboardInput becomeFirstResponder];
     [self updateKeyboardButton];
+    // A hardware keyboard hides the software keyboard, and with it the dictation
+    // button. Record it once instead of leaving a keyboard that cannot dictate.
+    __weak AKTouchControls *weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        AKTouchControls *controls = weakSelf;
+        if (controls && !controls->_systemKeyboardSeen && controls.keyboardVisible)
+            AKLog(@"software keyboard did not appear (hardware keyboard attached?); it carries the dictation button");
+    });
     return accepted;
 }
+- (BOOL)keyboardRequested { return _keyboardRequested; }
 - (BOOL)resignFirstResponder {
     BOOL accepted = [_keyboardInput resignFirstResponder];
     [self updateKeyboardButton];
@@ -293,6 +350,7 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
     else [self becomeFirstResponder];
 }
 - (void)dismissKeyboard {
+    _keyboardRequested = NO;
     if (self.keyboardVisible) {
         [self resignFirstResponder];
         [self.superview becomeFirstResponder];
@@ -446,6 +504,16 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
     _pad = (AKTrackpad){0};
     // Dictation and system permission panels temporarily take focus. Closing
     // the first responder here cancels dictation before its UI can appear.
+    AKLog(@"input suspended (draftFirstResponder=%d)", _keyboardInput.isFirstResponder);
+}
+- (void)systemKeyboardShown:(NSNotification *)notification {
+    (void)notification;
+    _systemKeyboardSeen = YES;
+    AKLog(@"system keyboard shown draftFirstResponder=%d markedText=%d", _keyboardInput.isFirstResponder, _keyboardInput.markedTextRange != nil);
+}
+- (void)systemKeyboardHidden:(NSNotification *)notification {
+    (void)notification;
+    AKLog(@"system keyboard hidden draftFirstResponder=%d", _keyboardInput.isFirstResponder);
 }
 - (void)backgroundInput:(NSNotification *)notification {
     [self suspendInput:notification];
