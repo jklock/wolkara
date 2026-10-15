@@ -50,10 +50,45 @@ not change it.
 | Hardware keyboard diagnosis | `[ak] hardware keyboard attached`, `software keyboard keys are not on screen (height 0 ...)` and the draft label hint |
 | Background survival | switch to Messages and back: pacing logged both ways, no CPU report, one `arena result`, session interactive; plus a six-minute soak in the background |
 
+## The vendored platform on this host
+
+`git subtree add --prefix=platform upstream main --squash` produced a subtree whose
+tree hash equals upstream's root tree hash (`1e8d13f1fe089fa32cd84a6b46fe3692e288aeac`),
+so `platform/` is byte-identical to upstream `00a8501`: 513 files.
+
+| Platform suite, run inside `platform/` | Result |
+| --- | --- |
+| `tools/test_translation_sim.sh` | exit 0; 3 PASS |
+| `tests/test_bc_textures` with `TOLKARA_BC_FALLBACK=off` | PASS: native BC textures, nothing installed |
+| `tests/test_bc_textures` with `TOLKARA_BC_FALLBACK=on` | PASS: guest sees BC formats; replaceRegion, slices, 3D, blit uploads, texture copies, views, heaps handled |
+| BC1-BC7 CPU reference decode (inside the same test) | PASS: reference blocks, punch-through, signed, partial blocks, padded rows, mip chains |
+| `tools/test_emulation.sh` | **aborts** (SIGABRT) at the first `tests/test_bc_textures` run |
+
+The abort is upstream's new native-GPU assertion (`tests/test_bc_textures.m:87`,
+`assert(worst <= allowed)` in `referenceDecoding`): BC1, BC2, BC3 and BC6 match the
+CPU decode exactly, BC4/BC5 sit inside the documented half-step, and **BC7 differs
+by 255.0 steps** on this Mac's GPU - i.e. the native BC7 path does not decode as
+the test expects on macOS 26.7.1 with Xcode 27.0.
+
+This is not ours and not caused by the split:
+
+- `platform/` is byte-identical to upstream, and our pre-split tree never contained
+  the BC work at all, so this test ran here for the first time;
+- both fallback paths - the ones that matter for the iPads - pass;
+- it is host/driver-dependent in the same way as the accepted codesign failure.
+
+Follow-ups (Phase 6 and 7): either teach the test to skip the native comparison
+when the GPU reports no BC7 support, or report it upstream as a genuine macOS-beta
+finding. Both are contribution candidates.
+
 ## The gate for every later phase
 
 1. `tools/test_wow_launcher.sh` and `tools/test_translation_sim.sh`: exit 0.
-2. `tools/test_emulation.sh`: same 62 PASS and the same single accepted failure.
-3. Device checks above, repeated on the installed app with the same bundle id.
-4. `wolkara/tools/check_layers.sh` (new): platform pristine, patches apply,
+2. `tools/test_emulation.sh`: same 62 PASS and the same single accepted failure (the
+   codesign byte-for-byte comparison). It must not gain or lose any other failure.
+3. Platform suite inside `platform/`: `tools/test_translation_sim.sh` exit 0, and the
+   BC test's two fallback runs PASS. `tools/test_emulation.sh` there is expected to
+   abort at the native BC7 comparison on this Mac, exactly as recorded above.
+4. Device checks above, repeated on the installed app with the same bundle id.
+5. `wolkara/tools/check_layers.sh` (new): platform pristine, patches apply,
    source coverage complete, no cross-module reach-in.
