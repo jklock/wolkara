@@ -103,6 +103,28 @@ the guest still controls its own text display and masking. The bridge does not
 record audio itself or retain text after insertion. The local draft is
 discarded when the keyboard closes or the app enters the background.
 
+The dictation UI takes focus while the microphone listens, and that focus change
+is temporary: the draft and the pending result are kept and the draft keyboard is
+restored when the session ends, because a draft that was dictated into must still
+be there to tap Replace. Closing the keyboard from our own row, or entering the
+background, still discards it.
+
+Dictation is only reachable while the **software** keyboard is on screen: the
+microphone is a key of that keyboard. With a hardware keyboard attached iPadOS
+hides the software keyboard, so the mic key cannot be reached and only our
+accessory row stays visible — the app cannot force the software keyboard back.
+That state is now recorded instead of being guessed at: the adapter logs
+`software keyboard did not appear (hardware keyboard attached?)` when the draft
+editor becomes first responder and `UIKeyboardDidShowNotification` never
+arrives. Press ⌘K (or the hardware keyboard's keyboard key) to bring the software
+keyboard back, then dictate. Check this first when a report says dictation does
+nothing.
+
+The dictation path logs into `Documents/native-guest.log` so a device attempt can
+be read afterwards: `dictation placeholder inserted/removed`, `dictation result:
+N phrases, M characters` (lengths only, never the dictated text), `dictation
+recognition failed`, and `system keyboard shown/hidden draftFirstResponder=…`.
+
 The `feature/keyboard-dictation` branch starts at `9483e1a`, before the native
 mouse experiment; `feature/native-mouse` remains separate. On 2026-10-04,
 the first change (`72d7468`) made the microphone visible, but the user reported
