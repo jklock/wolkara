@@ -194,6 +194,34 @@ Consequence for the trigger, given Share and the paddles are unavailable:
 3. **`Button Home`** is in the list, and iPadOS usually keeps it for itself —
    worth exactly one test before ruling it out.
 
+### The pad maps its own extra buttons — no software needed
+
+GameSir's manual for the G7 Pro documents on-pad mapping, so GameSir Nexus (which
+has no macOS or iPadOS build) is not required:
+
+> Press and hold the **M button + L4/R4/L5/R5**, and the XBOX indicator starts
+> flashing slowly. Press the button you want to map to the extra button, and the
+> indicator returns to solid.
+
+The manual adds that the extra buttons are **"null inputs", with no assigned
+function until mapped**, and that mapping is also available through Nexus — as an
+alternative, not a requirement. That is exactly what the measurement showed: four
+extra buttons, none of them declared to iPadOS, because they carry no value yet.
+
+Two consequences, and one trap:
+
+- **A mapped extra button can only duplicate a standard button.** The pad cannot
+  invent an input iPadOS does not already report, so mapping L4 to L3 yields a
+  comfortable physical button that reads as L3 to *both* the game and us. Whether
+  that is free is a question about the game's bindings, not about the pad.
+- **The extras are per-profile** (`M + Y/B/A/X` selects configurations 1–4), so
+  any mapping made on the pad follows the profile in use.
+- **Do not choose Share + Menu as a chord.** The manual documents Share + Menu
+  held for about four seconds as the pad's own input-mode (HID/PID) toggle; a
+  trigger bound to that would switch the controller's protocol. Menu + Options
+  alone is not documented as a pad combination.
+
+
 ## Operational notes
 
 - `AKLog` writes to **stderr**, and `Documents/native-guest.log` *is* that
