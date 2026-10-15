@@ -64,11 +64,13 @@ replaces the app in place and the device keeps its data.
 ## Open items
 
 - `Bridge/AppKit.m` is our version of the platform's AppKit adapter and is **not**
-  overlaid yet: it is the source of a pending patch. A patch may only use symbols the
-  platform tree itself has (measured: aliasing our `AKFont` in the platform's link
-  flags broke its own generic builds), so the Touch module must first become
-  self-contained behind the install hook upstream's `AppKit.m` already provides.
-  Until then the toolbar installs, but the gamepad and the Control+Option+D keyboard
-  request do not.
-- The layer's own test and UI scripts (`tools/test_*.sh`) still carry the pre-split
-  paths and need to run against the prepared tree.
+  overlaid: it is the source of a pending patch. What is left in it is what genuinely
+  needs the adapter itself - swallowing Control+Option+D in `postKeys:down:` to open the
+  draft keyboard, and the occlusion notifications a guest window gets when the app is
+  switched away. Everything else now lives here: the Touch module stands on its own
+  behind the install hook the platform's own `AppKit.m` already provides, so the toolbar,
+  the gamepad and the settings sheet work with their file untouched.
+- That hook has one thing worth knowing: the platform's adapter implements six of our
+  ten delegate methods, so the four we added are `@optional` and guarded. Dictation's
+  Replace is one of them and needs our adapter back before it does anything.
+- The two touch fixtures still block headless unless run with `--self-test`.

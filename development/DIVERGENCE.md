@@ -45,24 +45,29 @@ platform files, applied by `prepare.sh`, each one an upstream candidate:
 | 0005 | 1 file, +30/-0 | CoreAudio: keep the audio session alive across an app switch |
 | 0006 | 2 files, +51/-31 | authorization: retry the local service when its first connection fails |
 | 0007 | 2 files, +37/-5 | authorization: retire a failed probe, keeping the old tuple reserved |
+| 0008 | 1 file, +1/-1 | AppKit: alias the adapter's own `AKFont` to `NSFont`, so a guest asking for `NSFont` reaches it and not UIKit's private class of the same name |
 
-**Replacements** - 12 of our files take a platform path of the same purpose, so our
-version is what the platform's own build compiles:
+**Replacements** - 9 of our files take a platform path of the same purpose, so our
+version is what the platform's own build compiles. Each one was decided by comparing
+ours, theirs and the pre-split base: ours changed only (keep), theirs changed only
+(drop ours), or both (merge our change onto theirs):
 
 | Our file | Platform path | Lines apart |
 | --- | --- | --- |
-| `Touch/TouchControls.m` | `translation/AppKit/TouchControls.m` | 440 |
+| `Touch/TouchControls.m` | `translation/AppKit/TouchControls.m` | 489 |
 | `Touch/tests/test_touch_controls_app.m` | `tests/test_touch_controls_app.m` | 332 |
-| `Shell/main.m` | `launcher/App/main.m` | 166 |
-| `Shell/AppLibrary.m` | `launcher/App/AppLibrary.m` | 38 |
-| `Shell/tests/test_execution_mode.m` | `tests/test_execution_mode.m` | 34 |
-| `Shell/ExecutionMode.m` | `launcher/App/ExecutionMode.m` | 29 |
-| `Shell/LibraryViewController.m` | `launcher/App/LibraryViewController.m` | 27 |
-| `Touch/TouchControls.h` | `translation/AppKit/TouchControls.h` | 20 |
-| `Shell/ExecutionMode.h` | `launcher/App/ExecutionMode.h` | 8 |
-| `Shell/AppLibrary.h` | `launcher/App/AppLibrary.h` | 7 |
+| `Shell/main.m` | `launcher/App/main.m` | 103 |
+| `Touch/TouchControls.h` | `translation/AppKit/TouchControls.h` | 29 |
+| `Shell/ExecutionMode.m` | `launcher/App/ExecutionMode.m` | 10 |
+| `Shell/tests/test_execution_mode.m` | `tests/test_execution_mode.m` | 9 |
 | `Shell/Info.plist` | `launcher/Info.plist` | 6 |
+| `Shell/ExecutionMode.h` | `launcher/App/ExecutionMode.h` | 4 |
 | `Shell/Integrated-Info.plist` | `authorization/App/Integrated-Info.plist` | 2 |
+
+Three files that used to be here - `AppLibrary.h`, `AppLibrary.m` and
+`LibraryViewController.m` - were dropped: they were byte-identical to the pre-split
+base, so their only difference from the pin was upstream's newer work. The platform's
+own `test_app_library.m` caught it by failing to compile.
 
 **Additions** - 52 files upstream has no counterpart for, mostly one module's worth at a
 time: 23 in `launcher/WoW/` (the WoW launcher), 10 tests, 8 in `translation/AppKit/`
