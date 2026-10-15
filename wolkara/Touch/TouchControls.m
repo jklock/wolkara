@@ -172,15 +172,25 @@ static BOOL hardwareKeyboardAttached(void) {
     // requires a placeholder for the session to start at all: refusing it is how
     // "the microphone is visible but tapping it does nothing" looks.
     _acceptingInput = YES;
-    id placeholder = [super insertDictationResultPlaceholder];
-    if (placeholder) [_dictationPlaceholders addObject:placeholder];
+    // UITextView implements the dictation selectors on some systems and not on
+    // others, and sending one it does not have aborts the app. Ask first, and
+    // hand back our own token when the superclass has nothing, because the
+    // session cannot start without a placeholder.
+    id placeholder = nil;
+    if ([UITextView instancesRespondToSelector:@selector(insertDictationResultPlaceholder)]) {
+        placeholder = [super insertDictationResultPlaceholder];
+    }
+    if (!placeholder) placeholder = [[NSObject alloc] init];
+    [_dictationPlaceholders addObject:placeholder];
     AKLog(@"dictation placeholder inserted=%d pending=%lu accepting=%d", placeholder != nil, (unsigned long)_dictationPlaceholders.count, _acceptingInput);
     [self.inputOwner updateDraftButtons];
     return placeholder;
 }
 - (void)removeDictationResultPlaceholder:(id)placeholder willInsertResult:(BOOL)willInsert {
     if (![_dictationPlaceholders containsObject:placeholder]) return;
-    [super removeDictationResultPlaceholder:placeholder willInsertResult:willInsert];
+    if ([UITextView instancesRespondToSelector:@selector(removeDictationResultPlaceholder:willInsertResult:)]) {
+        [super removeDictationResultPlaceholder:placeholder willInsertResult:willInsert];
+    }
     [_dictationPlaceholders removeObject:placeholder];
     AKLog(@"dictation placeholder removed willInsertResult=%d pending=%lu", willInsert, (unsigned long)_dictationPlaceholders.count);
     [self.inputOwner updateDraftButtons];
@@ -191,7 +201,16 @@ static BOOL hardwareKeyboardAttached(void) {
     NSUInteger characters = 0;
     for (UIDictationPhrase *phrase in dictationResult) characters += phrase.text.length;
     AKLog(@"dictation result: %lu phrases, %lu characters", (unsigned long)dictationResult.count, (unsigned long)characters);
-    [super insertDictationResult:dictationResult];
+    // UITextView does not implement this selector. UIKit sends it to whichever
+    // responder holds the session's placeholder, so forwarding it to super
+    // raises NSInvalidArgumentException and the app dies the instant dictation
+    // finishes. Insert the phrases as ordinary input instead, the same way the
+    // dictated text would have arrived.
+    _acceptingInput = YES;
+    for (UIDictationPhrase *phrase in dictationResult) {
+        if (phrase.text.length) [self insertText:phrase.text];
+    }
+    [self.inputOwner updateDraftButtons];
 }
 - (void)dictationRecognitionFailed {
     AKLog(@"dictation recognition failed (markedText=%d, placeholders=%lu)", self.markedTextRange != nil, (unsigned long)_dictationPlaceholders.count);
