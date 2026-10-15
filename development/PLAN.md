@@ -80,11 +80,13 @@ land in the same effort.
    and `tests/test_gpu_identity.m` are already byte-identical to the pin, so those
    "drop ours" decisions are no-ops. Only `translation/AppKit/ldflags` needs a patch,
    and it is one line.
-8. Prefer upstream's newer version where it already covers our intent. **todo** - the
-   comparison list is now precise: the 57 paths in `docs/LAYER_DELTAS.md`, of which the
-   platform-code ones are `translation/` 6, `authorization/` 5 and `runtime/` 4. The
-   same-title pairs to resolve first are upstream `f9d1f8b`/`048ed60`/`2ba90b5` against
-   our `c19dbc4`, and upstream `f54662e` against our `ad3f6c5`.
+8. Prefer upstream's newer version where it already covers our intent. **done** - every
+   delta was merged onto the pin (base `05035cc`, ours `HEAD`, theirs `HEAD:platform`)
+   and the results are in `docs/LAYER_DELTAS.md`: seven patches carry the platform-side
+   changes, six paths need nothing at all because our copy is already upstream's, and
+   three files (`translation/AppKit/AppKit.m`, `TouchControls.{h,m}`) are re-derived in
+   Phase 3. Verified: the platform suite in the prepared tree is 59 PASS plus the one
+   accepted codesign failure, and the generic builds link.
 9. Delete branding-only deltas instead of carrying them. **todo**.
 
 ## Phase 3 - Build the Wolkara project on a prepared tree
@@ -102,6 +104,12 @@ land in the same effort.
     `UIBackgroundModes: [audio]`, microphone usage), icon `Wolkara`, `NATIVE_GUEST_SHIMS`
     only where needed, headers into the prepared tree, guest-runtime post-build calling
     the prepared `build_emulated_guest.sh`. **todo**.
+
+   Two build settings the patches expect, so they are not forgotten:
+   - the AppKit framework must alias the adapter's `AKFont` to `NSFont` at link time
+     (patch 0004 says why this cannot live in the platform's own `ldflags`);
+   - the layer's startup must call `AKInstallMetalBackgroundPacing()` itself: upstream's
+     `Devices.m` is taken as-is and no longer carries that call.
 12. Move our files into the modules; class names unchanged, only imports and paths adapt.
     Modules stay independent: `WoW` must not import `Touch` internals, shared needs go
     through `Bridge`. **todo** - 71 layer-candidate paths are still at the root, and 455
