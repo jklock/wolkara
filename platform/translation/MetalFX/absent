@@ -1,0 +1,12 @@
+This library is presented to the guest as unavailable: the runtime does not
+open it, and binds nothing to it (a map target of "" in a build for one
+application, Guest/absent.json in a generic build).
+
+This is a workaround, not how macOS behaves: the game it was written for links
+MetalFX with LC_LOAD_DYLIB (not weak), so dyld on a Mac without MetalFX would
+refuse to launch it. It imports no MetalFX symbol and reaches MetalFX only
+through Objective-C runtime lookups, which find nothing while the real
+framework is not loaded; the game then takes its non-MetalFX path. With
+MetalFX loaded it crashed in an early initializer on iPadOS (root cause not
+known); MetalFX is absent from the iOS simulator, where the same startup
+succeeds. classify.py warns if an executable has strong imports from it.
