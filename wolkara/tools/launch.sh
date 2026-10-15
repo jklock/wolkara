@@ -46,10 +46,16 @@ launch: THE APP IS ALREADY RUNNING (pid $pid). Not launching, and not killing it
 MESSAGE
         exit 2
     fi
-    echo "== stopping the running app cleanly (pid $pid)"
-    xcrun devicectl device process signal --device "$DEVICE" --pid "$pid" --signal SIGTERM >/dev/null 2>&1 || true
-    xcrun devicectl device process awaitTermination --device "$DEVICE" --pid "$pid" --timeout 30 >/dev/null 2>&1 || true
-    [ -z "$(app_pid || true)" ] || { echo "launch: it did not exit; nothing was launched" >&2; exit 2; }
+    echo "== stopping the running app (pid $pid)"
+    # SIGTERM first so the client can close its own stores; this app does not act on it,
+    # so SIGKILL follows.
+    for sig in SIGTERM SIGKILL; do
+        xcrun devicectl device process signal --device "$DEVICE" --pid "$pid" --signal "$sig" >/dev/null 2>&1 || true
+        xcrun devicectl device process awaitTermination --device "$DEVICE" --pid "$pid" --timeout 20 >/dev/null 2>&1 || true
+        [ -z "$(app_pid || true)" ] && break
+        echo "   it survived $sig"
+    done
+    [ -z "$(app_pid || true)" ] || { echo "launch: it would not stop; nothing was launched" >&2; exit 2; }
     echo "   it has exited"
 fi
 

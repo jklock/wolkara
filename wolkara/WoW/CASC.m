@@ -520,10 +520,15 @@ NSArray<NSString *> *TKWoWCASCRepairIndexGenerations(NSString *directory) {
             if(LocalIndexEntries(contents,bucket,NULL).length) { source=candidate; valid=contents; break; }
         }
         if(!valid) { [lines addObject:[NSString stringWithFormat:@"CASC index bucket %u has no usable generation (%@ is truncated); an update or repair is required.",bucket,candidates.firstObject]]; continue; }
-        if([valid writeToFile:[directory stringByAppendingPathComponent:candidates.firstObject] options:NSDataWritingAtomic error:NULL])
-            [lines addObject:[NSString stringWithFormat:@"CASC index %@ was truncated; rewrote it from %@.",candidates.firstObject,source]];
-        else
-            [lines addObject:[NSString stringWithFormat:@"CASC index %@ is truncated and could not be rewritten.",candidates.firstObject]];
+            // Remove it rather than filling it in. A generation this repair writes is a KMT
+            // sequence the client never authored, and the client aborts on exactly that
+            // (BC_ASSERT(!m_exists), after "Scanning for KMT sequence numbers"). The
+            // generation below is the client's own, so removing the newest leaves a store
+            // the client recognises and is free to write its next sequence into.
+            if([NSFileManager.defaultManager removeItemAtPath:[directory stringByAppendingPathComponent:candidates.firstObject] error:NULL])
+                [lines addObject:[NSString stringWithFormat:@"CASC index %@ was truncated; removed it, leaving %@.",candidates.firstObject,source]];
+            else
+                [lines addObject:[NSString stringWithFormat:@"CASC index %@ is truncated and could not be removed.",candidates.firstObject]];
     }
     for(NSString *name in temps) if([NSFileManager.defaultManager removeItemAtPath:[directory stringByAppendingPathComponent:name] error:NULL])
         [lines addObject:[NSString stringWithFormat:@"removed interrupted CASC index temp %@.",name]];
