@@ -40,22 +40,121 @@ both sides), so the split never has to resurrect or retire a path.
 the add-on manager plus that session's AppKit and Metal device changes. It is not a
 rebase hazard.
 
-## Contested: 29 paths and their class
+## The measured delta set
+
+The quadrants above count *commits* that touched a path, so a path both sides touched
+but where the two ended up with the same bytes is counted as contested. Measured on
+2026-10-15 by comparing our working tree with the pinned platform:
+
+| Measure | Count |
+| --- | --- |
+| Paths we share with `platform/` | 455 |
+| ...byte-identical to the pin, so deleting our copy loses nothing | 398 |
+| ...differ from the pin - the real delta set | **57** |
+| ...changed lines across those 57 | ~4034 |
+| Paths with no counterpart in `platform/` (layer candidates) | 71 |
+
+By area: `tools/` 8, root files 8, `profiles/` 7, `launcher/` 7, `translation/` 6,
+`tests/` 6, `docs/` 5, `authorization/` 5, `runtime/` 4, `.github/` 1. Only the
+`translation/`, `runtime/` and `authorization/` groups are platform code, so the part
+that needs patches or layer replacements is 15 files.
+
+A whole class of rows in the tables above turned out to need no work at all:
+`translation/AKSupport/AKSupport.{h,m}`, `translation/AppKit/AppKit.h`,
+`translation/IOKit/{GPUIdentity.h,Registry.m,ldflags}`, `translation/Metal/MetalTrace.m`
+and `tests/test_gpu_identity.m` are already byte-identical to the pin.
+
+The 57 paths:
+
+```
+.github/workflows/release.yml
+.gitignore
+AGENTS.md
+COMPATIBILITY.md
+LICENSE
+NOTICE.md
+README.md
+authorization/App/Integrated-Info.plist
+authorization/App/LocalAuthorization.h
+authorization/App/LocalAuthorization.m
+authorization/Tunnel/LocalPacketProvider.m
+authorization/Tunnel/PacketServiceProbe.swift
+docs/ARCHITECTURE.md
+docs/BUILDING.md
+docs/IPHONE.md
+docs/TOUCH_INPUT.md
+docs/WINDOWS.md
+launcher/App/AppLibrary.h
+launcher/App/AppLibrary.m
+launcher/App/ExecutionMode.h
+launcher/App/ExecutionMode.m
+launcher/App/LibraryViewController.m
+launcher/App/main.m
+launcher/Info.plist
+local.env.example
+profiles/README.md
+profiles/wow-classic-era/README.md
+profiles/wow-classic-era/install.py
+profiles/wow-classic-era/profile.json
+profiles/wow-forever/README.md
+profiles/wow-forever/install.py
+profiles/wow-forever/profile.json
+project.yml
+runtime/GuestFixups.c
+runtime/GuestStubs.m
+runtime/NativeGuest.h
+runtime/NativeGuest.m
+tests/test_app_library.m
+tests/test_appkit_views.m
+tests/test_execution_mode.m
+tests/test_fixups.c
+tests/test_profile.py
+tests/test_touch_controls_app.m
+tools/build_emulated_guest.sh
+tools/build_shims.py
+tools/check_profile.py
+tools/generate.sh
+tools/install.sh
+tools/package_ipa.sh
+tools/test_emulation.sh
+tools/test_touch_controls_ui.sh
+translation/AppKit/AppKit.m
+translation/AppKit/TouchControls.h
+translation/AppKit/TouchControls.m
+translation/AppKit/ldflags
+translation/CoreAudio/Hardware.m
+translation/Metal/Devices.m
+```
+
+Reproduce this set:
+
+```sh
+comm -12 <(git ls-files | grep -v '^platform/' | sort) \
+         <(git ls-files platform/ | sed 's|^platform/||' | sort) > /tmp/shared.txt
+while read -r f; do
+    [ "$(git hash-object "$f")" = "$(git rev-parse "HEAD:platform/$f")" ] || echo "$f"
+done < /tmp/shared.txt
+```
+
+## Contested at commit level: 29 paths and their class
+
+These are the paths *commits* on both sides touched. Being touched by both is not the
+same as differing now - see "The measured delta set" below for what actually differs.
 
 | Path | Class | Why |
 | --- | --- | --- |
 | `project.yml` | layer | Wolkara gets its own `wolkara/project.yml`; the platform's stays upstream and untouched |
 | `launcher/App/main.m` | replace | The layer supplies the Wolkara app shell; the platform's entry point stays for platform builds |
 | `launcher/App/ExecutionMode.h`, `ExecutionMode.m` | replace | Our shell owns mode glue and branding; upstream's version serves platform builds |
-| `launcher/Info.plist` | layer | Wait: this one is ours-only, listed here for contrast - our branded plist lives in the layer |
+| `launcher/Info.plist` | layer | Our branded plist, with `UIBackgroundModes: [audio]` and the microphone usage string; the platform's stays under `platform/` |
 | `translation/AppKit/AppKit.m` | patch | Touch-controls install, the Control+Option+D trigger in `postKeys:down:`, occlusion reporting in `ak_becameActive:`/`ak_resignedActive:` |
-| `translation/AppKit/AppKit.h` | patch | Delegate and notification declarations the layer needs |
+| `translation/AppKit/AppKit.h` | platform-owned | Measured 2026-10-15: our copy is byte-identical to the pin, so there is nothing to patch |
 | `translation/AppKit/TouchControls.h`, `TouchControls.m` | replace | The layer's own touch/keyboard/dictation module is compiled instead of the platform's |
-| `translation/AKSupport/AKSupport.h`, `AKSupport.m` | patch | Our additions; verify the diff is small, otherwise move behind a layer file |
+| `translation/AKSupport/AKSupport.h`, `AKSupport.m` | platform-owned | Measured 2026-10-15: byte-identical to the pin, so there is nothing to patch |
 | `translation/Metal/Devices.m` | patch | One call that installs the background frame pacing |
-| `translation/IOKit/GPUIdentity.h`, `translation/IOKit/Registry.m`, `translation/IOKit/ldflags` | platform-owned | Both sides added these independently; upstream's `f54662e`/`920b4da` are the maintained versions - drop ours |
-| `translation/Metal/MetalTrace.m` | platform-owned | Same: take upstream's version |
-| `tests/test_gpu_identity.m` | platform-owned | Upstream's test matches upstream's implementation |
+| `translation/IOKit/GPUIdentity.h`, `translation/IOKit/Registry.m`, `translation/IOKit/ldflags` | platform-owned | Measured 2026-10-15: our copies already equal upstream's, so dropping ours is a no-op |
+| `translation/Metal/MetalTrace.m` | platform-owned | Measured 2026-10-15: already identical to upstream's |
+| `tests/test_gpu_identity.m` | platform-owned | Measured 2026-10-15: already identical to upstream's |
 | `tests/test_appkit_views.m`, `tests/test_touch_controls_app.m` | platform-owned + new layer tests | Upstream's assert the platform's two-button layout; the layer ships its own fixtures for its toolbar, drafts and dictation |
 | `tests/test_execution_mode.m` | platform-owned + new layer test | Mode machinery is platform; the layer tests its own glue |
 | `tools/test_emulation.sh` | patch | Add the layer's suites to the run |
