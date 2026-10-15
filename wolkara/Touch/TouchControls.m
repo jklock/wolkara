@@ -219,6 +219,7 @@ static BOOL hardwareKeyboardAttached(void) {
     AKTrackpad _pad;
     AKTouchHaptics *_haptics;
     AKTouchGamepad *_gamepad;
+    BOOL _claimedPlace;
 }
 
 // The launcher's switch, and the platform's install path, ask this before the
@@ -521,19 +522,13 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
         [_composer.heightAnchor constraintEqualToConstant:82],
     ]];
 
-    // The host may have laid us out the way its own controls were: a pair of small
-    // buttons in a corner. Ours is a toolbar of five, so we take our own place -
-    // drop any constraint the host set for us, then put ourselves at the top - and
-    // we own the gamepad, which the host knows nothing about.
-    for (NSLayoutConstraint *constraint in host.constraints)
-        if (constraint.firstItem == self || constraint.secondItem == self) constraint.active = NO;
-    self.translatesAutoresizingMaskIntoConstraints = NO;
-    [NSLayoutConstraint activateConstraints:@[
-        [self.widthAnchor constraintEqualToConstant:200],
-        [self.heightAnchor constraintEqualToConstant:44],
-        [self.topAnchor constraintEqualToAnchor:host.safeAreaLayoutGuide.topAnchor constant:8],
-        [self.centerXAnchor constraintEqualToAnchor:host.safeAreaLayoutGuide.centerXAnchor],
-    ]];
+    // The host may have laid us out the way its own controls were: a pair of small buttons
+    // in a corner. Ours is a toolbar of five, and it belongs at the top centre - the top
+    // left is where a game keeps its own controls. The host activates its constraints
+    // just after adding us, so claim our place on the next runloop pass, not during this
+    // one, or both sets end up live and the toolbar drifts into the corner.
+    __weak AKTouchControls *weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf claimToolbarPlaceIn:host]; });
     if (!_gamepad) {
         _gamepad = [[AKTouchGamepad alloc] initWithHostView:host];
         __weak AKTouchControls *weakSelf = self;
@@ -547,6 +542,23 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
     }
     _gamepad.keyboardVisible = self.keyboardVisible;
     [_gamepad refresh];
+}
+
+// Drop the host's constraints for ourselves and stand where a toolbar belongs: centred at
+// the top, wide enough for its buttons. Called once, after the host has finished adding
+// us, so nothing puts us back in a corner.
+- (void)claimToolbarPlaceIn:(UIView *)host {
+    if (_claimedPlace || self.superview != host) return;
+    _claimedPlace = YES;
+    for (NSLayoutConstraint *constraint in host.constraints)
+        if (constraint.firstItem == self || constraint.secondItem == self) constraint.active = NO;
+    self.translatesAutoresizingMaskIntoConstraints = NO;
+    [NSLayoutConstraint activateConstraints:@[
+        [self.widthAnchor constraintEqualToConstant:200],
+        [self.heightAnchor constraintEqualToConstant:44],
+        [self.topAnchor constraintEqualToAnchor:host.safeAreaLayoutGuide.topAnchor constant:8],
+        [self.centerXAnchor constraintEqualToAnchor:host.safeAreaLayoutGuide.centerXAnchor],
+    ]];
 }
 
 - (void)processTouches:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
