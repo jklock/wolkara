@@ -1,0 +1,79 @@
+# Wolkara layer patch 0009 - AppKit: the dictation trigger, occlusion, and Replace
+#
+# Why: three things only the adapter can do.
+#   - Control+Option+D opens the draft keyboard instead of reaching the game. The
+#     press and its release are both swallowed, so the guest never sees half a
+#     keystroke; without it, dictation is unreachable while a game has focus.
+#   - A window is told when it stops being on screen, as a Mac window is when it is
+#     covered, rather than only when the application itself changes state.
+#   - The draft panel Replace performs one explicit edit through the same event
+#     queue as typed input: select all, delete, insert. No clipboard, no text query.
+# Applies to: translation/AppKit/AppKit.m
+# Upstream: candidate (not submitted).
+#
+diff --git a/translation/AppKit/AppKit.m b/translation/AppKit/AppKit.m
+index da4f8ad..265b3dd 100644
+--- a/translation/AppKit/AppKit.m
++++ b/translation/AppKit/AppKit.m
+@@ -279,7 +279,7 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
+ @property (nonatomic, weak) NSWindow *nsWindow;
+ @end
+ 
+-@implementation AKHostView { CGPoint _last; NSEventModifierFlags _mods; BOOL _pressedRight, _pressedLeft, _pointerInside, _softwareCursor; UIImageView *_cursorView; UIPointerInteraction *_pointer; UIPointerStyle *_gamePointerStyle; unsigned _hoverUpdates, _pointerUpdates, _cursorVisibilityReasons; NSTimeInterval _pointerReportTime; CGPoint _cursorHotSpot;
++@implementation AKHostView { CGPoint _last; NSEventModifierFlags _mods; BOOL _pressedRight, _pressedLeft, _pointerInside, _softwareCursor; UIImageView *_cursorView; UIPointerInteraction *_pointer; UIPointerStyle *_gamePointerStyle; unsigned _hoverUpdates, _pointerUpdates, _cursorVisibilityReasons; NSTimeInterval _pointerReportTime; CGPoint _cursorHotSpot; unsigned short _swallowedKey;
+     AKTouchControls *_touchControls;
+     BOOL _touchCursorActive, _touchCursorInitialized, _pressedMiddle;
+     NSTimeInterval _lastTouchClickTime;
+@@ -417,6 +417,14 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
+         [self postTextKey:code characters:characters unmodified:unmodified modifiers:modifiers];
+     });
+ }
++- (void)touchReplaceText:(NSString *)text {
++    // macOS field editing through the same event queue as typed input. This
++    // is one explicit Replace action, with no clipboard, text query or Return.
++    // Command is carried on the A events only; it cannot stay held for typing.
++    [self postTextKey:0 characters:@"a" unmodified:@"a" modifiers:NSEventModifierFlagCommand];
++    [self touchSpecialKey:51 characters:@"\x7f"];
++    [self touchInsertText:text];
++}
+ - (void)touchSpecialKey:(unsigned short)code characters:(NSString *)characters {
+     [self postTextKey:code characters:characters unmodified:characters modifiers:0];
+ }
+@@ -632,6 +640,20 @@ static BOOL AKIsRight(UIEvent *ev) { return (ev.buttonMask & UIEventButtonMaskSe
+         // A modifier key's own press and release set and clear it; other keys carry UIKit's state.
+         if (isMod) _mods = AKModifiersAfterKey(_mods, k.keyCode, down);
+         else [self reconcileModifiers:AKMods(k.modifierFlags)];
++        // Control+Option+D is the dictation trigger: it opens the draft keyboard
++        // instead of reaching the game, so a game macro bound to it (or the keys
++        // themselves) reaches Apple's dictation without the toolbar. Its release
++        // is swallowed with the press so the guest never sees half a keystroke.
++        if (!isMod && k.keyCode == 0x07 &&
++            (_mods & (NSEventModifierFlagControl | NSEventModifierFlagOption)) == (NSEventModifierFlagControl | NSEventModifierFlagOption)) {
++            if (down && !_swallowedKey) {
++                _swallowedKey = k.keyCode;
++                AKLog(@"dictation trigger (control+option+D) opens the draft keyboard");
++                [NSNotificationCenter.defaultCenter postNotificationName:AKTouchKeyboardRequestNotification object:self];
++            }
++            continue;
++        }
++        if (!isMod && !down && _swallowedKey == k.keyCode) { _swallowedKey = 0; continue; }
+         e.modifierFlags = _mods;
+         e.type = isMod || k.keyCode == 0x39 ? NSEventTypeFlagsChanged : down ? NSEventTypeKeyDown : NSEventTypeKeyUp;
+         e.characters = k.characters; e.charactersIgnoringModifiers = k.charactersIgnoringModifiers;
+@@ -905,11 +927,14 @@ static void logLayer(CALayer *layer,unsigned depth) {
+ - (BOOL)isActive { return _active; }
+ - (void)ak_becameActive:(NSNotification *)notification {
+     (void)notification;
+-    if(!_active) { _active=YES; AKLog(@"application became active"); [self ak_notify:@"NSApplicationDidBecomeActiveNotification" sel:@selector(applicationDidBecomeActive:)]; }
++    if(!_active) { _active=YES; AKLog(@"application became active"); [self ak_notify:@"NSApplicationDidBecomeActiveNotification" sel:@selector(applicationDidBecomeActive:)]; [self ak_occlusionChanged]; }
+ }
+ - (void)ak_resignedActive:(NSNotification *)notification {
+     (void)notification;
+-    if(_active) { _active=NO; [self ak_notify:@"NSApplicationDidResignActiveNotification" sel:@selector(applicationDidResignActive:)]; }
++    if(_active) { _active=NO; [self ak_notify:@"NSApplicationDidResignActiveNotification" sel:@selector(applicationDidResignActive:)]; [self ak_occlusionChanged]; }
++}
++- (void)ak_occlusionChanged {
++    for (NSWindow *window in _windows) [window ak_notify:@"NSWindowDidChangeOcclusionStateNotification" selector:@selector(windowDidChangeOcclusionState:)];
+ }
+ - (void)activateIgnoringOtherApps:(BOOL)f { (void)f; if(UIApplication.sharedApplication.applicationState==UIApplicationStateActive) [self ak_becameActive:nil]; }
+ - (void)ak_notify:(NSString *)name sel:(SEL)sel {
