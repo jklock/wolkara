@@ -1,0 +1,1 @@
+-framework Metal -framework QuartzCore -framework ImageIO -framework CoreGraphics -framework UIKit
