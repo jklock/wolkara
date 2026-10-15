@@ -1,0 +1,4 @@
+Experimental, off by default: this directory takes part in a build only when
+TOLKARA_EXPERIMENTAL_ADAPTERS names MetalFX (see tools/classify.py). Presenting
+MetalFX as absent hides a working iPadOS framework from every application in
+the build, to work around one game's crash with an unknown root cause.
