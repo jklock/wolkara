@@ -7,6 +7,7 @@
 #import "DiagnosticsViewController.h"
 #import "ExecutionMode.h"
 #import "LibraryViewController.h"
+#import "../Controller/ControllerInspector.h"
 #import "../WoW/CASC.h"
 #import "../WoW/WoWViewController.h"
 #import "LaunchProgressView.h"
@@ -196,6 +197,14 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     if (started) return;
     started = YES;
     NSArray<NSString *> *arguments=NSProcessInfo.processInfo.arguments;
+    // Wolkara: report what the controller has and what it does, so pad input is
+    // measured rather than assumed. It reads only, and never consumes an input.
+    // See docs/CONTROLLER_INPUT.md.
+    [AKControllerInspector.shared begin];
+    if([arguments containsObject:@"--inspect-controller"]) {
+        [AKControllerInspector.shared showPanel:YES];
+        fprintf(stderr,"[host] controller inspector panel on\n");
+    }
     // Normal Wolkara launches use the route included in this build. Development
     // arguments retain the original explicit mode selection.
     NSString *source=nil;
@@ -791,6 +800,10 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     setvbuf(stdout, NULL, _IOLBF, 0);
     for (NSString *argument in arguments) if ([argument hasPrefix:@"--probe-run-id="]) fprintf(log,"%s\n",argument.UTF8String);
     fprintf(log,"[host] execution mode=%s source=%s\n",ModeIdentifier(self.executionMode),self.executionModeSource.UTF8String);
+    // The controller inspector starts before this log exists, and AKLog writes
+    // to stderr, so its first report went nowhere. Report again now that the
+    // log is attached: this is the inventory, and everything pressed follows it.
+    [AKControllerInspector.shared logInventories];
     NSString *map = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"Guest/libraries.json"];
     NSError *error=nil;
     NSString *path=app ? [self.library executablePathForApp:app error:&error] : nil;

@@ -75,3 +75,7 @@ wolkara/Bridge/LocalServiceRetry.h authorization/App/LocalServiceRetry.h add
 wolkara/Bridge/LocalServiceRetry.m authorization/App/LocalServiceRetry.m add
 wolkara/Bridge/tests/test_local_service_retry.m tests/test_local_service_retry.m add
 wolkara/Bridge/tests/test_packet_service_retry.swift tests/test_packet_service_retry.swift add
+#
+# Controller: what the pad reports, and every change to it (diagnostic)
+wolkara/Controller/ControllerInspector.h launcher/Controller/ControllerInspector.h add
+wolkara/Controller/ControllerInspector.m launcher/Controller/ControllerInspector.m add
