@@ -8,6 +8,8 @@
 - `launcher/`: the iPad app. `profiles/`: data-only descriptions of tested applications.
 - `tests/`: C, Objective-C, Swift and Python tests; `testguest/`: our synthetic guest fixture.
 - `tools/`: builds, diagnostics and regression scripts. `docs/`: building guide and architecture.
+- `platform/`: upstream tolkara, vendored byte-identical to `upstream/main` and never edited by hand; `wolkara/`: our layer above it. Start at `development/README.md`.
+- `development/`: the split's own record - plan and status, clean-base audit, divergence inventory, operational notes. Update it when a phase moves.
 - `build/` and `logs/` are ignored outputs. Third-party applications and assets are never committed.
 
 ## Build, Test, and Development Commands
