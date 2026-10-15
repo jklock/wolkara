@@ -20,15 +20,63 @@ Recorded 2026-10-15 on `feature/wolkara-above-tolkara`.
 Reproduce with `git --no-pager diff --name-status --no-renames 05035cc..main` and the
 same with `..upstream/main`.
 
-The trees as they stand today, before the split moves anything:
+### After the split (2026-10-15): how far are we from tolkara today?
 
-| Measure | Count |
+The base is **to upstream's current release, byte for byte**:
+
+| | Value |
 | --- | --- |
-| Tracked files outside `platform/` | 526 |
-| ...path also exists in `platform/` | 455 |
-| ...of those, byte-identical to the pin | 398 |
-| ...of those, we differ from upstream | 57 |
-| ...no counterpart in `platform/` | 71 |
+| `platform/` tree | `1e8d13f1fe089fa32cd84a6b46fe3692e288aeac` |
+| `upstream/main^{tree}` today | `1e8d13f1fe089fa32cd84a6b46fe3692e288aeac` |
+| `upstream/main` head | `00a8501` *Compatibility: WoW Forever water renders on the iPad Pro M5* (tag `v0.2.1`) |
+
+`check_layers.sh` compares those two trees on every run, against `upstream/main` itself
+and not a stored hash, so the moment tolkara moves the gate says so.
+
+Everything of ours is outside `platform/`, in three forms. **Patches** - our changes to
+platform files, applied by `prepare.sh`, each one an upstream candidate:
+
+| Patch | Changes | What it does |
+| --- | --- | --- |
+| 0001 | 1 file, +8/-5 | the BC test: the reserved mode has no defined decode to compare, and `off` now really measures |
+| 0002 | 1 file, +1/-0 | log the host's BC capability once |
+| 0003 | 2 files, +60/-3 | runtime: a rebase program may end at `rebase_size` with no DONE; invalid targets name themselves (+ its test) |
+| 0004 | 1 file, +6/-0 | runtime: why an existing class wins, and the NSFont trap |
+| 0005 | 1 file, +30/-0 | CoreAudio: keep the audio session alive across an app switch |
+| 0006 | 2 files, +51/-31 | authorization: retry the local service when its first connection fails |
+| 0007 | 2 files, +37/-5 | authorization: retire a failed probe, keeping the old tuple reserved |
+
+**Replacements** - 12 of our files take a platform path of the same purpose, so our
+version is what the platform's own build compiles:
+
+| Our file | Platform path | Lines apart |
+| --- | --- | --- |
+| `Touch/TouchControls.m` | `translation/AppKit/TouchControls.m` | 440 |
+| `Touch/tests/test_touch_controls_app.m` | `tests/test_touch_controls_app.m` | 332 |
+| `Shell/main.m` | `launcher/App/main.m` | 166 |
+| `Shell/AppLibrary.m` | `launcher/App/AppLibrary.m` | 38 |
+| `Shell/tests/test_execution_mode.m` | `tests/test_execution_mode.m` | 34 |
+| `Shell/ExecutionMode.m` | `launcher/App/ExecutionMode.m` | 29 |
+| `Shell/LibraryViewController.m` | `launcher/App/LibraryViewController.m` | 27 |
+| `Touch/TouchControls.h` | `translation/AppKit/TouchControls.h` | 20 |
+| `Shell/ExecutionMode.h` | `launcher/App/ExecutionMode.h` | 8 |
+| `Shell/AppLibrary.h` | `launcher/App/AppLibrary.h` | 7 |
+| `Shell/Info.plist` | `launcher/Info.plist` | 6 |
+| `Shell/Integrated-Info.plist` | `authorization/App/Integrated-Info.plist` | 2 |
+
+**Additions** - 52 files upstream has no counterpart for, mostly one module's worth at a
+time: 23 in `launcher/WoW/` (the WoW launcher), 10 tests, 8 in `translation/AppKit/`
+(the gamepad, its layout, haptics and the adapter's fonts), 4 the Wolkara icon set, 3
+icon art, 2 `authorization/App/LocalServiceRetry.*`, 1 `translation/Metal/BackgroundPacing.m`,
+1 `tools/wow_cdn.m`.
+
+We own no fork of the platform's build: its own `project.yml`, `build_shims.py`, and its
+test scripts build our app from the prepared tree.
+
+**Where we were before the split** (the reason it is now only the above): 526 tracked
+files outside `platform/`, of which 455 were platform paths - 398 of them byte-identical
+copies - and 71 were ours. Those copies are gone; the layer is what remains.
+
 
 `0e244e1` ("primary commits and updates") is **ours**, not upstream work: a squash of
 24 files covering the add-on manager plus that session's AppKit and Metal device
