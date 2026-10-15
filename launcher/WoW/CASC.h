@@ -15,8 +15,14 @@ uint32_t TKWoWJenkins(const void *bytes, size_t length, uint32_t * _Nullable low
 // unchanged throughout cloning. Missing/invalid receipts simply disable reuse.
 NSDictionary * _Nullable TKWoWCASCVerificationSnapshot(NSString *directory);
 BOOL TKWoWCASCCloneVerification(NSDictionary * _Nullable snapshot, NSString *source,
-    NSString *destination, NSError **error);
-// Writes only to the isolated update directory supplied by Updater. Existing
+    NSString *destination, NSError **error);// Repairs a CASC index set a client can leave unusable: when its own index
+// commit is interrupted it writes a truncated generation and then refuses to
+// bind that mapping table, so the next launch aborts with the client's own
+// alert. The newest generation of each bucket is rewritten from the newest one
+// that validates and carries content, and the client's leftover index temp files
+// are removed. Returns the lines to log; nothing to log means nothing needed
+// repair.
+NSArray<NSString *> *TKWoWCASCRepairIndexGenerations(NSString *directory);// Writes only to the isolated update directory supplied by Updater. Existing
 // data segments are immutable; new content is appended to new segments.
 @interface TKWoWCASCStore : NSObject
 - (nullable instancetype)initWithDirectory:(NSString *)directory error:(NSError **)error;
