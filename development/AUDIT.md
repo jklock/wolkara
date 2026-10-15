@@ -128,10 +128,16 @@ and three call sites in the adapter) is not carried into patch 0009. It was a de
 tool for the layout work, which is finished and tested; if layout work resumes it can be
 restored from this branch's history.
 
-**Stale forks to fold in** (upstream's text has moved on and our copy has not been
-merged): `.github/workflows/release.yml`, `AGENTS.md`, `COMPATIBILITY.md`, `NOTICE.md`,
-`README.md`, `docs/BUILDING.md`, `docs/IPHONE.md`, `docs/TOUCH_INPUT.md`,
-`local.env.example`, `profiles/wow-forever/README.md`. These are documentation and
-configuration, so nothing here changes how the app builds or behaves; upstream's versions
-are readable at any time under `platform/`. Merging them is Phase 6 work.
+**Stale forks, reviewed and decided** (upstream's text had moved on and our copy had not
+been merged). Each was put through the same three-way merge; nine conflict heavily
+because upstream's documents are about *their* product - the launcher folder, Tolkara
+Management, iPhone specifics - while ours documents ours:
+
+| File | Decision |
+| --- | --- |
+| `local.env.example` | **merged** - upstream added one line documenting that `TOLKARA_PROFILE` takes several profiles separated by `:`, which their multi-profile support made true for us too |
+| `.github/workflows/release.yml` | **ours kept** - upstream added a Tolkara Management DMG job for a Mac app we do not publish; we publish only the unsigned `.ipa` |
+| `AGENTS.md`, `COMPATIBILITY.md`, `NOTICE.md`, `README.md`, `docs/BUILDING.md`, `docs/IPHONE.md`, `docs/TOUCH_INPUT.md`, `profiles/wow-forever/README.md` | **ours kept** - these are our product's documents, and upstream's newer text describes theirs; it stays readable under `platform/` and can be folded in file by file if we want a particular change |
+
+Nothing here changes how the app builds or behaves.
 

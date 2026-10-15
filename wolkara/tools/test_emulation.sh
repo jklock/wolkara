@@ -10,6 +10,9 @@ cd "$(dirname "$0")/../.."
 . wolkara/tools/env.sh
 wolkara/tools/prepare.sh
 
+# The gate first: if the split itself is out of shape, the suites below prove nothing.
+wolkara/tools/check_layers.sh
+
 cd build/platform
 tools/test_emulation.sh "$@"
 

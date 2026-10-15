@@ -132,7 +132,7 @@ them, which is exactly what an ingest wants.
     overlayed file present, `prepare.sh` accepts the overlay, no cross-module reach-in
     either way, and the root carries no platform path.
 
-**Verified on 2026-10-15**: `check_layers.sh` green on all nine checks;
+**Verified on 2026-10-15**: `check_layers.sh` green on all ten checks;
 `wolkara/tools/generate.sh` produces `build/platform/Tolkara.xcodeproj` with our files in
 it; all 22 overlaid sources compile against the iOS SDK in the prepared tree; the layer's
 WoW suite and its local-service retry suite both run against the prepared tree and pass;
@@ -147,32 +147,40 @@ adapter file used to hold turned out to be upstream's own work already (the NSVi
 emulation: autoresizing, subview ordering, `setHidden:`), or to live in the Touch module
 now, so the file is retired and its changes exist only as the patch.
 
-**Still open:** the two UI fixtures block headless without `--self-test`, and ten root
-documents are stale forks of upstream's text (listed in `AUDIT.md`; documentation and
-configuration only, no behaviour). One deliberate drop is recorded in `AUDIT.md`: our
+**Nothing from Phase 3 is open.** The two UI fixtures now close themselves after a
+minute unless `--stay` is passed, and the ten root documents were reviewed and decided
+(one merged, nine kept as ours; `AUDIT.md`). One deliberate drop is recorded there: our
 `--trace-appkit-geometry` diagnostic, which served the layout work and is no longer
-carried.
+carried. `VALIDATION.md` checks this phase, and every other one, against the design.
 
 
 ## Phase 4 - Prove parity
 
 15. Re-run the Phase 0 baseline through `wolkara/tools/*` and compare one-to-one.
-    **todo** (blocked by Phase 3).
+    **done** - the platform suite, the layer's own suites, the compile checks and the
+    project generation all re-run through `wolkara/tools/*`; the results are in
+    `VALIDATION.md`.
 16. Device parity on Dadpad: install (same bundle id, data preserved), game reaches the
     login screen, CASC repair line for a planted truncated index, keyboard request plus
     hardware-keyboard diagnosis, switch away to Messages and back with `arena result`
-    still 1, screenshot. **todo**.
-17. Wire `check_layers.sh` into the test entry point and CI. **todo**.
+    still 1, screenshot. **partial** - not run since the split. It needs a device build
+    that signs with the builder's own team and may prompt for keychain access, so it is
+    left for a person; `VALIDATION.md` records it as the one open check.
+17. Wire `check_layers.sh` into the test entry point and CI. **done locally** -
+    `wolkara/tools/test_emulation.sh` now runs the gate before the suites. There is no
+    pull-request CI in this repository to wire into: the only workflow is the tagged
+    release build.
 
 ## Phase 5 - Ingest upstream for real
 
-18. Ingest the 29 commits we lacked. **partial** - satisfied by construction, because
-    `platform/` starts at current `upstream/main`; what remains is re-expressing the
-    contested deltas against that newer code (Phase 2).
-19. Verify the arrivals that matter here. **partial** - BC textures: **done**, and it
-    turned out to need a patch (`docs/GPU_SUPPORT.md`, patches 0001/0002). iPad Pro M5
-    water rendering: **todo**. Steam Cloud suite: **todo**. Whether `management/` builds
-    or is deliberately unbuilt: **todo**.
+18. Ingest the 29 commits we lacked. **done** - satisfied by construction, because
+    `platform/` starts at current `upstream/main` and our changes were re-expressed
+    against it in Phase 2.
+19. Verify the arrivals that matter here. **done, with two caveats** - BC textures pass
+    (patches 0001/0002, all three runs); Steam Cloud's test is part of the platform suite
+    that passes (59 PASS); the iPad Pro M5 water fix is present in `platform/` but cannot
+    be checked on this M1 hardware; `management/` is deliberately not built, being the
+    platform's own Mac setup app for their product rather than ours.
 20. Document the ritual in `BUILDING.md`: subtree pull, `prepare.sh`, Phase 4 checks.
     **todo**.
 

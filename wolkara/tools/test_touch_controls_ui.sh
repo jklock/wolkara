@@ -47,5 +47,7 @@ if [[ " $* " == *" --self-test "* ]]; then
     xcrun simctl launch --terminate-running-process --console "$SIM_ID" org.tolkara.tests.touch-controls "$@" 2>&1 | tee "$LOG"
     grep -q 'TOUCH_UI_SELF_TEST_PASS:' "$LOG"
 else
-    xcrun simctl launch --terminate-running-process --console "$SIM_ID" org.tolkara.tests.touch-controls "$@"
+    # Looking at it by hand: keep it open. Without --stay the fixture closes itself
+    # after a minute, so an unattended run cannot sit on the console for ever.
+    xcrun simctl launch --terminate-running-process --console "$SIM_ID" org.tolkara.tests.touch-controls --stay "$@"
 fi
