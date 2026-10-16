@@ -9,6 +9,7 @@
 #import "LibraryViewController.h"
 #import "../Controller/ControllerInspector.h"
 #import "../Controller/ControllerWindow.h"
+#import "../Input/InputRouter.h"
 #import "../Voice/Dictation.h"
 #import "../WoW/CASC.h"
 #import "../WoW/WoWViewController.h"
@@ -203,13 +204,17 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     // measured rather than assumed. It reads only, and never consumes an input.
     // See docs/CONTROLLER_INPUT.md.
     [AKControllerInspector.shared begin];
-    // Tap Share: start listening. Tap it again: stop, type what you said into
-    // the game, and send it. Share reaches us through the screenshot iPadOS
-    // takes from that button, which is the only signal the system offers for it.
-    AKControllerInspector.shared.onInput = ^(NSString *element, double value, BOOL pressed) {
-        (void)value;
-        if (pressed && [element isEqualToString:@"Share"]) [AKDictation.shared toggle];
+    // Any button, on any controller, starts and stops dictation. What to watch
+    // for is resolved per device by the router — a reserved Share button where
+    // the hardware declares one, the system's own signal where iOS keeps the
+    // button, and otherwise a pattern (long press, double, chord) on whatever
+    // the user chose, learned by pressing it once. See docs/INPUT_TRIGGERS.md.
+    AKInputRouter.shared.onTrigger = ^(AKTrigger *trigger, AKInputEvent *event) {
+        (void)event;
+        fprintf(stderr,"[host] input trigger: %s\n", [trigger summary].UTF8String);
+        [AKDictation.shared toggle];
     };
+    [AKInputRouter.shared begin];
     if([arguments containsObject:@"--inspect-controller"]) {
         [AKControllerInspector.shared showPanel:YES];
         fprintf(stderr,"[host] controller inspector panel on\n");
