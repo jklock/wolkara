@@ -1,0 +1,37 @@
+# Wolkara layer patch 0014 - AppKit test: the on-screen controls follow the layer's default
+#
+# Why: the platform's test asserts its own product rule - with no stored choice, an iPad
+# shows no on-screen controls and keeps single-touch input, and an iPhone shows them. The
+# layer changes that rule on purpose: the on-screen controls are offered on every device the
+# product runs on, because driving a desktop game from an iPad with no mouse or keyboard is
+# what the product is for. A stored choice still wins, and switching them off still restores
+# direct touch input, which is what the rest of the test checks.
+#
+# The behaviour is the layer's, in wolkara/Touch/TouchControls.m, and it is documented in
+# docs/TOUCH_INPUT.md. This patch moves the platform test's expectation to match, rather
+# than changing the product back to suit a test. It was found by running the platform's own
+# suite, which the audit's verification list asks for and which had not been run before.
+#
+# Upstream: this is a test, not shipped code. If the layer's default is ever taken upstream,
+# this assertion is where the two rules meet.
+#
+--- a/tests/test_appkit_views.m	2026-10-16 17:02:28
++++ b/tests/test_appkit_views.m	2026-10-16 17:02:28
+@@ -165,10 +165,14 @@
+     // none and keeps single-touch input; iPhone shows them.
+     NSUserDefaults *defaults=NSUserDefaults.standardUserDefaults;
+     [defaults removeObjectForKey:AKTouchControlsDefaultsKey];
+-    BOOL phone=UIDevice.currentDevice.userInterfaceIdiom==UIUserInterfaceIdiomPhone;
++    // Wolkara: the on-screen controls are offered on every device this product runs on, not
++    // only on iPhone, so with no stored choice they are present here whatever the idiom. See
++    // wolkara/Touch/TouchControls.m and docs/TOUCH_INPUT.md.
+     UIView *plainHost=[NSClassFromString(@"AKHostView") new];
+-    assert(AKTouchControls.enabled==phone && !![plainHost valueForKey:@"_touchControls"]==phone);
+-    if(!phone) assert(!plainHost.multipleTouchEnabled);
++    assert(AKTouchControls.enabled && !![plainHost valueForKey:@"_touchControls"]);
++    // Multi-touch on the host follows the trackpad, not the on-screen controls: with the
++    // trackpad off, direct touch stays single-touch.
++    assert(!plainHost.multipleTouchEnabled);
+     [defaults setBool:NO forKey:AKTouchControlsDefaultsKey];
+     plainHost=[NSClassFromString(@"AKHostView") new];
+     assert(![plainHost valueForKey:@"_touchControls"] && !plainHost.multipleTouchEnabled);

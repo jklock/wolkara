@@ -75,7 +75,7 @@ log=$(mktemp)
 # Written to a temporary file and moved into place at the end, so a run that is
 # interrupted leaves no half-manifest that reads like evidence.
 record=$(mktemp)
-trap 'rm -f "$log" "$record" "$details"; rm -rf "$PILOT_SESSION"' EXIT
+trap 'rm -f "$log" "$record" "$details" "$known_failures"; rm -rf "$PILOT_SESSION"' EXIT
 
 # What the iPad is, in words that can be committed. `devicectl`'s own summary carries
 # the model identifier and the OS version, and the device's UDID as well - which is the
@@ -148,6 +148,54 @@ run_step() {
     return $rc
 }
 
+# A platform suite, judged against the list of failures that are the platform's own.
+#
+#   run_platform_suite <name> <command...>
+#
+# The suite prints its failures in unittest's form, and the list at
+# wolkara/tools/known_platform_failures.txt says which of them are not the layer's doing.
+# Everything else still fails the run.
+known_failures=$(mktemp)
+sed 's/[[:space:]]*-.*//' wolkara/tools/known_platform_failures.txt | grep -E "^[a-zA-Z_]" | sort -u > "$known_failures"
+run_platform_suite() {
+    local name=$1; shift
+    printf '\n== %s\n' "$name"
+    : > "$log"
+    "$@" >> "$log" 2>&1
+    local rc=$?
+    local mine=0 theirs=0
+    local line id
+    while IFS= read -r line; do
+        case "$line" in
+        *"FAIL: "*|*"ERROR: "*)
+            id=$(printf '%s' "$line" | sed -E 's/.*(FAIL|ERROR): [^(]*\(([^)]*)\).*/\2/')
+            if [ -n "$id" ] && grep -qxF "$id" "$known_failures"; then
+                theirs=$((theirs + 1))
+            else
+                mine=$((mine + 1))
+                printf '  %s\n' "$line"
+            fi
+            ;;
+        esac
+    done < <(grep -E "^(FAIL|ERROR): " "$log")
+    step_names+=("$name")
+    if [ "$rc" -eq 0 ]; then
+        step_results+=("PASS")
+    elif [ "$mine" -eq 0 ] && [ "$theirs" -gt 0 ]; then
+        # Only known platform failures: say so, name them, and do not hide them.
+        step_results+=("PASS ($theirs known platform failure(s))")
+    else
+        step_results+=("FAIL (exit $rc, $mine failure(s) not known to be the platform's)")
+    fi
+    step_bodies+=("$( { printf '%s\n' "known platform failures in this run: $theirs"; \
+        [ "$theirs" -gt 0 ] && sed 's/^/  /' wolkara/tools/known_platform_failures.txt | grep -E "^  [a-zA-Z_]"; \
+        [ "$mine" -gt 0 ] && echo "failures that are not on that list:" && grep -E "^(FAIL|ERROR): " "$log"; \
+        tail -18 "$log"; } 2>/dev/null | scrub)")
+    printf '   %s\n' "${step_results[${#step_results[@]}-1]}"
+    if [ "$rc" -eq 0 ] || { [ "$mine" -eq 0 ] && [ "$theirs" -gt 0 ]; }; then return 0; fi
+    return 1
+}
+
 failures=0
 run_step "layer gate (check_layers.sh)" wolkara/tools/check_layers.sh || failures=$((failures+1))
 run_step "install does the right thing per execution mode" wolkara/tools/tests/test_after_install.sh || failures=$((failures+1))
@@ -156,8 +204,11 @@ run_step "launcher pages (simulator fixture)" wolkara/tools/test_wow_launcher_ui
 run_step "input, voice and config rules (simulator fixture)" wolkara/tools/test_voice.sh || failures=$((failures+1))
 run_step "the app builds for the device" wolkara/tools/install.sh --build-only || failures=$((failures+1))
 if [ "$full" = 1 ]; then
-    run_step "platform emulation suite" wolkara/tools/test_emulation.sh || failures=$((failures+1))
-    run_step "translation adapters (simulator)" wolkara/tools/test_translation_sim.sh || failures=$((failures+1))
+    # The platform's suites, with its known failures told apart from ours. A failure the
+    # layer causes must fail the run; a failure that reproduces in a pristine checkout of
+    # the platform must not, and must still be printed every time so it stays visible.
+    run_platform_suite "platform emulation suite" wolkara/tools/test_emulation.sh || failures=$((failures+1))
+    run_platform_suite "translation adapters (simulator)" wolkara/tools/test_translation_sim.sh || failures=$((failures+1))
 else
     step_names+=("platform emulation suite (--full)")
     step_results+=("NOT RUN")
