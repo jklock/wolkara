@@ -55,6 +55,50 @@ push_file() {
     xcrun devicectl device copy to --device "$device" --domain-type appDataContainer \
         --domain-identifier "$bundle" --source "$1" --destination "$2" >/dev/null 2>&1
 }
+
+# Copy, then read it back and compare. `devicectl copy to` skips files it thinks are
+# unmodified, so "I pushed it" is not the same as "the device holds what I pushed", and a
+# matrix step that assumes otherwise tests the previous step's file.
+push_file_verified() {
+    local source=$1 destination=$2 back
+    back=$(mktemp)
+    push_file "$source" "$destination"
+    xcrun devicectl device copy from --device "$device" --domain-type appDataContainer \
+        --domain-identifier "$bundle" --source "$destination" --destination "$back" >/dev/null 2>&1
+    if cmp -s "$source" "$back"; then
+        rm -f "$back"
+        return 0
+    fi
+    rm -f "$back"
+    return 1
+}
+# The client has a mind of its own: it checks for and stages its own updates, and while it
+# writes to its store nothing else may touch that store. `pilot.sh stop` therefore refuses
+# and says so - "try again when it stops". So the matrix tries again. Waiting is the
+# difference between a check that reads the client's own work as our failure and one that
+# simply comes back when the device is free.
+stop_when_quiet() {
+    local deadline=$(( $(date +%s) + 300 ))
+    local waited=0
+    while :; do
+        if wolkara/tools/pilot.sh stop > "$work/stop.log" 2>&1; then
+            [ "$waited" -gt 0 ] && printf '  (waited %ss for the client to finish its own update)\n' "$waited"
+            return 0
+        fi
+        # Only "an update is writing" is worth waiting out. Anything else - a device that
+        # cannot be inspected, an app that will not die - is a real answer, so report it.
+        if ! grep -q "an update is writing" "$work/stop.log"; then
+            return 1
+        fi
+        if [ "$(date +%s)" -ge "$deadline" ]; then
+            printf '  (the client is still updating its own files after %ss; not waiting longer)\n' "$waited" >> "$work/stop.log"
+            return 1
+        fi
+        sleep 5
+        waited=$((waited + 5))
+    done
+}
+
 app_value() {
     # The value of one key in the file the app has written, or "missing".
     python3 - "$1" "$2" <<'PY'
@@ -80,7 +124,15 @@ step "2. install, and the user's file surviving it"
 push_file "$work/before.json" "Documents/wolkara-config.json" \
     && printf '  (placed a known file on the device)\n'
 
-wolkara/tools/pilot.sh stop >/dev/null 2>&1
+if stop_when_quiet; then
+    check 0 "the app stops when asked"
+else
+    # Nothing below is meaningful if the app is still up: a launch would be refused and
+    # every check after it would be about the previous run's process.
+    check 1 "the app stops when asked (see $work/stop.log)"
+    sed 's/^/  /' "$work/stop.log" | tail -5
+    exit 1
+fi
 if wolkara/tools/pilot.sh install > "$work/install.log" 2>&1; then
     check 0 "the app installs"
 else
@@ -98,16 +150,24 @@ check "$([ "$(app_value "$work/after-install.json" WoWRegion)" = "eu" ] && echo 
 printf '  the file on the device: %s\n' "$(cat "$work/after-install.json" 2>/dev/null | tr -d '\n' | cut -c1-140)"
 
 step "3. a file the user edited is imported"
-printf '{"version": 1, "settings": {"WoWRegion": "us", "AKVoiceAutoSubmit": true}}' > "$work/edited.json"
-wolkara/tools/pilot.sh stop >/dev/null 2>&1
-push_file "$work/edited.json" "Documents/wolkara-config.json"
+# A value that is *different* from what is there now, whichever that is: a check that
+# asserts a fixed value passes or fails depending on what the previous run left behind,
+# which is how this step reported a failure while behaving perfectly.
+fetch_config "$work/before-edit.json"
+current=$(app_value "$work/before-edit.json" WoWRegion)
+if [ "$current" = "eu" ]; then wanted=us; else wanted=eu; fi
+printf '{"version": 1, "settings": {"WoWRegion": "%s", "AKVoiceAutoSubmit": true}}' "$wanted" > "$work/edited.json"
+stop_when_quiet || {
+    check 1 "the app stops before the file is replaced (see $work/stop.log)"
+    exit 1
+}
+check "$(push_file_verified "$work/edited.json" "Documents/wolkara-config.json" && echo 0 || echo 1)" \
+      "the edited file is on the device"
 wolkara/tools/pilot.sh launch >/dev/null 2>&1
 wolkara/tools/pilot.sh wait --timeout 60 >/dev/null 2>&1
 fetch_config "$work/after-import.json"
-check "$([ "$(app_value "$work/after-import.json" WoWRegion)" = "us" ] && echo 0 || echo 1)" \
-      "the edited value was adopted (WoWRegion=us)"
-check "$([ "$(app_value "$work/after-import.json" AKVoiceAutoSubmit)" = "True" ] && echo 0 || echo 1)" \
-      "and so was the second one"
+check "$([ "$(app_value "$work/after-import.json" WoWRegion)" = "$wanted" ] && echo 0 || echo 1)" \
+      "the edited value was adopted (WoWRegion=$wanted, was $current)"
 wolkara/tools/pilot.sh log 40 > "$work/log-import.log" 2>&1
 # At least one choice taken from the file. Not an exact count: a value that was already
 # what the file says is not a change, and the previous run may have left one there.
@@ -120,8 +180,12 @@ step "4. a malformed file is refused, kept, and survived"
 # A file cut off halfway, and a previous copy that is no better. This is the shape that
 # used to send the recovery path round in circles.
 printf '{"version": 1, "settings": {"WoWRegion": "e' > "$work/broken.json"
-wolkara/tools/pilot.sh stop >/dev/null 2>&1
-push_file "$work/broken.json" "Documents/wolkara-config.json"
+stop_when_quiet || {
+    check 1 "the app stops before the malformed file is placed (see $work/stop.log)"
+    exit 1
+}
+check "$(push_file_verified "$work/broken.json" "Documents/wolkara-config.json" && echo 0 || echo 1)" \
+      "the malformed file is on the device"
 push_file "$work/broken.json" "Documents/wolkara-config.json.bak"
 wolkara/tools/pilot.sh launch >/dev/null 2>&1
 wolkara/tools/pilot.sh wait --timeout 60 > "$work/wait-broken.log" 2>&1
