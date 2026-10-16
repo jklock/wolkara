@@ -1,12 +1,17 @@
 // Wolkara: trying the voice button before the game is started, in full.
 //
-// This screen is deliberately only an output. The button does not get its own copy
-// of the routing: Shell/main.m already sends the mapped trigger to the microphone,
-// so what is exercised here is the same path the game will use. All this screen
-// does is take the words instead of the game, and say what it heard.
+// This screen is deliberately only an output. The button does not get its own copy of
+// the routing: Shell/main.m sends the mapped trigger to the microphone, so what is
+// exercised here is the same path the game will use. All this screen does is take the
+// words instead of the game, and say what it heard.
 //
-// Drawn from WolkaraTheme, so it is the same navy and gold as the settings screen
-// and the Add-on Manager beside it.
+// It is also the one place the *state* of a dictation session is visible, which is what
+// the state machine added for the 2026-10-16 audit is for: authorizing, listening,
+// finalizing. A session that never leaves "finalizing" and one that never starts look
+// identical from the outside otherwise.
+//
+// Drawn from WolkaraTheme, so it is the same navy and gold as the settings screen and
+// the Add-on Manager beside it.
 
 #import "VoiceTestViewController.h"
 
@@ -15,6 +20,8 @@
 #import "Dictation.h"
 #import "VoiceSettings.h"
 #import "Trigger.h"
+#import "../Input/InputElement.h"
+#import "../Controller/ControllerInspector.h"
 #import "../App/WolkaraLog.h"
 #import "../App/WolkaraTheme.h"
 
@@ -67,8 +74,8 @@
     self.box.layer.borderWidth = 1;
     self.box.layer.borderColor = [WKGold() colorWithAlphaComponent:0.24].CGColor;
     self.box.textContainerInset = UIEdgeInsetsMake(12, 12, 12, 12);
-    // Editable on purpose: the text that arrived is theirs to correct, and doing
-    // that here is how the dictionary and the mode get judged.
+    // Editable on purpose: the text that arrived is theirs to correct, and doing that
+    // here is how the dictionary and the mode get judged.
     [self.box.heightAnchor constraintGreaterThanOrEqualToConstant:200].active = YES;
     [rows addArrangedSubview:self.box];
 
@@ -104,28 +111,36 @@
     dictation.listeningChanged = ^(BOOL listening) {
         [weakSelf showListening:listening];
     };
+    dictation.stateChanged = ^(AKDictationState state) {
+        [weakSelf showState:state];
+    };
+    dictation.problemHandler = ^(NSString *message) {
+        weakSelf.hint.text = message;
+    };
     [self refreshButton];
-    [self showListening:dictation.listening];
-    WKLog("voice", @"test screen armed on %@", [AKVoiceSettings.shared mappingSummaryForDevice:GCController.controllers.firstObject.vendorName]);
+    [self showState:dictation.state];
+    WKLog("voice", @"test screen armed on %@", [AKVoiceSettings.shared mappingSummaryForDevice:[self deviceIdentity]]);
 }
 
 - (void)viewWillDisappear:(BOOL)animated {
     [super viewWillDisappear:animated];
     AKDictation *dictation = AKDictation.shared;
-    // Stop first, while this screen still owns the words. Clearing the handler
-    // first would send the half-heard utterance into the game's chat box on the
-    // way out, which is the opposite of what the user asked for.
-    if (dictation.listening) [dictation end];
+    // Cancel, not end. Ending asks the recogniser for its last words and delivers them
+    // - and the screen that asked for them is going away, so the words would be typed
+    // into the game as the sheet closes. Nothing heard here is worth that.
+    [dictation cancel];
     dictation.transcriptHandler = nil;
     dictation.listeningChanged = nil;
+    dictation.stateChanged = nil;
+    dictation.problemHandler = nil;
 }
 
 - (void)done { WKDismissPage(self); }
 
 #pragma mark - What arrives
 
-// Shown exactly as the game would receive it: the text, and the trailing space if
-// that option is on. One utterance per line, because the box is read by eye.
+// Shown exactly as the game would receive it: the text, and the trailing space if that
+// option is on. One utterance per line, because the box is read by eye.
 - (void)appendTranscript:(NSString *)text {
     if (!text.length) {
         self.hint.text = @"Nothing was heard. Try again, a little closer to the iPad.";
@@ -145,28 +160,48 @@
     self.hint.text = nil;
 }
 
-#pragma mark - What to press
+#pragma mark - What to press, and what it is doing
+
+- (nullable NSString *)deviceIdentity {
+    GCController *pad = GCController.controllers.firstObject;
+    return pad ? AKControllerIdentity(pad) : nil;
+}
 
 - (void)refreshButton {
     GCController *pad = GCController.controllers.firstObject;
-    NSString *device = pad.vendorName;
+    NSString *device = [self deviceIdentity];
     NSString *summary = [AKVoiceSettings.shared mappingSummaryForDevice:device];
     BOOL toggle = AKVoiceSettings.shared.mode == AKVoiceModeToggle;
-    self.buttonLabel.text = [NSString stringWithFormat:@"%@\n%@",
-        pad ? [NSString stringWithFormat:@"%@ — %@", summary, device]
+    NSString *state = AKVoiceSettings.shared.enabled ? @"" : @"Voice is switched off, so nothing will start it. Turn it on in Key / Button Configuration.";
+    self.buttonLabel.text = [NSString stringWithFormat:@"%@\n%@%@",
+        pad ? [NSString stringWithFormat:@"%@ — %@", summary, pad.vendorName]
             : [NSString stringWithFormat:@"%@ — no controller connected", summary],
         toggle ? @"Press it once to start and again to stop."
-               : @"Hold it while you speak, then let go."];
+               : @"Hold it while you speak, then let go.",
+        state.length ? [@"\n" stringByAppendingString:state] : @""];
 }
 
 - (void)showListening:(BOOL)listening {
-    self.stateLabel.text = listening ? @"Listening…" : @"Microphone off";
-    self.stateLabel.textColor = listening ? WKGold() : WKMuted();
+    // The coarse answer, kept because the switch from "off" to "on" is what the user
+    // cares about most; showState: refines it.
+    if (!listening) self.stateLabel.textColor = WKMuted();
+}
+
+- (void)showState:(AKDictationState)state {
+    NSString *text = nil;
+    switch (state) {
+    case AKDictationStateIdle: text = @"Microphone off"; break;
+    case AKDictationStateAuthorizing: text = @"Waiting for permission…"; break;
+    case AKDictationStateListening: text = @"Listening…"; break;
+    case AKDictationStateFinalizing: text = @"Finishing what it heard…"; break;
+    }
+    self.stateLabel.text = text;
+    BOOL busy = state != AKDictationStateIdle;
+    self.stateLabel.textColor = busy ? WKGold() : WKMuted();
 }
 
 #pragma mark - Small pieces
 
-// A group of rows on the launcher's panel colour, padded the same way everywhere.
 - (UIView *)card:(NSArray<UIView *> *)rows {
     UIView *panel = WKCard();
     UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:rows];

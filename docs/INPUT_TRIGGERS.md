@@ -3,6 +3,12 @@
 Status: design. The Share work proved the mechanism on one pad; this is the layer
 that makes it work for whatever the user plugs in.
 
+**Nothing here fires on its own.** A trigger exists only once the user has switched voice
+on and pressed the button they want; until then the router is given no trigger at all and
+the inspector changes nothing about the pad. The 2026-10-16 audit's first release blocker
+was a path where an unrelated screenshot could start the microphone, and the answer is
+this rule rather than a better guess about who pressed what.
+
 ## Why
 
 Controllers differ wildly. The GameSir G7 Pro declares 34 elements and no Share
@@ -30,21 +36,33 @@ with no per-device code.
 - **Test fixtures.** `wolkara/Touch/tests/test_touch_gamepad_app.m` already fakes a
   controller with `extendedGamepad` and `physicalInputProfile`, so every profile
   can be tested without hardware.
-- **The system-consumed path.** A button iPadOS keeps for itself (Share, Guide)
-  is still reachable through the notifications its gesture posts — measured, see
-  `CONTROLLER_INPUT.md`.
+- **The system-consumed path.** A button iPadOS keeps for itself (Share, Guide) posts
+the notifications its gesture produces, so it is reachable — measured, see
+`CONTROLLER_INPUT.md`. A screenshot is offered to the user as `system.screenshot` and
+does nothing unless they map it; a screen-capture change is never offered at all.
 
-## What is missing
+## What is built
 
-1. **Identity in the stream.** A press arrives as `element, value, pressed`. Which
-   device it came from is not carried, so nothing can be remembered per device.
-2. **Patterns.** Only single presses are distinguished, so a controller whose
-   every button the game already uses has nothing left to offer.
-3. **A way to choose.** No arm-and-press, so any choice needs code.
-4. **One stream.** Gamepad, keyboard, mouse, touchpad and system signals are
-   separate today.
-5. **Always on.** Everything sits behind `--inspect-controller`, which is a
-   diagnostic flag, not a feature.
+1. **Identity in the stream.** `AKInputEvent` carries the device, as the controller's
+   identity (`AKControllerIdentity`) rather than its vendor name, so two pads from one
+   vendor are two pads.
+2. **Patterns.** Press, double, long, chord and push-to-talk are all matched. Only press
+   and push-to-talk are offered by the launcher; the rest are reachable by a stored
+   mapping and are covered by the suite.
+3. **A way to choose.** Arm, then press. `AKInputRouter beginLearning` takes the first
+   event as the mapping and disarms itself after twenty seconds.
+4. **One stream.** Gamepad, keyboard, mouse, touchpad and system signals arrive as one
+   kind of event.
+5. **Off by default.** Nothing fires until the user switches voice on and maps a button.
+
+## What is not, and must not be claimed
+
+Input arbitration. The router *observes* input; it does not stop the game receiving the
+same press. A button the game also uses will still do whatever the game does with it,
+and a long press or a chord can fire the game's own binding as well as ours. The launcher
+says so where the button is chosen, and the honest description of this feature is
+"a button you are willing to share with the game", not "a button the game cannot see".
+Making it collision-free means owning the input, which is a different piece of work.
 
 ## Design
 
@@ -86,19 +104,24 @@ because the client binds single presses only.
 
 ### 4. Resolution order, per device
 
-1. A real element, preferring one iOS reserves but does not deliver to games
-   (`Button Share`), with its system gesture released.
-2. Otherwise the system signal for that button — the screenshot notification,
-   which is a discrete gesture the user made.
-   The *capture* notification is deliberately not in this list, and it used to be.
-   `UIScreen.isCaptured` says only that something is recording or mirroring the
-   iPad, not that the pad's Share was held: measured on 2026-10-16, with the iPad
-   being captured from a Mac, it fired a tenth of a second into every launch and
-   the launcher started dictating by itself. It is recorded in the inspector's
-   history and the log, and reported to nobody.
-3. Otherwise a learned element, chosen by the user.
-4. Otherwise a pattern on an element the game uses — long press, double tap or
-   chord. This is the universal fallback that needs no cooperation from anything.
+There is no fallback. For a device the user has mapped:
+
+1. The element they chose, as a canonical id (`controller.button.share`,
+   `keyboard.key.36`, `system.screenshot`).
+2. If that element is a controller button iOS reserves, its system gesture is released
+   for that button on that controller - and only then, and given back when the mapping is
+   removed, when voice is switched off, or when the pad goes away.
+3. Nothing else. An unmapped device fires nothing, and no element of a pad is touched
+   before the user asks.
+
+Element names are ids from `wolkara/Input/InputElement.h`, never display text. Display
+text was a bad key in three ways: the system's screenshot signal was called `Share`
+while the pad's button is `Button Share`, so a mapping made by pressing one could never
+match the other; a d-pad or touchpad event carried its coordinates in the name, so it
+was a different string every time and nothing learned from one press could match the
+next; and a name written into a user's defaults cannot be renamed later without losing
+their mapping. A name an older build wrote is migrated on read, once, by
+`AKTrigger migrateStoredTriggersInDefaults:`.
 
 ### 5. Learning, without a UI
 

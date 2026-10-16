@@ -194,6 +194,15 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
        ng_arena_reserved() || !hd_debugger_attached() || !CanStartApps()) return;
     ng_reserve_arena(NULL);
 }
+// The touch adapter posts this when it has created the game's own text view. That view
+// is the only thing dictation will type into, so it is registered here - where both the
+// adapter's announcement and the voice module are in scope - rather than searched for.
+- (void)gameTextInputAppeared:(NSNotification *)note {
+    UIView *view = [note.object isKindOfClass:UIView.class] ? note.object : nil;
+    [AKDictation setGameTextTarget:view];
+    WKLog("voice", @"the game's text input is up; dictation will type into it");
+}
+
 - (void)sceneDidBecomeActive:(UIScene *)scene {
     (void)scene; [self reserveExecutableMemory];
 }
@@ -213,14 +222,13 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     // measured rather than assumed. It reads only, and never consumes an input.
     // See docs/CONTROLLER_INPUT.md.
     [AKControllerInspector.shared begin];
-    // Any button, on any controller, starts and stops dictation. What to watch
-    // for is resolved per device by the router — a reserved Share button where
-    // the hardware declares one, the system's own signal where iOS keeps the
-    // button, and otherwise a pattern (long press, double, chord) on whatever
-    // the user chose, learned by pressing it once. See docs/INPUT_TRIGGERS.md.
+    // Any button, on any controller, starts and stops dictation - but only the button
+    // the user mapped, and only while they have the feature switched on. The router
+    // asks the settings for the trigger and gets nil unless both are true, so there is
+    // no path here that acts on an input nobody chose. See docs/INPUT_TRIGGERS.md.
     AKInputRouter.shared.onTrigger = ^(AKTrigger *trigger, AKInputEvent *event) {
         (void)event;
-        WKLog("voice", @"input trigger: %@", [trigger summary]);
+        WKLog("voice", @"input trigger pressed: %@", [trigger summary]);
         [AKDictation.shared toggle];
     };
     AKInputRouter.shared.onTriggerBegan = ^(AKTrigger *trigger, AKInputEvent *event) {
@@ -233,6 +241,18 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
         WKLog("voice", @"input trigger ended: %@", [trigger summary]);
         [AKDictation.shared end];
     };
+    // Something the user needs to know about the microphone: a refused permission, a
+    // device that cannot recognise speech on its own, a session that would not start.
+    AKDictation.shared.problemHandler = ^(NSString *message) {
+        WKLog("voice", @"dictation problem: %@", message);
+    };
+    // The game's own text view announces itself when the touch adapter creates it, and
+    // that is what dictation types into. By name rather than by constant: the adapter
+    // lives in translation/AppKit and this file in launcher/App, and neither can include
+    // the other without spelling out the prepared tree's layout. The constant is
+    // AKTouchGameTextInputDidAppearNotification in wolkara/Touch/TouchControls.h.
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(gameTextInputAppeared:)
+                                               name:@"AKTouchGameTextInputDidAppear" object:nil];
     [AKInputRouter.shared begin];
     if([arguments containsObject:@"--inspect-controller"]) {
         [AKControllerInspector.shared showPanel:YES];

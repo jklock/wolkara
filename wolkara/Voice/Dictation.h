@@ -1,38 +1,107 @@
-// Wolkara: dictation into the game.
+// Wolkara: what the button says, turned into text in the game.
 //
-// Tap the pad's Share button once and this listens. Tap it again and it stops,
-// types what you said into the game where your cursor is, and sends it.
+// The shape of it: a mapped button starts the microphone, the same button (or its
+// release) stops it, and what was said is typed into the game.
 //
-// Nothing of ours appears on screen: no panel, no keyboard, no field. The game's
-// own chat box is the only visible part of it.
+// Three things here come straight out of the 2026-10-16 audit:
 //
-// The recognition is Apple's on-device model, asked for explicitly, so no audio
-// leaves the iPad.
+//   * **Exactly one delivery.** The old code copied the transcript and tore the audio
+//     down immediately, so the recogniser's last words could arrive after the text -
+//     and after Return - had already gone to the game. There is now an explicit
+//     `finalizing` state: the audio ends, the recogniser is asked for its final result,
+//     and the text is delivered once, when that result arrives or when the wait times
+//     out.
+//   * **The audio session is given back as it was found.** It used to set record mode
+//     and then always leave the app at playback, which changes how the game sounds.
+//   * **On-device or nothing.** The product says recognition happens on the iPad, so a
+//     device that cannot do it is refused rather than quietly sent to a server.
+//
+// The recogniser and the audio session are behind two small protocols because they are
+// the two things that cannot run in a test, and the delivery rules are exactly what a
+// test has to be able to exercise.
 
 #import <Foundation/Foundation.h>
+#import <UIKit/UIKit.h>
 
 NS_ASSUME_NONNULL_BEGIN
+
+typedef NS_ENUM(NSInteger, AKDictationState) {
+    AKDictationStateIdle = 0,
+    // Asking for microphone and speech permission.
+    AKDictationStateAuthorizing,
+    // The microphone is open.
+    AKDictationStateListening,
+    // The audio has ended and the recogniser's last result is being waited for.
+    AKDictationStateFinalizing,
+};
+
+#pragma mark - The two seams
+
+@protocol AKDictationSpeech <NSObject>
+- (BOOL)isAvailable;
+/// Whether recognition can happen without sending audio anywhere.
+- (BOOL)supportsOnDeviceRecognition;
+/// Asks once per session. The answer is what matters; the call may be asynchronous.
+- (void)requestAuthorization:(void (^)(BOOL granted))completion;
+/// Starts feeding audio to the recogniser. `handler` is called with the running
+/// transcript, once with `isFinal`, and with an `error` if the session failed.
+- (void)startOnDevice:(BOOL)onDevice
+                words:(NSArray<NSString *> *)words
+              handler:(void (^)(NSString *transcript, BOOL isFinal, NSError *error))handler;
+/// Stop feeding audio and ask for the last result. Either `isFinal` or the deadline
+/// in AKDictation follows.
+- (void)finish;
+/// Abandon the session. No further handler calls.
+- (void)cancel;
+@end
+
+@protocol AKDictationAudio <NSObject>
+/// Take the session for recording, remembering how to put it back.
+- (BOOL)beginRecording:(NSError **)error;
+/// Put back the category, mode, options and active state that were there before.
+- (void)restore;
+@end
+
+#pragma mark - Dictation
 
 @interface AKDictation : NSObject
 
 + (instancetype)shared;
 
-// Start listening, or — if already listening — stop, transcribe, type and send.
-- (void)toggle;
-// Push to talk: the first call starts, the second finishes. Used when the mode
-// is hold, so the microphone is open exactly while the button is down.
-- (void)begin;
-- (void)end;
-
-// Whether the microphone is currently ours.
+@property (nonatomic, readonly) AKDictationState state;
+/// The microphone is open. True while listening *and* while waiting for the last
+/// words, because the indicator above the iPad must not blink off in between.
 @property (nonatomic, readonly) BOOL listening;
 
-// Where a transcript goes instead of the game, and how a screen follows the
-// microphone. The launcher's test screen sets both so the words land in its own
-// box; the game path leaves them unset and behaves exactly as it always has.
-// While the handler is set, the game is not typed into at all.
+- (void)toggle;
+- (void)begin;
+- (void)end;
+/// Abandon whatever is happening and deliver nothing.
+- (void)cancel;
+
+/// A screen that wants the words instead of the game: the test screen. While one is
+/// set, the game is never typed into.
 @property (nonatomic, copy, nullable) void (^transcriptHandler)(NSString *text);
 @property (nonatomic, copy, nullable) void (^listeningChanged)(BOOL listening);
+/// For a screen that wants to show what is happening; used by the test screen.
+@property (nonatomic, copy, nullable) void (^stateChanged)(AKDictationState state);
+/// Something the user should be told: a refused permission, no on-device
+/// recognition, no microphone. Logged as well, always.
+@property (nonatomic, copy, nullable) void (^problemHandler)(NSString *message);
+
+/// The game's own text view, registered by the layer's touch controls when they
+/// create it. Words go there and nowhere else: the old code walked every window in
+/// every scene looking for something that answers the private selector, which is not
+/// a thing to do while a game is running.
++ (void)setGameTextTarget:(nullable UIView *)view;
++ (nullable UIView *)gameTextTarget;
+
+/// Test seams. Left nil in the app, where the real recogniser and the real audio
+/// session are used.
+@property (nonatomic, strong, nullable) id<AKDictationSpeech> speech;
+@property (nonatomic, strong, nullable) id<AKDictationAudio> audio;
+/// How long to wait for the recogniser's last words after the audio ends.
+@property (nonatomic) NSTimeInterval finalizeTimeout;
 
 @end
 

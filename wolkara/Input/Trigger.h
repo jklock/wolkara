@@ -1,11 +1,15 @@
 // Wolkara: what to watch for, on any controller.
 //
-// A trigger is deliberately not "the Share button". Controllers differ: some
-// declare Share, some declare paddles, some declare nothing but a d-pad, and one
-// we measured declares 34 elements and no Share at all. So a trigger names an
-// element — or a family of elements — and a *pattern*, because a game can own
-// every single press of a button and still leave every long press, double press
-// and chord free.
+// A trigger names an *element* and a *pattern*. The element is a canonical id from
+// InputElement.h, never display text: "controller.button.share", "keyboard.key.36",
+// "system.screenshot". The pattern exists because a game that binds single presses
+// cannot be using a long press, a double press or a chord - but see the note below
+// about what is actually offered.
+//
+// There is deliberately no default trigger and no fallback. The 2026-10-16 audit was
+// right that a feature which starts listening because an unrelated screenshot was
+// taken is a privacy failure, so a trigger exists only once the user has made one,
+// and voice does nothing at all until they have.
 
 #import <Foundation/Foundation.h>
 
@@ -16,50 +20,67 @@ typedef NS_ENUM(NSInteger, AKTriggerPattern) {
     AKTriggerPatternPress = 0,
     // Two presses inside the double window.
     AKTriggerPatternDouble,
-    // Held past the hold threshold: free on a controller whose every tap the
-    // game already uses.
+    // Held past the hold threshold.
     AKTriggerPatternLong,
-    // Two elements held together, which a game that binds single presses cannot
-    // have claimed.
+    // Two elements held together.
     AKTriggerPatternChord,
-    // Push to talk: fires on press and again on release, so dictation can start
-    // on the first and finish on the second. It needs a button whose press and
-    // release we both receive, so it cannot be used on one iOS keeps for itself.
+    // Push to talk: fires on press and again on release, so dictation can start on
+    // the first and finish on the second. It needs a button whose press and release
+    // we both receive, so it cannot be used on one iOS keeps for itself.
     AKTriggerPatternPushToTalk,
 };
 
+// Matches any element name at all. Useful while learning; never stored.
+extern NSString *const AKTriggerAnyElement;
+
 @interface AKTrigger : NSObject <NSCopying>
 
-// The element to watch: an exact name the system uses ("Button Share"), or a
-// family prefix ("Button "), or AKTriggerAnyElement for anything at all.
 @property (nonatomic, copy) NSString *element;
 // The partner element for a chord, and ignored otherwise.
 @property (nonatomic, copy, nullable) NSString *chordElement;
 @property (nonatomic) AKTriggerPattern pattern;
-// How long "long" means, and how close together a double must be. Both in
-// seconds.
+// How long "long" means, and how close together a double must be. Both in seconds.
 @property (nonatomic) NSTimeInterval holdInterval;
 @property (nonatomic) NSTimeInterval doubleInterval;
 
-// Matches any element name at all. A starting point for learning: the user
-// presses what they want, and the name that arrives becomes the trigger.
-extern NSString *const AKTriggerAnyElement;
-
-// The default for hardware that offers nothing reserved: an element the user
-// picks, or this if they never pick. A long press leaves the game's own single
-// press untouched.
-+ (instancetype)defaultTriggerForController:(nullable NSString *)vendor;
-// The trigger to use when a controller declares a system-reserved button.
-+ (instancetype)systemButtonTrigger;
-// A description for the log, never shown inside the game.
+// Readable text for the log and the settings screen, built from the element's
+// display name rather than from the id.
 - (NSString *)summary;
-// Whether this trigger watches the given element name at all.
+// "press", "hold to talk", "double press", "long press", "chord". Only press and
+// push-to-talk are offered by the launcher; the rest are reachable by a stored
+// mapping and are covered by tests, but nothing in the UI pretends they are safe.
+- (NSString *)patternName;
+- (BOOL)patternIsOfferedInTheLauncher;
+// Whether this trigger watches the given element id. Exact, "any", or a family:
+// a trigger on "controller.button." covers every button.
 - (BOOL)watchesElement:(NSString *)element;
 
-// A choice is remembered per controller, so the same pad behaves the same way
-// next time and a different pad is unaffected.
-+ (nullable instancetype)savedTriggerForVendor:(nullable NSString *)vendor defaults:(NSUserDefaults *)defaults;
-- (void)saveForVendor:(nullable NSString *)vendor defaults:(NSUserDefaults *)defaults;
+#pragma mark - Storage
+
+// A stored dictionary is validated before any of it is used: one bad value must not
+// half-apply. Returns nil for anything that is not a usable trigger.
++ (nullable NSDictionary *)validatedStoredForm:(nullable NSDictionary *)stored;
+- (NSDictionary *)storedForm;
++ (nullable instancetype)triggerFromStored:(nullable NSDictionary *)stored;
+
+#pragma mark - Remembering a choice, per controller
+
+// The key is the controller's identity, which is vendor *and* category: two pads
+// from one vendor are two pads.
++ (NSString *)defaultsKeyForDevice:(nullable NSString *)device;
+// The mapping for a controller, or nil when there is none. A mapping an older build
+// wrote under the vendor name alone is moved onto the identity first, by
+// -[AKVoiceSettings adoptLegacyMappingForDevice:vendor:], not guessed at here.
++ (nullable instancetype)savedTriggerForDevice:(nullable NSString *)device defaults:(NSUserDefaults *)defaults;
+- (void)saveForDevice:(nullable NSString *)device defaults:(NSUserDefaults *)defaults;
++ (void)forgetTriggerForDevice:(nullable NSString *)device defaults:(NSUserDefaults *)defaults;
+
+// The key older builds used, for the one-time move onto a controller's identity.
++ (NSString *)legacyDefaultsKeyForVendor:(nullable NSString *)vendor;
+
+// Rewrites every stored mapping to canonical element ids, once, and returns how many
+// it changed. Called at startup so an existing user's button keeps working.
++ (NSUInteger)migrateStoredTriggersInDefaults:(NSUserDefaults *)defaults;
 
 @end
 

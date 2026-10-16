@@ -101,7 +101,7 @@ pre-split base - and asking which side actually changed.
 | Group | Count | Result |
 | --- | --- | --- |
 | The vendored platform | 513 files | byte-identical to `upstream/main` today (checked live on every gate run) |
-| Our patches | 9 | each is a three-way merge of our change onto upstream's current file, and every one merged clean, so no upstream line was dropped |
+| Our patches | 9 at the time of the split (13 now) | each is a three-way merge of our change onto upstream's current file, and every one merged clean, so no upstream line was dropped |
 | Our replacements | 9 | decided one by one: 3 dropped (we had not changed them), 5 merged with theirs, 2 ours-only (branding plists) |
 | Our additions | 52 | upstream has no file at those paths; the overlay refuses an `add` that would collide with one it has |
 | Files deleted as superseded | 22 | 7 we had not changed; 9 covered by a patch; 3 tools whose only change was branding and the display name, now the layer's; 2 tests of ours dropped on purpose; **1 real gap** |

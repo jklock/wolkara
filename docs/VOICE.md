@@ -9,18 +9,38 @@ work on any controller.
 1. **A section in the launcher** called **Voice Manager**, with two rows:
    **Key / Button Configuration** and **Test Voice**. Both open as popups over the
    home page rather than pushing the user away from it, with a Done button.
-2. The first lets the user **map the button or key**, and set the options below.
-3. **Test Voice** is where the button is tried out before the game is opened: a
-   box that receives the transcript, exactly as the game would, and nothing is
-   typed into the game from there.
-4. In the game, **that button starts transcription**. Nothing of ours appears.
-5. The transcript is typed into the game, and optionally sent.
+2. The first row starts with a switch. **Voice is off until the user turns it on**, and
+   nothing is armed, opened or changed before then; with it off, the rest of the page is
+   dimmed and the router is given no trigger.
+3. Switching it on lets the user **map the button or key**, and set the options below.
+   Mapping can be cleared, which gives the system its gesture back.
+4. **Test Voice** is where the button is tried out before the game is opened: a box that
+   receives the transcript, exactly as the game would, and nothing is typed into the game
+   from there.
+5. In the game, **that button starts transcription**. Nothing of ours appears.
+6. The transcript is typed into the game, and optionally sent.
 
-Both pages are drawn from `wolkara/Shell/WolkaraTheme.{h,m}`, which is the one
-place the launcher's ink and gold are written down - the Add-on Manager's values,
-because that is the screen the rest is expected to match. Building them from
-`UIColor.system*` is what made them the one part of the launcher that did not look
-like the launcher.
+Both pages are drawn from `wolkara/Shell/WolkaraTheme.{h,m}`, which is the one place the
+launcher's ink and gold are written down - the Add-on Manager's values, because that is
+the screen the rest is expected to match. Building them from `UIColor.system*` is what
+made them the one part of the launcher that did not look like the launcher.
+
+## What it will not do
+
+- **It will not start by itself.** No default trigger, no fallback, and a screen capture
+  is not an input at all. A screenshot only starts dictation if the user mapped
+  `system.screenshot` deliberately.
+- **It will not change a controller without being asked.** A reserved system gesture is
+  released for the exact element the user mapped, and given back when the mapping is
+  cleared, voice is switched off, or the pad disconnects.
+- **It will not send audio anywhere.** Recognition is on-device or it does not run: a
+  device that cannot do that is refused with a message rather than quietly falling back
+  to a server.
+- **It will not deliver twice, or deliver half.** The audio ends, the recogniser is asked
+  for its final result, and the text goes to the game once - when that result arrives or
+  when the wait times out. The game's audio session is put back the way it was found.
+- **It will not stop the game seeing the button.** The press reaches the game as well as
+  us, so the button should be one the user is willing to share. See `INPUT_TRIGGERS.md`.
 
 ## Handy is the baseline
 

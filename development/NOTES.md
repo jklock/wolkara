@@ -295,3 +295,108 @@ is not evidence that the app carries them. Fixing it means getting the two files
 resources without hand-editing `platform/`: a patch or an overlay entry, which is a decision rather
 than a chore.
 
+## 2026-10-16, last: working through the stability audit
+
+`STABILITY_AUDIT_2026-10-16.md` was reviewed in full and every finding was either fixed or answered.
+The audit is right about the shape of the problem, and most of its P1s were in the controller/voice
+path that was built the day before it.
+
+### The rule that came out of it
+
+**Nothing acts on an input the user did not choose, and nothing about a controller changes before
+they ask.** That is now structural rather than a set of checks:
+
+- `AKVoiceSettings.enabled` is NO until the user turns it on, and there is no default trigger and no
+  fallback. `-triggerForDevice:` returns nil unless the feature is on *and* that device has a mapping,
+  so the router has nothing to match and no code path can fire by accident.
+- The inspector's inventory is read-only. It used to clear the Share gesture reservation at startup
+  for every pad that declared one; that is a change to how the controller behaves before the user has
+  asked for anything. The reservation is released now only for the exact mapped element, and given
+  back when the mapping is cleared, voice is switched off, or the pad disconnects.
+- A screen-capture change is never an input. A screenshot is offered as `system.screenshot` and does
+  nothing unless mapped.
+
+### Element names are keys, so they are ids now
+
+`wolkara/Input/InputElement.h` gives every input a canonical id - `controller.button.share`,
+`keyboard.key.36`, `dpad.left.thumbstick.up.left`, `system.screenshot` - and display text is derived
+from it. Three separate faults came from using display text as the key: the system's screenshot signal
+was `Share` while the pad's button is `Button Share`, so a mapping made by pressing one could never
+match the other; d-pad and touchpad events carried their coordinates in the name, so they were a
+different string every time and nothing learned from a press could match the next; and a name in a
+user's defaults cannot be renamed later without discarding their mapping. A name an older build wrote
+is migrated once, on read.
+
+Mappings are keyed by `AKControllerIdentity` (vendor *and* category) rather than the vendor name, so
+two pads from one vendor stop sharing one mapping, and a mapping written under the old key is adopted
+the first time that controller is seen.
+
+### Dictation delivers once, and gives the audio back
+
+The old `stopAndSend` copied the transcript, ended the audio and tore everything down immediately, so
+the recogniser's last words could arrive after the text - and after Return - had already gone to the
+game. There is now a state machine (`idle`/`authorizing`/`listening`/`finalizing`), the audio ends
+first, the recogniser is asked for its final result, and delivery happens exactly once, when that
+result arrives or when the wait times out. The audio session's category, mode, options and active
+state are snapshotted and put back on every path, including denial, cancellation and error. On-device
+recognition is required rather than hoped for: a device that cannot do it is refused with a message.
+
+The recogniser and the audio session are behind two protocols, because they are the two things a test
+cannot run and the delivery rules are exactly what needs testing.
+
+The game's text target is registered by the adapter that creates it (a notification from
+`TouchControls`, wired in `main.m`) instead of dictation searching every window in every scene for the
+private selector.
+
+### The suite, and what it found
+
+`wolkara/tools/test_voice.sh` runs `wolkara/Voice/tests/test_voice_app.m` as a small app in the
+simulator: 113 checks over canonical ids, migration, mapping storage, the learning lifecycle,
+screenshot isolation, the dictation state machine and a malformed-config corpus. It found three real
+defects while being written:
+
+- A config `int` of `1` was refused as "not a boolean" by my own validator, which would have silently
+  dropped a valid mode from the user's file.
+- A controller **connecting** cancelled an armed mapping, which makes mapping impossible on hardware
+  that connects a moment after launch - the simulator has such a pad, which is how it was seen.
+- A mapping is stored against the device the signal is attributed to, which for a system signal is the
+  connected pad rather than `system`; the first version of the test assumed otherwise and the log said
+  so plainly.
+
+`wolkara/tools/tests/test_pilot.sh` (11 checks) covers the pilot's fail-closed rule and its session
+directory; `wolkara/tools/tests/test_after_install.sh` (11 checks) covers the execution-mode branching
+with a stub `enroll.sh` and a stub `xcrun`.
+
+### Tooling that had to change with it
+
+- `install.sh` no longer enrolls unconditionally. `wolkara/tools/after_install.sh` decides by mode:
+  enroll for Developer service, check the page containers for Local signing, and do nothing at all for
+  External JIT or an unset mode. Enrolling is developer-service work and was being done to devices
+  using neither of the other two modes.
+- `pilot.sh` keeps its work files in one `mktemp -d` directory per run. They were fixed names under
+  `/tmp`, so a second pilot compared against the first one's baseline and could call a crash "no new
+  crash report". It also fails closed: if `devicectl` cannot be asked, `state` says the device could
+  not be inspected, `stop`/`install` refuse, and `wait` keeps waiting rather than concluding anything.
+- `wolkara/tools/validate.sh` produces the evidence the audit asked for: one file per commit under
+  `development/validation/`, naming the commit, whether the tree was clean, every command, its exit
+  status and what it printed. It refuses to run on a dirty worktree unless told to, and `prepare.sh`
+  now prints the dirty files when it builds uncommitted layer code over a committed platform half.
+
+### Answered rather than fixed
+
+- **Trailing whitespace in our patches.** There is none. The lines that look like it are the unified
+  diff format's blank context lines, which are a single space by definition; "cleaning" them would
+  corrupt the patches. Checked with `grep -nE '^\+.*[^ ] +$'` over every patch: nothing.
+- **"Any button" is not collision-free.** It is not, and it cannot be without owning the input: the
+  router observes, so a button the game also uses still does what the game does with it. The launcher
+  now says so where the button is chosen, and `INPUT_TRIGGERS.md` says so in its own section. What is
+  no longer claimed is that a long press or a chord is free.
+
+### Still open, and known
+
+- The app still ships no `LICENSE`/`NOTICE.md` (above), so the About page lists no licenses.
+- Voice has no test for the *pages* beyond the fixture's screenshots; the rules are covered, the
+  layout is not.
+- Input arbitration, which is what "collision-free" would require, is not started.
+
+

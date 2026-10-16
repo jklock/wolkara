@@ -6,6 +6,13 @@
 #import "TouchHaptics.h"
 #import <objc/message.h>
 
+// Posted when the game's own text view exists, with that view as the object. Dictation
+// types into it and nowhere else; the alternative - searching every window in every
+// scene for something that answers a private selector - is not a thing to do while a
+// game is running. Shell/main.m is the observer, because it is what knows about both
+// this adapter and the voice module.
+NSNotificationName const AKTouchGameTextInputDidAppearNotification = @"AKTouchGameTextInputDidAppear";
+
 NSNotificationName const AKTouchKeyboardRequestNotification = @"AKTouchKeyboardRequestNotification";
 // The keys the launcher's and the platform's switches read. The trackpad string
 // is the one the platform already stored, so an existing choice carries over.
@@ -280,6 +287,10 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
         _haptics = [AKTouchHaptics new];
         _keyboardInput = [[AKKeyboardTextView alloc] initWithFrame:CGRectMake(0, 0, 1, 1) textContainer:nil];
         _keyboardInput.inputOwner = self;
+        // Announced, not reached for. This is the view that answers touchInsertText:,
+        // and it is the game's own text input, so it is what dictation types into.
+        [NSNotificationCenter.defaultCenter postNotificationName:AKTouchGameTextInputDidAppearNotification
+                                                        object:_keyboardInput];
         [self buildComposer];
         _keyboardButton = [self buttonWithSymbol:@"keyboard" label:@"Show keyboard" action:@selector(toggleKeyboard)];
         _keyboardButton.accessibilityIdentifier = @"tolkara.keyboard";
