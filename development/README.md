@@ -74,6 +74,7 @@ tree. The one piece still open is the AppKit adapter patch, recorded in
 | `AUDIT.md` | The clean-base findings (Phase 6) - quality problems to fix, with status. |
 | `DIVERGENCE.md` | What we changed versus upstream: statistics, themes, and where the two ran over each other. |
 | `NOTES.md` | Operational knowledge that is easy to lose: the CASC index repair, background survival, dictation, and tool gotchas. |
+| `TAKEOVER.md` | Current branch inventory, uncommitted-work boundary, and evidence needed to resume the controller/voice work. |
 
 Related repository docs, kept as the single source of truth for their subject:
 

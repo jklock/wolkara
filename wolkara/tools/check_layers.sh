@@ -75,7 +75,7 @@ else
                   # line: a file that reaches the build no other way must be named there.
                   grep -q "$f" "$map" || echo "$f"
               done < <(git ls-files 'wolkara/*' | grep -v -e '^wolkara/patches/' -e '^wolkara/tools/' \
-                                              -e '^wolkara/README.md' -e '^wolkara/overlay.map' | head -50) | head -5)
+                                              -e '^wolkara/README.md' -e '^wolkara/overlay.map') | head -5)
     if [ -n "$orphans" ]; then
         bad "layer files that the overlay does not carry (regenerate wolkara/tools/overlay_map.sh):"
         printf '     %s\n' $orphans
@@ -91,14 +91,32 @@ else
     else
         ok "every overlayed file exists in the layer"
     fi
+    # The map is generated, so it must equal what the generator produces now. Without
+    # this, a map edited by hand passes the orphan check while a whole module's entries
+    # quietly stop existing - which is exactly what happened to Controller, Voice and
+    # Input before this check was added.
+    generated=$(mktemp)
+    if wolkara/tools/overlay_map.sh "$generated" > /dev/null 2>&1 && [ -s "$generated" ] &&
+       diff -q "$map" "$generated" > /dev/null 2>&1; then
+        ok "wolkara/overlay.map is what wolkara/tools/overlay_map.sh generates"
+    else
+        bad "wolkara/overlay.map is stale: regenerate it with wolkara/tools/overlay_map.sh"
+        diff "$map" "$generated" 2>/dev/null | head -12 | sed 's/^/     /'
+    fi
+    rm -f "$generated"
     # prepare.sh has the final say: it refuses a 'replace' without a platform file and
     # an 'add' that collides with a path upstream now has. Running it here proves the
-    # overlay still matches the pin without touching the map.
-    if bash wolkara/tools/prepare.sh > /dev/null 2>&1; then
+    # overlay still matches the pin without touching the map. Its output is kept, not
+    # discarded: on 2026-10-16 this check failed once and passed on the next run with
+    # nothing to show for it, and a gate that cannot say why it refused is no gate.
+    prepared=$(mktemp)
+    if bash wolkara/tools/prepare.sh > "$prepared" 2>&1; then
         ok "prepare.sh accepts the overlay against the pinned platform"
     else
         bad "prepare.sh refused the overlay: it no longer matches the pinned platform"
+        tail -12 "$prepared" | sed 's/^/     /'
     fi
+    rm -f "$prepared"
 fi
 
 # 5. Every replacement must really be ours. A file we never changed must not take a

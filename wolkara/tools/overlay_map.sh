@@ -5,8 +5,15 @@
 # platform path it belongs at, and whether it replaces a platform file or adds a new
 # one. Run this after adding, moving or removing a layer file; prepare.sh enforces the
 # result, so a stale map stops the build instead of dropping a file.
+#
+# Writes wolkara/overlay.map, or the path given as the first argument. check_layers.sh
+# calls it with a temporary path to prove the committed map is exactly what this
+# script produces - a hand-edited map is how a layer file silently stops reaching the
+# build, which has happened once already.
 set -eu
 cd "$(dirname "$0")/../.." || exit 2
+
+out=${1:-wolkara/overlay.map}
 
 intent() {
     if git cat-file -e "HEAD:platform/$1" 2>/dev/null; then echo replace; else echo add; fi
@@ -64,9 +71,27 @@ intent() {
         esac
         echo "$f $dst $(intent "$dst")"
     done
-} > wolkara/overlay.map
+    echo "#"
+    echo "# Controller: what the pad reports, and every change to it (diagnostic)"
+    git ls-files wolkara/Controller | while read -r f; do
+        dst=launcher/Controller/${f#wolkara/Controller/}
+        echo "$f $dst $(intent "$dst")"
+    done
+    echo "#"
+    echo "# Voice: what you say, turned into text in the game"
+    git ls-files wolkara/Voice | while read -r f; do
+        dst=launcher/Voice/${f#wolkara/Voice/}
+        echo "$f $dst $(intent "$dst")"
+    done
+    echo "#"
+    echo "# Input: any button, on any controller, in one stream (see docs/INPUT_TRIGGERS.md)"
+    git ls-files wolkara/Input | while read -r f; do
+        dst=launcher/Input/${f#wolkara/Input/}
+        echo "$f $dst $(intent "$dst")"
+    done
+} > "$out"
 
-entries=$(awk '!/^#/ && NF==3' wolkara/overlay.map | wc -l | tr -d ' ')
-replaced=$(awk '!/^#/ && $3=="replace"' wolkara/overlay.map | wc -l | tr -d ' ')
-added=$(awk '!/^#/ && $3=="add"' wolkara/overlay.map | wc -l | tr -d ' ')
-echo "overlay_map: $entries entries ($replaced replace, $added add)"
+entries=$(awk '!/^#/ && NF==3' "$out" | wc -l | tr -d ' ')
+replaced=$(awk '!/^#/ && $3=="replace"' "$out" | wc -l | tr -d ' ')
+added=$(awk '!/^#/ && $3=="add"' "$out" | wc -l | tr -d ' ')
+echo "overlay_map: $out: $entries entries ($replaced replace, $added add)"
