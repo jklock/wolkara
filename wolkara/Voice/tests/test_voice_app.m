@@ -809,6 +809,14 @@ static void TestConfigRecursion(void) {
     (void)session; (void)options;
     WKLogStart();
     WKLog("test", @"voice suite starting");
+    // A fixture that can hang is not a test: it is a build that never finishes. This one is
+    // bounded by the runner too, but the watchdog means a hang says so in the log rather
+    // than leaving an empty screen and a mystery.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 30 * NSEC_PER_SEC),
+                   dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        fprintf(stderr, "VOICE TIMEOUT\n");
+        _Exit(1);
+    });
     self.window = [[UIWindow alloc] initWithWindowScene:(UIWindowScene *)scene];
     self.window.rootViewController = [UIViewController new];
     [self.window makeKeyAndVisible];

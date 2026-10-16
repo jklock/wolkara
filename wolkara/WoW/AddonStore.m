@@ -93,11 +93,19 @@ static BOOL Managed(NSDictionary *item) { return [item[@"folders"] isKindOfClass
     if(!folders.count&&top.count==1){NSString *wrapper=[extract stringByAppendingPathComponent:top[0]];NSArray *inside=[NSFileManager.defaultManager contentsOfDirectoryAtPath:wrapper error:NULL];for(NSString *name in inside)if(TOC([wrapper stringByAppendingPathComponent:name]))[folders addObject:name];if(folders.count)extract=wrapper;}
     if(!folders.count)return Fail(error,@"The ZIP contains no add-on folder with a .toc manifest.");
     if(![self compatibleFolders:folders from:extract error:error])return NO;
-    int lock=[self lock:error];if(lock<0)return NO;BOOL success=NO;@try { for(NSString *name in folders)if([NSFileManager.defaultManager fileExistsAtPath:[_directory stringByAppendingPathComponent:name]])return Fail(error,[NSString stringWithFormat:@"%@ already exists; remove or disable the managed package first.",name]);
+    int lock=[self lock:error];if(lock<0)return NO;BOOL success=NO;
+    // The folders this call actually created, so a failure cleans up after itself and
+    // nothing else. The cleanup used to remove every folder in the import on any failure,
+    // and the duplicate check returns through that path - so trying to install an add-on
+    // that was already there deleted the one that was already there. Found by the fixture
+    // in wolkara/WoW/tests/test_wow_launcher_app.m, which is the coverage the audit asked
+    // for; the manifest kept saying the package was owned while its folder was gone.
+    NSMutableArray<NSString *> *created=[NSMutableArray new];
+    @try { for(NSString *name in folders)if([NSFileManager.defaultManager fileExistsAtPath:[_directory stringByAppendingPathComponent:name]])return Fail(error,[NSString stringWithFormat:@"%@ already exists; remove or disable the managed package first.",name]);
         NSMutableArray *packages=[self mutablePackages];NSString *identifier=folders.firstObject;NSString *toc=TOC([extract stringByAppendingPathComponent:identifier]);[packages addObject:@{ @"identifier":identifier,@"name":Value(toc,@"Title:")?:identifier,@"version":Value(toc,@"Version:")?:@"Unknown version",@"source":@"zip",@"archiveSHA256":Digest(archive),@"folders":folders,@"pinned":@NO,@"disabled":@NO }];
-        for(NSString *name in folders)if(![NSFileManager.defaultManager copyItemAtPath:[extract stringByAppendingPathComponent:name] toPath:[_directory stringByAppendingPathComponent:name] error:error])return NO;
+        for(NSString *name in folders) { if(![NSFileManager.defaultManager copyItemAtPath:[extract stringByAppendingPathComponent:name] toPath:[_directory stringByAppendingPathComponent:name] error:error])return NO; [created addObject:name]; }
         if(![self saveManifest:packages error:error])return NO;success=YES;[self reload];return YES;
-    } @finally {TKWoWReleaseUpdateLock(lock);if(!success)for(NSString *name in folders)[NSFileManager.defaultManager removeItemAtPath:[_directory stringByAppendingPathComponent:name] error:NULL];[NSFileManager.defaultManager removeItemAtPath:job error:NULL];}
+    } @finally {TKWoWReleaseUpdateLock(lock);if(!success)for(NSString *name in created)[NSFileManager.defaultManager removeItemAtPath:[_directory stringByAppendingPathComponent:name] error:NULL];[NSFileManager.defaultManager removeItemAtPath:job error:NULL];}
 }
 - (BOOL)setDisabled:(BOOL)disabled record:(TKAddonRecord *)record error:(NSError **)error {
     if (!record.managed) return Fail(error,@"Wolkara only changes folders it installed.");

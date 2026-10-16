@@ -4,6 +4,9 @@
 #include <stdatomic.h>
 #import "../launcher/WoW/WoWViewController.h"
 #import "../launcher/WoW/AddonManager.h"
+#import "../launcher/WoW/AddonStore.h"
+#import "../launcher/WoW/AddonCredentialStore.h"
+#import <Security/Security.h>
 #import "../launcher/WoW/Client.h"
 #import "../launcher/WoW/Updater.h"
 #import "../launcher/App/LaunchProgressView.h"
@@ -59,6 +62,190 @@ static UIView *Find(UIView *view, NSString *identifier) {
     for (UIView *child in view.subviews) { UIView *match=Find(child,identifier); if (match) return match; }
     return nil;
 }
+// What the store does, without a network and without the unzipper.
+//
+// The audit's open-work note: the add-on subsystem had no automated coverage at all. The
+// store itself - which folders count as add-ons, what the manifest says, what happens on a
+// duplicate, an incompatible TOC, a missing TOC, what removal and disabling do - is all
+// offline logic, and the extractor is looked up by name at runtime, so the fixture stands in
+// for it and exercises everything except the unzipping itself.
+//
+// The extractor it stands in for is `wolkara/WoW/AddonArchive.swift`, which is ours and uses
+// ZIPFoundation. Testing it would mean building that package, so it is explicitly deferred
+// in development/AUDIT.md and exercised on the device instead (importing a real add-on).
+@interface TKAddonArchive : NSObject
++ (BOOL)extractArchiveAtURL:(NSURL *)url toDirectoryURL:(NSURL *)destination error:(NSError **)error;
+@end
+
+@implementation TKAddonArchive
++ (BOOL)extractArchiveAtURL:(NSURL *)url toDirectoryURL:(NSURL *)destination error:(NSError **)error {
+    // The archive is a real file - the store reads and hashes it before asking us to extract
+    // it - and what it would extract to is a sibling directory named after it. The boundary
+    // between "the store" and "the unzipper" is exactly where this test stops looking.
+    NSString *source = [url.path stringByAppendingString:@".extracted"];
+    NSFileManager *files = NSFileManager.defaultManager;
+    if (![files fileExistsAtPath:source]) {
+        if (error) *error = [NSError errorWithDomain:@"test" code:1
+                                            userInfo:@{NSLocalizedDescriptionKey: @"no such archive"}];
+        return NO;
+    }
+    // The destination is the extractor's to create: the store makes the job directory and
+    // leaves the extraction directory to whoever is doing the extracting.
+    [files createDirectoryAtPath:destination.path withIntermediateDirectories:YES attributes:nil error:NULL];
+    for (NSString *name in [files contentsOfDirectoryAtPath:source error:NULL]) {
+        if (![files copyItemAtPath:[source stringByAppendingPathComponent:name]
+                            toPath:[destination.path stringByAppendingPathComponent:name]
+                             error:error]) return NO;
+    }
+    return YES;
+}
+@end
+
+// The record the store is currently holding for the package we imported. Each mutation
+// reloads, so the object held before one is not the object to pass to the next - which is
+// also what the launcher's own table has to do.
+static TKAddonRecord *ManagedRecord(TKAddonStore *store) {
+    for (TKAddonRecord *record in store.records) if (record.managed) return record;
+    return nil;
+}
+
+static void WriteFile(NSString *path, NSString *contents) {
+    [NSFileManager.defaultManager createDirectoryAtPath:path.stringByDeletingLastPathComponent
+                            withIntermediateDirectories:YES attributes:nil error:NULL];
+    [contents writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+}
+
+static void TestAddons(void) {
+    NSFileManager *files = NSFileManager.defaultManager;
+    NSString *root = [NSTemporaryDirectory() stringByAppendingPathComponent:@"wow-addon-tests"];
+    [files removeItemAtPath:root error:NULL];
+    NSString *addons = [root stringByAppendingPathComponent:@"Interface/AddOns"];
+
+    // --- what counts as an add-on
+    WriteFile([addons stringByAppendingPathComponent:@"MyAddon/MyAddon.toc"],
+              @"## Title: My Addon\n## Version: 1.2.3\n## Interface: 16001\n");
+    WriteFile([addons stringByAppendingPathComponent:@"MyAddon/core.lua"], @"-- lua\n");
+    WriteFile([addons stringByAppendingPathComponent:@"NoTOC/readme.txt"], @"nothing here\n");
+    WriteFile([addons stringByAppendingPathComponent:@"stray.txt"], @"not a folder\n");
+    WriteFile([addons stringByAppendingPathComponent:@".hidden/Hidden.toc"], @"## Title: Hidden\n");
+
+    NSArray<TKWoWAddon *> *found = TKWoWAddonsAtDirectory(addons);
+    assert(found.count == 1);
+    assert([found[0].title isEqualToString:@"My Addon"]);
+    assert([found[0].version isEqualToString:@"1.2.3"]);
+    assert(found[0].fileCount == 2);   // the .toc and the .lua, and not the directory itself
+
+    // --- the store: import, keep a manifest, refuse a duplicate
+    // The version AddonManager.m builds the store with. It is a constant inside that file,
+    // so the fixture names it here rather than reaching into it.
+    TKAddonStore *store = [[TKAddonStore alloc] initWithAddOnsDirectory:addons
+                                                                product:@"wow_classic_beta"
+                                                            gameVersion:@"1.60.1"];
+    [store reload];
+    assert(store.records.count == 1);
+    assert([store.records[0].source isEqualToString:@"Existing"]);
+    assert(!store.records[0].managed);   // found in the folder, not imported by us
+    assert(store.records[0].pinned == NO);
+
+    // The archive file the store reads and hashes, and beside it what the extractor would
+    // have produced from it.
+    NSString *package = [root stringByAppendingPathComponent:@"package.zip"];
+    WriteFile(package, @"PK\x03\x04 not really a zip, but a real file\n");
+    WriteFile([root stringByAppendingPathComponent:@"package.zip.extracted/Imported/Imported.toc"],
+              @"## Title: Imported Addon\n## Version: 9.9\n## Interface: 16001\n");
+    WriteFile([root stringByAppendingPathComponent:@"package.zip.extracted/Imported/extra.lua"], @"-- lua\n");
+    NSError *error = nil;
+    BOOL importedOK = [store importZIPAtURL:[NSURL fileURLWithPath:package] error:&error];
+    if (!importedOK) NSLog(@"ADDON_IMPORT_FAILED: %@", error.localizedDescription);
+    assert(importedOK);
+
+    TKAddonRecord *imported = ManagedRecord(store);
+    assert(imported != nil);
+    assert([imported.name isEqualToString:@"Imported Addon"]);
+    assert([imported.version isEqualToString:@"9.9"]);
+    assert([imported.source isEqualToString:@"Wolkara import"]);
+    assert([files fileExistsAtPath:[addons stringByAppendingPathComponent:@"Imported/Imported.toc"]]);
+    assert([files fileExistsAtPath:[addons stringByAppendingPathComponent:@".wolkara-addons.json"]]);
+
+    // The same package twice: refused, and the first copy is *untouched*. It was not: the
+    // store's failure cleanup removed every folder in the import, and the duplicate check
+    // returns through that path, so asking to install an add-on you already have deleted the
+    // one you had. Found by this fixture, which is the coverage the audit asked for.
+    error = nil;
+    assert(![store importZIPAtURL:[NSURL fileURLWithPath:package] error:&error]);
+    assert([error.localizedDescription containsString:@"already exists"]);
+    assert([files fileExistsAtPath:[addons stringByAppendingPathComponent:@"Imported/Imported.toc"]]);
+    assert([files fileExistsAtPath:[addons stringByAppendingPathComponent:@"Imported/extra.lua"]]);
+    assert(ManagedRecord(store) != nil);
+
+    // A package with no TOC anywhere: refused with something a person can act on.
+    NSString *tocless = [root stringByAppendingPathComponent:@"tocless.zip"];
+    WriteFile(tocless, @"PK\x03\x04 no toc inside\n");
+    WriteFile([root stringByAppendingPathComponent:@"tocless.zip.extracted/Whatever/notes.txt"], @"no toc\n");
+    error = nil;
+    assert(![store importZIPAtURL:[NSURL fileURLWithPath:tocless] error:&error]);
+    assert([error.localizedDescription containsString:@"no add-on folder"]);
+
+    // And an archive the extractor cannot read at all.
+    error = nil;
+    assert(![store importZIPAtURL:[NSURL fileURLWithPath:[root stringByAppendingPathComponent:@"nope"]] error:&error]);
+    assert(error != nil);
+
+    // --- pinning, disabling, removing
+    error = nil;
+    BOOL pinnedOK = [store setPinned:YES record:imported error:&error];
+    if (!pinnedOK) NSLog(@"ADDON_PIN_FAILED: %@", error.localizedDescription);
+    assert(pinnedOK);
+    assert(ManagedRecord(store).pinned);
+
+    error = nil;
+    BOOL disabledOK = [store setDisabled:YES record:ManagedRecord(store) error:&error];
+    if (!disabledOK) NSLog(@"ADDON_DISABLE_FAILED: %@", error.localizedDescription);
+    assert(disabledOK);
+    // A disabled package keeps its record, so the user can turn it back on.
+    TKAddonRecord *disabled = nil;
+    for (TKAddonRecord *record in store.records) if ([record.identifier isEqualToString:@"Imported"]) disabled = record;
+    assert(disabled != nil && disabled.disabled);
+
+    error = nil;
+    assert([store setDisabled:NO record:disabled error:&error]);
+
+    error = nil;
+    BOOL removedOK = [store removeRecord:ManagedRecord(store) error:&error];
+    if (!removedOK) NSLog(@"ADDON_REMOVE_FAILED: %@", error.localizedDescription);
+    assert(removedOK);
+    assert(![files fileExistsAtPath:[addons stringByAppendingPathComponent:@"Imported"]]);
+    assert(store.records.count == 1);   // only the one that was already there
+
+    // An add-on this store did not install is not its to remove.
+    error = nil;
+    TKAddonRecord *existing = store.records[0];
+    assert(![store removeRecord:existing error:&error]);
+    assert([files fileExistsAtPath:[addons stringByAppendingPathComponent:@"MyAddon"]]);
+
+    // --- the key
+    TKAddonCredentialStore *credentials = [TKAddonCredentialStore new];
+    assert([credentials curseForgeKey:NULL] == nil || [[credentials curseForgeKey:NULL] isKindOfClass:NSString.class]);
+    NSError *keyError = nil;
+    // This fixture is ad-hoc signed with no entitlements, so the keychain refuses it with
+    // errSecMissingEntitlement (-34018). That is the fixture's limit, not the store's: the app
+    // carries the keychain access group, and the round trip is exercised on the device. What
+    // can and must be checked here is that a keychain which says no is *reported*: a key that
+    // was not stored must never look stored.
+    BOOL stored = [credentials storeCurseForgeKey:@"test-key-not-a-real-one" error:&keyError];
+    if (stored) {
+        assert([[credentials curseForgeKey:NULL] isEqualToString:@"test-key-not-a-real-one"]);
+        assert([credentials removeCurseForgeKey:NULL]);
+        assert([credentials curseForgeKey:NULL] == nil);
+    } else {
+        assert(keyError != nil);
+        assert([credentials curseForgeKey:NULL] == nil);
+        assert(keyError.code == errSecMissingEntitlement);
+    }
+
+    [files removeItemAtPath:root error:NULL];
+}
+
 @interface TKWoWFixtureDelegate : UIResponder <UIWindowSceneDelegate>
 @property(nonatomic) UIWindow *window;
 @property(nonatomic) TKWoWViewController *controller;
@@ -116,6 +303,9 @@ static UIView *Find(UIView *view, NSString *identifier) {
     [self performSelector:@selector(checkReady) withObject:nil afterDelay:0.3];
 }
 - (void)checkReady {
+    // The add-on subsystem first: it needs no network and no launcher, and it was the one
+    // part the audit listed as having no automated coverage at all.
+    TestAddons();
     assert([self primary].enabled);
     assert([[self status] isEqual:@"Ready to play"] && self.controller.title.length==0);
     // The mark is the artwork when the asset catalog reaches the build, and the
