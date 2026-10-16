@@ -70,7 +70,21 @@ log=$(mktemp)
 # Written to a temporary file and moved into place at the end, so a run that is
 # interrupted leaves no half-manifest that reads like evidence.
 record=$(mktemp)
-trap 'rm -f "$log" "$record"' EXIT
+trap 'rm -f "$log" "$record" "$details"' EXIT
+
+# What the iPad is, in words that can be committed. `devicectl`'s own summary carries
+# the model identifier and the OS version, and the device's UDID as well - which is the
+# one part that must not end up in a file in the repository.
+details=$(mktemp)
+device_description() {
+    xcrun devicectl device info details --device "$DEVICE" > "$details" 2>/dev/null || true
+    local model os
+    model=$(sed -n 's/.*[Mm]odel[^:]*: *//p' "$details" | head -1 | cut -c1-60)
+    os=$(sed -n 's/.*OS [Vv]ersion[^:]*: *//p' "$details" | head -1 | cut -c1-40)
+    [ -n "$model" ] || model="an iPad"
+    [ -n "$os" ] || os="OS unknown"
+    printf '%s, %s' "$model" "$os"
+}
 
 {
     echo "# Validation: $short"
@@ -89,7 +103,9 @@ trap 'rm -f "$log" "$record"' EXIT
     echo "- Host: $(sw_vers -productName) $(sw_vers -productVersion) ($(uname -m))"
     echo "- Xcode: $(xcodebuild -version 2>/dev/null | head -1)"
     if [ "$device" = 1 ]; then
-        echo "- Device: ${DEVICE:-not configured}"
+        # The model and the OS, never the device identifier: this file is meant to be
+        # committed, and an identifier does not belong in a commit. See AGENTS.md.
+        echo "- Device: $(device_description)"
     fi
     echo
     echo "## Results"
