@@ -340,6 +340,110 @@ static void TestLearning(void) {
         if ([key hasPrefix:@"AKInputTrigger."]) [defaults removeObjectForKey:key];
 }
 
+// Every pattern the router can match. The launcher offers press and push-to-talk; the
+// others are reachable by a stored mapping, and "all trigger patterns" is on the audit's
+// verification list, so they are driven here rather than assumed.
+static void TestTriggerPatterns(void) {
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    for (NSString *key in defaults.dictionaryRepresentation.allKeys)
+        if ([key hasPrefix:@"AKInputTrigger."]) [defaults removeObjectForKey:key];
+    AKVoiceSettings *settings = AKVoiceSettings.shared;
+    settings.enabled = YES;
+
+    AKInputRouter *router = AKInputRouter.shared;
+    __block NSUInteger fired = 0;
+    router.onTrigger = ^(AKTrigger *trigger, AKInputEvent *event) {
+        (void)trigger; (void)event;
+        fired++;
+    };
+    router.onTriggerBegan = nil;
+    router.onTriggerEnded = nil;
+
+    AKTrigger *doubleTap = [AKTrigger new];
+    doubleTap.element = @"controller.button.a";
+    doubleTap.pattern = AKTriggerPatternDouble;
+    doubleTap.doubleInterval = 0.35;
+    [settings setTrigger:doubleTap forDevice:@"patterns"];
+
+    // One press is not a double, and two inside the window are.
+    [router reportElement:@"controller.button.a" value:1 pressed:YES device:@"patterns" source:AKInputSourceController];
+    [router reportElement:@"controller.button.a" value:0 pressed:NO device:@"patterns" source:AKInputSourceController];
+    CHECK((fired == 0), @"one press must not fire a double, got %lu", (unsigned long)fired);
+    [router reportElement:@"controller.button.a" value:1 pressed:YES device:@"patterns" source:AKInputSourceController];
+    [router reportElement:@"controller.button.a" value:0 pressed:NO device:@"patterns" source:AKInputSourceController];
+    CHECK((fired == 1), @"two presses in the window must fire once, got %lu", (unsigned long)fired);
+
+    // Long: a tap the game owns is untouched, a held press is not.
+    fired = 0;
+    AKTrigger *longPress = [AKTrigger new];
+    longPress.element = @"controller.button.b";
+    longPress.pattern = AKTriggerPatternLong;
+    longPress.holdInterval = 0.15;
+    [settings setTrigger:longPress forDevice:@"patterns"];
+    [router reportElement:@"controller.button.b" value:1 pressed:YES device:@"patterns" source:AKInputSourceController];
+    [router reportElement:@"controller.button.b" value:0 pressed:NO device:@"patterns" source:AKInputSourceController];
+    Pump(0.4);
+    CHECK((fired == 0), @"a quick tap must not fire a long press, got %lu", (unsigned long)fired);
+    [router reportElement:@"controller.button.b" value:1 pressed:YES device:@"patterns" source:AKInputSourceController];
+    Pump(0.4);
+    CHECK((fired == 1), @"a held press must fire once, got %lu", (unsigned long)fired);
+    [router reportElement:@"controller.button.b" value:0 pressed:NO device:@"patterns" source:AKInputSourceController];
+
+    // Chord: the partner has to be down first.
+    fired = 0;
+    AKTrigger *chord = [AKTrigger new];
+    chord.element = @"controller.button.x";
+    chord.chordElement = @"controller.button.y";
+    chord.pattern = AKTriggerPatternChord;
+    [settings setTrigger:chord forDevice:@"patterns"];
+    [router reportElement:@"controller.button.x" value:1 pressed:YES device:@"patterns" source:AKInputSourceController];
+    CHECK((fired == 0), @"one half of a chord must not fire");
+    [router reportElement:@"controller.button.x" value:0 pressed:NO device:@"patterns" source:AKInputSourceController];
+    [router reportElement:@"controller.button.y" value:1 pressed:YES device:@"patterns" source:AKInputSourceController];
+    [router reportElement:@"controller.button.x" value:1 pressed:YES device:@"patterns" source:AKInputSourceController];
+    CHECK((fired == 1), @"both halves together must fire once, got %lu", (unsigned long)fired);
+
+    router.onTrigger = nil;
+    for (NSString *key in defaults.dictionaryRepresentation.allKeys)
+        if ([key hasPrefix:@"AKInputTrigger."]) [defaults removeObjectForKey:key];
+}
+
+// The audio session, through the real bridge rather than a fake. The remediation review
+// accepted a documented policy in place of exact restoration, and a policy still has to be
+// the one that happens: the category and mode it found are what is there afterwards.
+static void TestAudioSessionPolicy(void) {
+    AKDictation *dictation = AKDictation.shared;
+    AVAudioSession *session = AVAudioSession.sharedInstance;
+    NSError *error = nil;
+    if (![session setCategory:AVAudioSessionCategoryPlayback mode:AVAudioSessionModeMoviePlayback
+                      options:0 error:&error]) {
+        CHECK(0, @"the test could not set a starting category: %@", error.localizedDescription);
+        return;
+    }
+    [session setActive:YES error:NULL];
+
+    FakeSpeech *speech = [FakeSpeech new];
+    dictation.speech = speech;
+    dictation.audio = nil;      // the real bridge
+    dictation.transcriptHandler = nil;
+    [AKDictation setGameTextTarget:[FakeGameTextView new]];
+
+    [dictation begin];
+    CHECK((dictation.state == AKDictationStateListening), @"the real bridge starts a session");
+    CHECK(([session.category isEqualToString:AVAudioSessionCategoryRecord]),
+          @"and takes the session for recording, got %@", session.category);
+
+    [dictation end];
+    [speech say:@"done" final:YES];
+    CHECK(([session.category isEqualToString:AVAudioSessionCategoryPlayback]),
+          @"and puts the category it found back, got %@", session.category);
+    CHECK(([session.mode isEqualToString:AVAudioSessionModeMoviePlayback]),
+          @"and the mode, got %@", session.mode);
+
+    [AKDictation setGameTextTarget:nil];
+    [dictation cancel];
+}
+
 // A screenshot is not attributable to a controller, so it is not a voice trigger and cannot
 // be stored as one. The remediation review's point: offering it for the user to map only
 // moves the guess to them, because nothing in the notification says whether a pad or a
@@ -764,6 +868,20 @@ static void TestConfigRecovery(void) {
 // named: both are reachable from the user-editable Documents boundary, and the first
 // version copied the copy over the file and read it again - round and round until the stack
 // ran out. Reaching the end of this function without a crash is most of the test.
+// A file far larger than a config file can be. It is read at launch from a directory the
+// user can write to, so it is refused before it is parsed.
+static void TestConfigOversized(void) {
+    TKWolkaraConfig *config = TKWolkaraConfig.shared;
+    NSFileManager *files = NSFileManager.defaultManager;
+    NSMutableData *huge = [NSMutableData dataWithLength:3 * 1024 * 1024];
+    [huge replaceBytesInRange:NSMakeRange(0, 4) withBytes:"[1,2"];
+    [files removeItemAtPath:config.backupPath error:NULL];
+    [huge writeToFile:config.path atomically:YES];
+    [config reloadFromFile];
+    CHECK((config.lastImportProblem.length > 0), @"a file too large to be a config file is refused");
+    CHECK(([files fileExistsAtPath:config.rejectedPath]), @"and kept rather than read");
+}
+
 static void TestConfigRecursion(void) {
     TKWolkaraConfig *config = TKWolkaraConfig.shared;
     NSFileManager *files = NSFileManager.defaultManager;
@@ -829,12 +947,15 @@ static void TestConfigRecursion(void) {
     TestTriggers();
     TestSettings();
     TestLearning();
+    TestTriggerPatterns();
+    TestAudioSessionPolicy();
     TestScreenshotIsolation();
     TestDictation();
     TestTypingIntoTheGame();
     TestVoiceScreens(self.window);
     TestConfigCorpus();
     TestConfigRecovery();
+    TestConfigOversized();
     TestConfigRecursion();
 
     if (failures == 0) {

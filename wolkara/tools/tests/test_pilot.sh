@@ -256,6 +256,40 @@ check $? "two runs must not share a session directory (got '$first' and '$second
 check $? "and both directories should exist"
 rm -rf "$first" "$second"
 
+# A launch while the app is up is refused: it is not this script's job to decide that a
+# running session should end, and not launching is the safe answer.
+# The stub's own default is "nothing running", so this case states what it is about.
+export WOLKARA_FAKE_PROCESSES="  1234   /private/var/containers/Bundle/Application/AAA/Tolkara.app/Tolkara"
+run_pilot "$work/sessions/running" launch
+[ $? -eq 2 ]
+check $? "launch must refuse while the app is running"
+grep -q "the app is already running" "$work/out.txt"
+check $? "and must say so rather than replacing it"
+
+# Two runs at once. The work files are per run, so neither can read the other's baseline -
+# and each writes its own verdict rather than clobbering the other's.
+export WOLKARA_FAKE_PROCESSES=""
+mkdir -p "$work/sessions/par-a" "$work/sessions/par-b"
+# Looking for the guest, not the launcher: with nothing running and a launcher wait, the
+# honest answer is "the app is gone", which is a different conclusion from a timeout.
+echo game > "$work/sessions/par-a/mode.txt"
+echo game > "$work/sessions/par-b/mode.txt"
+( cd "$root" && PATH="$work/bin:$PATH" DEVICE=FAKE TOLKARA_BUNDLE_ID=test.bundle \
+    PILOT_SESSION="$work/sessions/par-a" "$pilot" wait --timeout 4 ) > "$work/par-a.txt" 2>&1 &
+pid_a=$!
+( cd "$root" && PATH="$work/bin:$PATH" DEVICE=FAKE TOLKARA_BUNDLE_ID=test.bundle \
+    PILOT_SESSION="$work/sessions/par-b" "$pilot" wait --timeout 4 ) > "$work/par-b.txt" 2>&1 &
+pid_b=$!
+wait "$pid_a"; rc_a=$?
+wait "$pid_b"; rc_b=$?
+[ "$rc_a" = "$rc_b" ]
+check $? "two runs at once should reach the same verdict ($rc_a, $rc_b)"
+grep -q "nothing conclusive" "$work/par-a.txt" && grep -q "nothing conclusive" "$work/par-b.txt"
+check $? "and each should have concluded for itself"
+[ -f "$work/sessions/par-a/state.txt" ] && [ -f "$work/sessions/par-b/state.txt" ]
+check $? "with a state file of its own"
+export WOLKARA_FAKE_PROCESSES="  1234   /private/var/containers/Bundle/Application/AAA/Tolkara.app/Tolkara"
+
 # Nothing may be written to the shared /tmp names any more.
 before=$(ls /tmp 2>/dev/null | grep -c '^pilot-' || true)
 run_pilot "$work/sessions/three" state

@@ -37,6 +37,9 @@ static NSInteger const TKWolkaraConfigVersion = 1;
 static NSUInteger const TKWolkaraConfigWordLimit = 512;
 static NSUInteger const TKWolkaraConfigWordLength = 64;
 static NSUInteger const TKWolkaraConfigStringLimit = 64;
+// The file itself. It holds a handful of choices, so a megabyte of JSON is not a config
+// file - and it is read at launch, on the main path, from a directory the user can write to.
+static unsigned long long const TKWolkaraConfigFileLimit = 1024 * 1024;
 
 @implementation TKWolkaraConfig {
     BOOL _loaded;
@@ -233,6 +236,13 @@ static NSDictionary<NSString *, NSDictionary *> *TKWolkaraConfigSchema(void) {
 }
 
 - (void)importFromFile {
+    NSNumber *size = [NSFileManager.defaultManager attributesOfItemAtPath:self.path error:NULL][NSFileSize];
+    if (size && size.unsignedLongLongValue > TKWolkaraConfigFileLimit) {
+        // Refused before it is read: the file is on the user-visible side of the app.
+        [self rejectFileBecause:[NSString stringWithFormat:@"it is %llu bytes, and a config file is not",
+                                 size.unsignedLongLongValue]];
+        return;
+    }
     NSData *data = [NSData dataWithContentsOfFile:self.path];
     if (!data.length) {
         WKLog("config", @"no file yet at %@", self.path);
