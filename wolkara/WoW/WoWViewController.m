@@ -2,9 +2,11 @@
 #import "Client.h"
 #import "AddonManager.h"
 #import "../Voice/VoiceViewController.h"
+#import "../Voice/VoiceTestViewController.h"
 #import "Installation.h"
 #import "Updater.h"
 #import "../App/LaunchProgressView.h"
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 static UIColor *Gold(void) { return [UIColor colorWithRed:0.88 green:0.73 blue:0.43 alpha:1]; }
 static UIColor *Muted(void) { return [UIColor colorWithRed:0.66 green:0.72 blue:0.78 alpha:1]; }
@@ -19,6 +21,9 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     UIStackView *stack=[[UIStackView alloc] initWithArrangedSubviews:views];
     stack.axis=UILayoutConstraintAxisVertical; stack.spacing=spacing; return stack;
 }
+
+@interface TKWoWViewController () <UIDocumentPickerDelegate>
+@end
 
 @implementation TKWoWViewController {
     TKAppLibrary *_library;
@@ -39,7 +44,10 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     UIStackView *_columns;
     NSLayoutConstraint *_leftWidth;
     UILabel *_stateLabel, *_detailLabel, *_versionLabel, *_startupLabel, *_compatibilityLabel;
-    UIButton *_editionButton, *_preferencesButton, *_addonsButton, *_voiceButton, *_primaryButton;
+    UIButton *_editionButton, *_preferencesButton, *_addonsButton, *_addonsDirectoryButton,
+        *_voiceButton, *_voiceTestButton, *_primaryButton;
+    UIView *_markView;
+    NSLayoutConstraint *_markCap;
     UIBarButtonItem *_refreshItem;
     UIActivityIndicatorView *_activity;
 }
@@ -61,6 +69,51 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     [button addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];
     return button;
 }
+// The page's own section heading: the small uppercase label the edition line
+// always used, now naming each group of rows.
+- (UILabel *)heading:(NSString *)text {
+    UILabel *label=Label(11,UIFontWeightSemibold,Muted());
+    label.text=text.uppercaseString;
+    return label;
+}
+// The layer's mark, where the wordmark used to sit. It is drawn at the column's
+// own width, so it grows and shrinks with the window, with one cap: it may never
+// take more than a third of the height, so a short window still shows the rows
+// below it. The aspect constraint is optional for that reason — when the cap
+// applies, the picture letterboxes rather than fighting the column's width.
+//
+// The cap spans this view and the controller's, so it can only be activated once
+// the two share an ancestor. Here the picture is still unattached, and UIKit
+// raises "no common ancestor" for exactly that — which aborts the app at launch,
+// measured on 2026-10-16. The cap is therefore kept and switched on from
+// -viewDidLayoutSubviews, by which time the column has been added to the scroll
+// view.
+- (UIView *)markView {
+    UIImage *image=[UIImage imageNamed:@"WolkaraLogo"];
+    if (image) {
+        UIImageView *view=[[UIImageView alloc] initWithImage:image];
+        view.contentMode=UIViewContentModeScaleAspectFit;
+        view.accessibilityIdentifier=@"wow.logo";
+        view.accessibilityLabel=@"Wolkara";
+        // The picture's own pixel size is far larger than the column, so its
+        // intrinsic size must not be allowed to argue with the constraints below.
+        [view setContentHuggingPriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisVertical];
+        [view setContentCompressionResistancePriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisVertical];
+        NSLayoutConstraint *aspect=[view.widthAnchor constraintEqualToAnchor:view.heightAnchor
+            multiplier:image.size.width/image.size.height];
+        aspect.priority=999;
+        aspect.active=YES;
+        _markCap=[view.heightAnchor constraintLessThanOrEqualToAnchor:self.view.heightAnchor
+            multiplier:0.30];
+        return view;
+    }
+    // No artwork in this build: say the name rather than show an empty gap.
+    UILabel *label=Label(37,UIFontWeightBold,Gold()); label.text=@"WOLKARA";
+    UIFontDescriptor *serif=[[UIFont systemFontOfSize:37 weight:UIFontWeightBold].fontDescriptor fontDescriptorWithDesign:UIFontDescriptorSystemDesignSerif];
+    if (serif) label.font=[[UIFontMetrics metricsForTextStyle:UIFontTextStyleLargeTitle] scaledFontForFont:[UIFont fontWithDescriptor:serif size:37]];
+    label.accessibilityIdentifier=@"wow.title";
+    return label;
+}
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.overrideUserInterfaceStyle=UIUserInterfaceStyleDark;
@@ -81,20 +134,29 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     _refreshItem.accessibilityIdentifier=@"wow.refresh";
     self.navigationItem.leftBarButtonItem=_refreshItem;
 
-    UILabel *title=Label(37,UIFontWeightBold,Gold()); title.text=@"WOLKARA";
-    UIFontDescriptor *serif=[[UIFont systemFontOfSize:37 weight:UIFontWeightBold].fontDescriptor fontDescriptorWithDesign:UIFontDescriptorSystemDesignSerif];
-    if (serif) title.font=[[UIFontMetrics metricsForTextStyle:UIFontTextStyleLargeTitle] scaledFontForFont:[UIFont fontWithDescriptor:serif size:37]];
-    title.accessibilityIdentifier=@"wow.title";
-    UILabel *editionLabel=Label(11,UIFontWeightSemibold,Muted()); editionLabel.text=@"GAME EDITION";
+    // Three groups, in the order the page is read: the edition, the add-ons, and
+    // voice. The mark takes the wordmark's place at the top of the column.
+    _markView=[self markView];
+    UILabel *editionHeading=[self heading:@"Game edition"];
     _editionButton=[self button:@"wow.edition" action:@selector(chooseEdition)];
     _preferencesButton=[self button:@"wow.preferences" action:@selector(preferences)];
+    UILabel *addonsHeading=[self heading:@"Add-ons"];
     _addonsButton=[self button:@"wow.addons.manage" action:@selector(manageAddons)];
-    [_addonsButton setTitle:@"Add-ons / Manage" forState:UIControlStateNormal];
+    [_addonsButton setTitle:@"Addon Manager" forState:UIControlStateNormal];
+    _addonsDirectoryButton=[self button:@"wow.addons.directory" action:@selector(openAddonDirectory)];
+    [_addonsDirectoryButton setTitle:@"Open Add-on Directory" forState:UIControlStateNormal];
+    UILabel *voiceHeading=[self heading:@"Voice manager"];
     _voiceButton=[self button:@"wow.voice" action:@selector(manageVoice)];
-    [_voiceButton setTitle:@"Voice / Button" forState:UIControlStateNormal];
+    [_voiceButton setTitle:@"Key / Button Configuration" forState:UIControlStateNormal];
+    _voiceTestButton=[self button:@"wow.voice.test" action:@selector(testVoice)];
+    [_voiceTestButton setTitle:@"Test Voice" forState:UIControlStateNormal];
     _compatibilityLabel=Label(12,UIFontWeightRegular,Muted());
-    UIStackView *left=Stack(@[title,editionLabel,_editionButton,_preferencesButton,_addonsButton,_voiceButton,_compatibilityLabel],12);
-    [left setCustomSpacing:24 afterView:title];
+    UIStackView *left=Stack(@[_markView,editionHeading,_editionButton,_preferencesButton,
+        addonsHeading,_addonsButton,_addonsDirectoryButton,
+        voiceHeading,_voiceButton,_voiceTestButton,_compatibilityLabel],12);
+    [left setCustomSpacing:24 afterView:_markView];
+    [left setCustomSpacing:24 afterView:_preferencesButton];
+    [left setCustomSpacing:24 afterView:_addonsDirectoryButton];
 
     _activity=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
     _activity.color=Gold(); _activity.hidesWhenStopped=YES;
@@ -164,6 +226,10 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
     _background.frame=self.view.bounds;
+    // The mark's height cap was made in -markView, before the picture had a
+    // superview. Now it does, so the two ends have an ancestor and it can be
+    // switched on; once only, because switching it on lays out again.
+    if (_markCap && !_markCap.active) _markCap.active=YES;
     BOOL horizontal=self.view.bounds.size.width>=700 && !UIContentSizeCategoryIsAccessibilityCategory(self.traitCollection.preferredContentSizeCategory);
     _leftWidth.active=horizontal;
     _columns.axis=horizontal?UILayoutConstraintAxisHorizontal:UILayoutConstraintAxisVertical;
@@ -291,13 +357,19 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     _editionButton.backgroundColor=[UIColor colorWithWhite:1 alpha:0.055]; _editionButton.layer.cornerRadius=10;
     [self configureButton:_preferencesButton title:[NSString stringWithFormat:@"%@  ·  %@  ▾",_region.uppercaseString,[_locale isEqual:@"esES"]?@"Spanish":@"English"] filled:NO];
     _preferencesButton.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;
-    [self configureButton:_addonsButton title:_installation.app?@"Add-ons / Manage":@"Add-ons / Manage (install game first)" filled:NO];
+    [self configureButton:_addonsButton title:_installation.app?@"Addon Manager":@"Addon Manager (install game first)" filled:NO];
     _addonsButton.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;
     _addonsButton.enabled=_installation.app && !_busy && !_starting && !_sessionUsed;
-    [self configureButton:_voiceButton title:@"Voice / Button" filled:NO];
+    [self configureButton:_addonsDirectoryButton title:_installation.app?@"Open Add-on Directory":@"Open Add-on Directory (install game first)" filled:NO];
+    _addonsDirectoryButton.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;
+    _addonsDirectoryButton.enabled=_addonsButton.enabled;
+    [self configureButton:_voiceButton title:@"Key / Button Configuration" filled:NO];
     _voiceButton.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;
     // Available before the game is installed: it is a setting, not a game action.
     _voiceButton.enabled=!_busy && !_starting;
+    [self configureButton:_voiceTestButton title:@"Test Voice" filled:NO];
+    _voiceTestButton.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;
+    _voiceTestButton.enabled=_voiceButton.enabled;
     _compatibilityLabel.text=([_product[@"id"] isEqual:@"wow"] || [_product[@"id"] isEqual:@"wow_beta"] || [_product[@"id"] isEqual:@"wow_classic"])?
         @"Compatibility with this edition is not yet verified.":
         @"";
@@ -455,13 +527,55 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     [self.navigationController pushViewController:[AKVoiceViewController new] animated:YES];
 }
 
-- (void)manageAddons {
-    NSError *error=nil; NSString *directory=[_library workingDirectoryForApp:_installation.app error:&error];
-    if (!directory) {
-        UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Add-ons unavailable" message:error.localizedDescription preferredStyle:UIAlertControllerStyleAlert];
-        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]]; [self presentViewController:alert animated:YES completion:nil]; return;
+// The same settings, exercised: a box the transcript lands in, driven by the
+// button the user mapped, so it can be tried without starting the game.
+- (void)testVoice {
+    [self.navigationController pushViewController:[AKVoiceTestViewController new] animated:YES];
+}
+
+// The game's add-on folder, in the file browser. The picker is the documented way
+// to start Files at a directory; an alert with a path would be a worse answer to
+// the same request, because the user came here to put files in it.
+- (void)openAddonDirectory {
+    NSError *error=nil;
+    NSString *addons=[self addOnsDirectoryWithError:&error];
+    if (!addons) { [self presentAddonsUnavailable:error]; return; }
+    // The game makes this folder on its first run. Until then there is nothing to
+    // open, so make it rather than refuse.
+    NSFileManager *files=NSFileManager.defaultManager;
+    if (![files fileExistsAtPath:addons]) {
+        [files createDirectoryAtPath:addons withIntermediateDirectories:YES attributes:nil error:&error];
+        if (![files fileExistsAtPath:addons]) { [self presentAddonsUnavailable:error]; return; }
     }
-    TKWoWAddonManagerViewController *manager=[[TKWoWAddonManagerViewController alloc] initWithAddOnsDirectory:[directory stringByAppendingPathComponent:@"Interface/AddOns"] edition:_product[@"name"]];
+    UIDocumentPickerViewController *picker=[[UIDocumentPickerViewController alloc]
+        initForOpeningContentTypes:@[UTTypeFolder]];
+    picker.directoryURL=[NSURL fileURLWithPath:addons isDirectory:YES];
+    picker.allowsMultipleSelection=NO;
+    picker.delegate=self;
+    [self presentViewController:picker animated:YES completion:nil];
+}
+// Nothing to take from the picker: the folder was opened so the user can put files
+// in it with the browser's own controls, and the game reads the list from disk.
+- (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
+    (void)controller; (void)urls;
+}
+- (void)presentAddonsUnavailable:(nullable NSError *)error {
+    UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Add-ons unavailable"
+        message:error.localizedDescription?:@"The game's folder could not be opened."
+        preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+- (nullable NSString *)addOnsDirectoryWithError:(NSError **)error {
+    NSString *directory=[_library workingDirectoryForApp:_installation.app error:error];
+    return directory?[directory stringByAppendingPathComponent:@"Interface/AddOns"]:nil;
+}
+
+- (void)manageAddons {
+    NSError *error=nil;
+    NSString *addons=[self addOnsDirectoryWithError:&error];
+    if (!addons) { [self presentAddonsUnavailable:error]; return; }
+    TKWoWAddonManagerViewController *manager=[[TKWoWAddonManagerViewController alloc] initWithAddOnsDirectory:addons edition:_product[@"name"]];
     [self.navigationController pushViewController:manager animated:YES];
 }
 - (UILabel *)startupStatusLabel { [self loadViewIfNeeded]; return _detailLabel; }

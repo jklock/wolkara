@@ -6,10 +6,14 @@ work on any controller.
 
 ## The shape
 
-1. **A row in the launcher**, beside Add-ons / Manage, called **Voice**.
-2. Opening it lets the user **map the button or key**, and set the options below.
-3. In the game, **that button starts transcription**. Nothing of ours appears.
-4. The transcript is typed into the game, and optionally sent.
+1. **A section in the launcher** called **Voice Manager**, with two rows:
+   **Key / Button Configuration** and **Test Voice**.
+2. The first lets the user **map the button or key**, and set the options below.
+3. **Test Voice** is where the button is tried out before the game is opened: a
+   box that receives the transcript, exactly as the game would, and nothing is
+   typed into the game from there.
+4. In the game, **that button starts transcription**. Nothing of ours appears.
+5. The transcript is typed into the game, and optionally sent.
 
 ## Handy is the baseline
 
@@ -35,7 +39,11 @@ hears rather than what we do with it afterwards.
 ## Settings, and where they live
 
 Stored with the layer's other per-user choices, under `AKVoice*` keys, so they
-survive reinstalls and are inspectable:
+survive reinstalls and are inspectable. They are also written to
+`Documents/wolkara-config.json` in the app's container, which the installer
+replaces in place — so the choices come back after an update without being
+re-entered. The CurseForge key is deliberately not in that file; it belongs in
+the keychain, and is already there. See `wolkara/Shell/WolkaraConfig.h`.
 
 | Key | Meaning |
 | --- | --- |
@@ -52,6 +60,16 @@ source — gamepad element, keyboard key, mouse button, touchpad, or the system
 signal a reserved button produces — becomes the trigger, remembered for that
 device. This is why the mapping needs no list of supported controllers: it is the
 hardware that tells us what it has.
+
+## Trying it before the game
+
+**Test Voice** presses nothing on its own: `Shell/main.m` already sends the mapped
+trigger to the dictation engine, so the page arms itself as the listener and shows
+what arrives. That is deliberate — a test screen with its own button would prove
+the screen works, not the mapping. `AKDictation` hands the text over instead of
+typing it only while a test screen has claimed it
+(`transcriptHandler`/`listeningChanged`), and it is let go before the page goes
+away, so a half-heard utterance cannot land in the game's chat box on the way out.
 
 ## Modes, in the engine
 

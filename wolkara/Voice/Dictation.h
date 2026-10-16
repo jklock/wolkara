@@ -27,6 +27,13 @@ NS_ASSUME_NONNULL_BEGIN
 // Whether the microphone is currently ours.
 @property (nonatomic, readonly) BOOL listening;
 
+// Where a transcript goes instead of the game, and how a screen follows the
+// microphone. The launcher's test screen sets both so the words land in its own
+// box; the game path leaves them unset and behaves exactly as it always has.
+// While the handler is set, the game is not typed into at all.
+@property (nonatomic, copy, nullable) void (^transcriptHandler)(NSString *text);
+@property (nonatomic, copy, nullable) void (^listeningChanged)(BOOL listening);
+
 @end
 
 NS_ASSUME_NONNULL_END

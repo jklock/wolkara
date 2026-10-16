@@ -32,6 +32,9 @@ static unsigned short const AKReturnKeyCode = 36;
     SFSpeechAudioBufferRecognitionRequest *_request;
     SFSpeechRecognitionTask *_task;
     NSMutableString *_transcript;
+    // The last state a screen was told about, so a screen hears about changes
+    // rather than about every path that happens to reach the teardown.
+    BOOL _notifiedListening;
 }
 
 + (instancetype)shared {
@@ -132,6 +135,7 @@ static unsigned short const AKReturnKeyCode = 36;
     }];
 
     AKDLog(@"dictation: listening (on-device=%d)", _request.requiresOnDeviceRecognition);
+    [self noteListening];
 }
 
 #pragma mark - Stop, type, send
@@ -143,6 +147,14 @@ static unsigned short const AKReturnKeyCode = 36;
     [self tearDownAudio];
 
     text = [text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    void (^handler)(NSString *) = _transcriptHandler;
+    if (handler) {
+        // A test screen is up: the words are its business, not the game's. It is
+        // told even when nothing was heard, so it can say so.
+        AKDLog(@"dictation: heard %lu characters, for the test screen", (unsigned long)text.length);
+        handler(text);
+        return;
+    }
     if (!text.length) { AKDLog(@"dictation: stopped, heard nothing"); return; }
 
     AKDLog(@"dictation: heard %lu characters", (unsigned long)text.length);
@@ -166,6 +178,15 @@ static unsigned short const AKReturnKeyCode = 36;
     // Hand the session back so the game's audio returns to normal.
     [AVAudioSession.sharedInstance setActive:NO withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation error:&error];
     [AVAudioSession.sharedInstance setCategory:AVAudioSessionCategoryPlayback error:NULL];
+    [self noteListening];
+}
+
+// Tell whoever is watching the moment the microphone changes hands, once.
+- (void)noteListening {
+    if (_notifiedListening == self.listening) return;
+    _notifiedListening = self.listening;
+    void (^changed)(BOOL) = _listeningChanged;
+    if (changed) changed(self.listening);
 }
 
 #pragma mark - The game's own input path
