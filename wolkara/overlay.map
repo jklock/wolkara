@@ -85,6 +85,10 @@ wolkara/Controller/ControllerWindow.m launcher/Controller/ControllerWindow.m add
 # Voice: what you say, turned into text in the game (Share to start and stop)
 wolkara/Voice/Dictation.h launcher/Voice/Dictation.h add
 wolkara/Voice/Dictation.m launcher/Voice/Dictation.m add
+wolkara/Voice/VoiceSettings.h launcher/Voice/VoiceSettings.h add
+wolkara/Voice/VoiceSettings.m launcher/Voice/VoiceSettings.m add
+wolkara/Voice/VoiceViewController.h launcher/Voice/VoiceViewController.h add
+wolkara/Voice/VoiceViewController.m launcher/Voice/VoiceViewController.m add
 #
 # Input: any button, on any controller, in one stream (see docs/INPUT_TRIGGERS.md)
 wolkara/Input/Trigger.h launcher/Input/Trigger.h add

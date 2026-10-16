@@ -22,6 +22,10 @@ typedef NS_ENUM(NSInteger, AKTriggerPattern) {
     // Two elements held together, which a game that binds single presses cannot
     // have claimed.
     AKTriggerPatternChord,
+    // Push to talk: fires on press and again on release, so dictation can start
+    // on the first and finish on the second. It needs a button whose press and
+    // release we both receive, so it cannot be used on one iOS keeps for itself.
+    AKTriggerPatternPushToTalk,
 };
 
 @interface AKTrigger : NSObject <NSCopying>

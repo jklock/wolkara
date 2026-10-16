@@ -20,6 +20,8 @@
 #import <Speech/Speech.h>
 #import <UIKit/UIKit.h>
 
+#import "VoiceSettings.h"
+
 // kVK_Return, and the character the game expects for it. Taken from the
 // accessory row, which sends its Return exactly this way.
 static unsigned short const AKReturnKeyCode = 36;
@@ -47,6 +49,9 @@ static unsigned short const AKReturnKeyCode = 36;
     if (self.listening) [self stopAndSend];
     else [self startListening];
 }
+
+- (void)begin { [self startListening]; }
+- (void)end { [self stopAndSend]; }
 
 #pragma mark - Listening
 
@@ -94,6 +99,9 @@ static unsigned short const AKReturnKeyCode = 36;
     // On-device, always: nothing said in a game should travel to a server.
     _request.requiresOnDeviceRecognition = _recognizer.supportsOnDeviceRecognition;
     _request.shouldReportPartialResults = YES;
+    // Handy's dictionary: words the recogniser should expect, so names and game
+    // terms come out spelled the way the user means them.
+    if (AKVoiceSettings.shared.customWords.count) _request.contextualStrings = AKVoiceSettings.shared.customWords;
     _transcript = [NSMutableString string];
 
     _engine = [[AVAudioEngine alloc] init];
@@ -138,9 +146,11 @@ static unsigned short const AKReturnKeyCode = 36;
     if (!text.length) { AKDLog(@"dictation: stopped, heard nothing"); return; }
 
     AKDLog(@"dictation: heard %lu characters", (unsigned long)text.length);
+    if (AKVoiceSettings.shared.trailingSpace) text = [text stringByAppendingString:@" "];
     if ([self typeIntoGame:text]) {
-        // Separately, and deliberately: the text goes in first, then Return.
-        [self sendReturn];
+        // Separately, and deliberately: the text goes in first, then Return —
+        // and only when it was asked for, which is Handy's auto-submit.
+        if (AKVoiceSettings.shared.autoSubmit) [self sendReturn];
     }
 }
 

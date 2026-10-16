@@ -19,6 +19,10 @@ NS_ASSUME_NONNULL_BEGIN
 
 // Start listening, or — if already listening — stop, transcribe, type and send.
 - (void)toggle;
+// Push to talk: the first call starts, the second finishes. Used when the mode
+// is hold, so the microphone is open exactly while the button is down.
+- (void)begin;
+- (void)end;
 
 // Whether the microphone is currently ours.
 @property (nonatomic, readonly) BOOL listening;
