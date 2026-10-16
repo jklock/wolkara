@@ -35,3 +35,11 @@ NSString *WKLogRotationPath(void);
 /// Writes a line without going through the file's own bookkeeping. Used by the
 /// crash handlers, which run when it is too late to be careful.
 void WKLogFatal(const char *tag, NSString *message);
+
+/// The documents a build of this app has to carry, as pairs of a heading and the file
+/// name in the bundle: this app's own licence and notice, and upstream Tolkara's, which
+/// have to stay because the app ships upstream's code too. One list, so the launch-time
+/// log line and the About page cannot come to different conclusions about what should be
+/// there - and so a build that is missing one says so, in the log and on the page, rather
+/// than quietly showing nothing. See development/NOTES.md for how that happened.
+NSArray<NSArray<NSString *> *> *WKBundledDocuments(void);

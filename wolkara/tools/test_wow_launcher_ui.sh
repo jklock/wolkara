@@ -45,18 +45,18 @@ cat > "$APP/Info.plist" <<'PLIST'
 <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
 </dict></plist>
 PLIST
-# The repository's own notices, not the platform tree's: the About page must credit
-# the layer, and `build/platform` carries upstream's files, which credit upstream's
-# authors only. The assertion that reads them was written for ours and had been
-# failing against theirs.
+# The four documents the app's own target bundles, in the same layout and under the same
+# names, because the About page reads them by name and by name is how it tells whose is
+# whose: the app is a fork, so upstream's stay as LICENSE/NOTICE.md and ours are prefixed.
+# A fixture that put them anywhere else would be testing a bundle nobody builds.
 #
-# Note what this does and does not prove. The About page composes its credits from
-# whatever the bundle holds, and this fixture puts them there, so the composition is
-# tested. The app's own target does not currently carry either file - nothing in
-# project.yml refers to them - so the packaged app's About page lists the introduction
-# and no licenses. That is a packaging gap in the app, not in this fixture, and it is
-# recorded in development/NOTES.md rather than papered over here.
-cp "$ROOT/LICENSE" "$ROOT/NOTICE.md" "$APP/"
+# This mirrors the app's packaging. That the *real* target carries all four is checked
+# against the installed app on the iPad, in wolkara/tools/device_matrix.sh, because a
+# fixture that supplies the files can only ever prove how the page composes them.
+cp "$ROOT/LICENSE" "$APP/Wolkara-LICENSE"
+cp "$ROOT/NOTICE.md" "$APP/Wolkara-NOTICE.md"
+cp "$ROOT/platform/LICENSE" "$APP/LICENSE"
+cp "$ROOT/platform/NOTICE.md" "$APP/NOTICE.md"
 codesign --force --sign - "$APP" > /dev/null
 xcrun simctl install "$SIM_ID" "$APP"
 LOG=$(mktemp)

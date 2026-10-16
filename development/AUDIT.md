@@ -213,12 +213,22 @@ a line in the log rather than a run that never ends.
 ### Stale documentation and claims
 
 Resolved. `development/README.md` carries a "Current state" table with the counts that hold
-now (platform pin, 13 patches, 89 overlay entries, 11 gate checks) and the command that
+now (platform pin, 14 patches, 91 overlay entries, 11 gate checks) and the command that
 checks each one, and says that `wolkara/tools/validate.sh` is where release evidence comes
 from. `PLAN.md`, `VALIDATION.md` and this file had their stale counts corrected and the ones
 that are facts about the split are marked as of the split. `VALIDATION.md` points at the new
 mechanism rather than standing in for it.
 
-What is *not* resolved, and is recorded in `development/NOTES.md`: the app ships no
-`LICENSE`/`NOTICE.md`, voice has no test of the page layout beyond the fixture's screenshots,
-and input arbitration - what "collision-free" would actually require - is not started.
+What is *not* resolved, and is recorded in `development/NOTES.md`: voice has no test of the
+page layout beyond the fixture's screenshots, and input arbitration - what "collision-free"
+would actually require - is not started.
+
+The licences are resolved, and finding out what was actually wrong took reading the bundle
+rather than the note. The app *did* ship two documents; they were **upstream's**, because
+patch `0010` pointed the target's resources at `LICENSE`/`NOTICE.md` and the prepared tree
+already has upstream's files by those names. So the About page showed upstream's notice
+under our attribution, and this repository's own notice - the one carrying the TACTSharp and
+CascLib MIT terms, which say they must accompany the software - never reached the bundle at
+all. The layer now overlays ours under names of their own, the app carries all four, the
+About page names whose each one is, and `device_matrix.sh` reads the installed app's own log
+line back off the iPad to check it. See `development/NOTES.md`.

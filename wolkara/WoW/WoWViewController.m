@@ -638,10 +638,19 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     text.font=[UIFont preferredFontForTextStyle:UIFontTextStyleBody]; text.adjustsFontForContentSizeCategory=YES;
     text.textContainerInset=UIEdgeInsetsMake(20,20,20,20);
     NSMutableString *credits=[@"Wolkara — an independent World of Warcraft launcher built on Tolkara. Not affiliated with or endorsed by Blizzard Entertainment. World of Warcraft belongs to Blizzard Entertainment.\n\n" mutableCopy];
-    for (NSString *name in @[@"LICENSE",@"NOTICE.md"]) {
+    // Four documents, and which is which matters. This app is a fork that ships upstream's
+    // code, so it carries its own licence and notice and it keeps theirs; they are told
+    // apart by name, which is why ours are prefixed in the bundle. The first version
+    // listed two names and quietly showed whatever it found, which was upstream's
+    // documents under our attribution - and when nothing matched it showed nothing at
+    // all, silently. The list itself lives beside the log line that reports it, so the two
+    // cannot disagree, and a missing document says so on the page.
+    for (NSArray<NSString *> *document in WKBundledDocuments()) {
+        NSString *name=document[1];
         NSString *path=[NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:name];
         NSString *notice=[NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:NULL];
-        if (notice) [credits appendFormat:@"%@\n%@\n\n",name,notice];
+        if (notice) [credits appendFormat:@"\n\n———— %@ ————\n%@\n",document[0],notice];
+        else [credits appendFormat:@"\n\n———— %@ ————\n%@ is missing from this build.\n",document[0],name];
     }
     text.text=credits; controller.view=text;
     [self.navigationController pushViewController:controller animated:YES];

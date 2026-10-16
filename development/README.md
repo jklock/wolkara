@@ -15,8 +15,8 @@ each other. These are the ones that hold now, and each can be checked in one com
 | Thing | Now | Check it with |
 | --- | --- | --- |
 | Platform pin | `00a8501` | `wolkara/tools/check_layers.sh` |
-| Our patches | 13 | `ls wolkara/patches/*.patch \| wc -l` |
-| Overlay entries | 89 (9 replace, 80 add) | `wolkara/tools/overlay_map.sh` |
+| Our patches | 14 | `ls wolkara/patches/*.patch \| wc -l` |
+| Overlay entries | 91 (9 replace, 82 add) | `wolkara/tools/overlay_map.sh` |
 | Layer files carried | every file under `wolkara/` | `check_layers.sh` |
 | Gate | 11 checks | `wolkara/tools/check_layers.sh` |
 

@@ -559,9 +559,18 @@ static void TestAddons(void) {
     assert([self primary].enabled);
     [self.controller about];
     UITextView *credits=(id)self.controller.navigationController.topViewController.view;
+    // Our own notice, which carries the licences of what the launcher's readers adapt.
     assert([credits.text containsString:@"Vasilii Kharitonov"]);
     assert([credits.text containsString:@"Permission is hereby granted"]);
     assert([credits.text containsString:@"Martin Benjamins"]);
+    // Upstream's, which has to be there too: the app ships upstream's code.
+    assert([credits.text containsString:@"Tolkara is original work released under the MIT License"]);
+    // And the page says whose each one is, rather than concatenating whatever it found.
+    assert([credits.text containsString:@"Wolkara — this app's licence"]);
+    assert([credits.text containsString:@"Tolkara — the platform this app is built on"]);
+    // A document the build forgot must be named on the page, not skipped: silence is how
+    // this went unnoticed in the first place.
+    assert(![credits.text containsString:@"missing from this build"]);
     [self.controller.navigationController popToRootViewControllerAnimated:NO];
     puts("WoW UIKit PASS: automatic check/update, offline retry, edition race, background cancellation, verified launch, inline preparation/failure/session end, no duplicate launches and bundled licenses."); fflush(stdout);
     if (![NSProcessInfo.processInfo.arguments containsObject:@"--preview"]) exit(0);
