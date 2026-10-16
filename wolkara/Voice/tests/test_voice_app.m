@@ -916,6 +916,55 @@ static void TestConfigRecursion(void) {
     (void)good;
 }
 
+// A write that cannot happen, which the audit's list asks for by name: what does the app
+// do when the file cannot be written, and does the user lose the file that is already
+// there?
+//
+// The obstruction is a directory where the temporary file goes. That fails the write
+// without touching the permissions of Documents, which is where the log this test then
+// reads also lives - a chmod there would take the evidence away along with the failure it
+// was meant to demonstrate.
+static void TestConfigWriteFailure(void) {
+    TKWolkaraConfig *config = TKWolkaraConfig.shared;
+    NSFileManager *files = NSFileManager.defaultManager;
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    NSString *obstruction = [config.path stringByAppendingPathExtension:@"writing"];
+
+    // A file to protect: the write below must not be able to take it away.
+    [files removeItemAtPath:obstruction error:NULL];
+    [files removeItemAtPath:config.path error:NULL];
+    [defaults setObject:@"eu" forKey:@"WoWRegion"];
+    [config save];
+    NSData *before = [NSData dataWithContentsOfFile:config.path];
+    CHECK((before.length > 0), @"a config file to protect before the failing write");
+
+    CHECK(([files createDirectoryAtPath:obstruction withIntermediateDirectories:NO attributes:nil error:NULL]),
+          @"the write can be obstructed for the test");
+
+    [defaults setObject:@"us" forKey:@"WoWRegion"];
+    WKLog("test", @"a write failure is being provoked now");
+    [config save];
+
+    NSData *after = [NSData dataWithContentsOfFile:config.path];
+    CHECK([after isEqualToData:before], @"a write that fails leaves the file that was there alone");
+    CHECK(([files fileExistsAtPath:obstruction]), @"and does not remove what was in the way, which was not its to remove");
+
+    // And it says so, in the log the user can read, rather than only failing quietly.
+    NSString *log = [NSString stringWithContentsOfFile:WKLogPath() encoding:NSUTF8StringEncoding error:NULL] ?: @"";
+    CHECK(([log containsString:@"could not write wolkara-config.json.writing"]), @"and the log names what could not be written");
+    CHECK(([log containsString:@"a write failure is being provoked now"]), @"(the log is the app's own, being read back)");
+
+    // Nothing is broken for good: once the way is clear, the next write lands.
+    [files removeItemAtPath:obstruction error:NULL];
+    [config save];
+    NSData *recovered = [NSData dataWithContentsOfFile:config.path];
+    CHECK((recovered.length > 0), @"and the next write works once the obstruction is gone");
+    [config reloadFromFile];
+    CHECK((config.lastImportProblem == nil), @"and what it wrote reads back cleanly, got %@", config.lastImportProblem);
+    CHECK(([defaults stringForKey:@"WoWRegion"] != nil), @"with the settings still where they were");
+    [defaults removeObjectForKey:@"WoWRegion"];
+}
+
 #pragma mark - Running them
 
 @interface TestDelegate : UIResponder <UIWindowSceneDelegate>
@@ -957,6 +1006,7 @@ static void TestConfigRecursion(void) {
     TestConfigRecovery();
     TestConfigOversized();
     TestConfigRecursion();
+    TestConfigWriteFailure();
 
     if (failures == 0) {
         printf("VOICE PASS: %lu checks\n", (unsigned long)checks);

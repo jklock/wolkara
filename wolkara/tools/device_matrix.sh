@@ -200,7 +200,20 @@ check "$([ "$(app_value "$work/after-broken.json" WoWRegion)" != "unreadable" ] 
       "and it wrote itself a usable file again"
 printf '  the file on the device now: %s\n' "$(cat "$work/after-broken.json" 2>/dev/null | tr -d '\n' | cut -c1-140)"
 
-step "5. nothing crashed and the client did not assert"
+step "5. it ships the licences it is obliged to ship"
+# Read from the app's own log, off the iPad, after a launch above. A fixture can hand the
+# About page four files and prove the page composes them; it cannot prove what the app
+# ships. This line can, because it is the installed build reporting its own bundle - and
+# it is the check that would have caught a packaged app showing upstream's notices under
+# our attribution, which is what it did before.
+wolkara/tools/pilot.sh log 4 "notices:" > "$work/log-notices.log" 2>&1
+grep -q "notices: 4 of 4 in the bundle" "$work/log-notices.log" && rc=0 || rc=1
+check "$rc" "the installed app carries all four notices (its own log says so)"
+grep -o "notices: [^)]*)" "$work/log-notices.log" | tail -1 | sed 's/^/  /'
+grep -q "Wolkara-LICENSE" "$work/log-notices.log" && rc=0 || rc=1
+check "$rc" "ours under our own names, not mixed in with upstream's"
+
+step "6. nothing crashed and the client did not assert"
 wolkara/tools/pilot.sh view > "$work/view.log" 2>&1
 grep -q "no new crash report" "$work/view.log" && rc=0 || rc=1
 check "$rc" "no new crash report for any launch above"

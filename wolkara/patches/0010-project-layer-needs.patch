@@ -10,7 +10,7 @@
 # scheme setting are the parts upstream might want for itself.
 #
 diff --git a/project.yml b/project.yml
-index 0d350d7..80f4b01 100644
+index 0d350d7..91c035d 100644
 --- a/project.yml
 +++ b/project.yml
 @@ -2,6 +2,10 @@ name: Tolkara
@@ -32,13 +32,17 @@ index 0d350d7..80f4b01 100644
      management:
        shared: true
        isShown: true
-@@ -45,9 +50,14 @@ targetTemplates:
+@@ -45,9 +50,18 @@ targetTemplates:
        - path: runtime
        # The shader-container rewrap, for the Diagnostics menu's captured-shader check.
        - path: translation/Metal/LibraryContainer.m
 +      - path: LICENSE
 +        buildPhase: resources
 +      - path: NOTICE.md
++        buildPhase: resources
++      - path: Wolkara-LICENSE
++        buildPhase: resources
++      - path: Wolkara-NOTICE.md
 +        buildPhase: resources
      dependencies:
        - sdk: Security.framework
@@ -47,7 +51,7 @@ index 0d350d7..80f4b01 100644
      entitlements:
        path: launcher/App.entitlements
        properties:
-@@ -57,8 +67,9 @@ targetTemplates:
+@@ -57,8 +71,9 @@ targetTemplates:
        base:
          PRODUCT_BUNDLE_IDENTIFIER: $(TOLKARA_BUNDLE_ID)
          GENERATE_INFOPLIST_FILE: YES

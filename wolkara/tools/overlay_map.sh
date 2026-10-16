@@ -95,6 +95,15 @@ intent() {
         esac
         echo "$f $dst $(intent "$dst")"
     done
+    echo "#"
+    echo "# Notices: this repository's own licence and notice, which the packaged app must"
+    echo "# carry. The prepared tree already has a LICENSE and a NOTICE.md at its top level,"
+    echo "# and those are upstream's, so ours travel under names of their own: both have to"
+    echo "# ship, because the app contains upstream's code as well as ours. The app's About"
+    echo "# page names all four, which is the only way a reader can tell whose is whose."
+    for f in LICENSE NOTICE.md; do
+        echo "$f Wolkara-$f $(intent "Wolkara-$f")"
+    done
 } > "$out"
 
 entries=$(awk '!/^#/ && NF==3' "$out" | wc -l | tr -d ' ')

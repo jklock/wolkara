@@ -371,6 +371,18 @@ Results with Xcode 27.0:
   BUILD SUCCEEDED. Strict signature verification passed, and both license
   resources match the checked-in originals byte for byte.
 
+**Corrected on 2026-10-16.** That last line was true and it was the problem: the
+two resources did match the checked-in originals, and the originals they matched
+were upstream Tolkara's, because the prepared tree already has `LICENSE` and
+`NOTICE.md` at its top level and the target asked for resources by those names.
+This repository's own notice - which carries the TACTSharp and CascLib MIT terms
+that have to accompany the software they are adapted into - was never in the
+bundle. The app now carries four documents, ours as `Wolkara-LICENSE` and
+`Wolkara-NOTICE.md`, the About page names whose each one is, and the installed
+app's own launch line is read back off the iPad to check it. A resource-name check
+that passes while the wrong file is under that name is worth less than no check at
+all, which is why the evidence now comes from the app.
+
 The follow-up on `feature/touch-controller` adds an automatic virtual gamepad;
 see [its layout, implementation and validation](TOUCH_CONTROLLER_PROPOSAL.md).
 
