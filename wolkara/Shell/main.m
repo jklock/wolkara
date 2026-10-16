@@ -9,6 +9,7 @@
 #import "LibraryViewController.h"
 #import "../Controller/ControllerInspector.h"
 #import "../Controller/ControllerWindow.h"
+#import "../Voice/Dictation.h"
 #import "../WoW/CASC.h"
 #import "../WoW/WoWViewController.h"
 #import "LaunchProgressView.h"
@@ -202,6 +203,13 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     // measured rather than assumed. It reads only, and never consumes an input.
     // See docs/CONTROLLER_INPUT.md.
     [AKControllerInspector.shared begin];
+    // Tap Share: start listening. Tap it again: stop, type what you said into
+    // the game, and send it. Share reaches us through the screenshot iPadOS
+    // takes from that button, which is the only signal the system offers for it.
+    AKControllerInspector.shared.onInput = ^(NSString *element, double value, BOOL pressed) {
+        (void)value;
+        if (pressed && [element isEqualToString:@"Share"]) [AKDictation.shared toggle];
+    };
     if([arguments containsObject:@"--inspect-controller"]) {
         [AKControllerInspector.shared showPanel:YES];
         fprintf(stderr,"[host] controller inspector panel on\n");
