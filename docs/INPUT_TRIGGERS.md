@@ -88,8 +88,14 @@ because the client binds single presses only.
 
 1. A real element, preferring one iOS reserves but does not deliver to games
    (`Button Share`), with its system gesture released.
-2. Otherwise the system signals for that button — the screenshot and capture
-   notifications.
+2. Otherwise the system signal for that button — the screenshot notification,
+   which is a discrete gesture the user made.
+   The *capture* notification is deliberately not in this list, and it used to be.
+   `UIScreen.isCaptured` says only that something is recording or mirroring the
+   iPad, not that the pad's Share was held: measured on 2026-10-16, with the iPad
+   being captured from a Mac, it fired a tenth of a second into every launch and
+   the launcher started dictating by itself. It is recorded in the inspector's
+   history and the log, and reported to nobody.
 3. Otherwise a learned element, chosen by the user.
 4. Otherwise a pattern on an element the game uses — long press, double tap or
    chord. This is the universal fallback that needs no cooperation from anything.

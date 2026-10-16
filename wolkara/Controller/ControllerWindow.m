@@ -2,11 +2,14 @@
 
 #import "ControllerWindow.h"
 
+#import "../App/WolkaraLog.h"
+
+// Both channels; see ControllerInspector.m for why.
 #if __has_include("AKSupport.h")
 #import "AKSupport.h"
-#define AKCWLog(...) AKLog(__VA_ARGS__)
+#define AKCWLog(...) do { AKLog(__VA_ARGS__); WKLog("input", __VA_ARGS__); } while (0)
 #else
-#define AKCWLog(...) NSLog(@"[ak] %@", [NSString stringWithFormat:__VA_ARGS__])
+#define AKCWLog(...) do { NSLog(@"[ak] %@", [NSString stringWithFormat:__VA_ARGS__]); WKLog("input", __VA_ARGS__); } while (0)
 #endif
 
 @implementation AKControllerWindow {

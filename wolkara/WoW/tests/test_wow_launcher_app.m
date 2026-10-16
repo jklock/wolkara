@@ -7,6 +7,9 @@
 #import "../launcher/WoW/Client.h"
 #import "../launcher/WoW/Updater.h"
 #import "../launcher/App/LaunchProgressView.h"
+#import "../launcher/App/WolkaraLog.h"
+#import "../launcher/Voice/VoiceViewController.h"
+#import "../launcher/Voice/VoiceTestViewController.h"
 #import "wow_installation_fixture.h"
 
 @interface TKWoWViewController (Fixture)
@@ -14,9 +17,22 @@
 - (void)refresh;
 - (void)about;
 - (void)repairInstallation;
+- (void)manageAddons;
+- (void)manageVoice;
+- (void)testVoice;
+@end
+@interface TKWoWAddonManagerViewController (Fixture)
+- (void)done;
+@end
+@interface AKVoiceViewController (Fixture)
+- (void)done;
+@end
+@interface AKVoiceTestViewController (Fixture)
+- (void)done;
 @end
 static atomic_uint requests, revision, updates, repairs;
 static atomic_bool failure, slow, interruptRepair;
+static unsigned requestsBeforePopup;
 static BOOL keyboardShown;
 static TKFixtureLibrary *fixture;
 static NSDictionary *Plan(id self, SEL selector, NSString *product, NSString *region, NSString *locale, NSError **error) {
@@ -49,6 +65,8 @@ static UIView *Find(UIView *view, NSString *identifier) {
 @property(nonatomic) UIWindow *probeWindow;
 @property(nonatomic) UISearchBar *probeSearch;
 @property(nonatomic) UITextField *probePlain;
+@property(nonatomic) UIViewController *probeHost;
+@property(nonatomic) TKWoWAddonManagerViewController *probeManager;
 @property(nonatomic) NSUInteger launches, setups;
 @end
 @implementation TKWoWFixtureDelegate
@@ -57,6 +75,12 @@ static UIView *Find(UIView *view, NSString *identifier) {
 - (void)tap { [[self primary] sendActionsForControlEvents:UIControlEventTouchUpInside]; }
 - (void)scene:(UIScene *)scene willConnectToSession:(UISceneSession *)session options:(UISceneConnectionOptions *)options {
     (void)session; (void)options;
+    // The same log the app keeps. An assertion or a signal in this fixture used to
+    // leave the console as the only record, and the console is a stream: whatever it
+    // said was gone the moment the run ended. Now it is in Documents/wolkara.log,
+    // with the reason and the stack, and it can be read afterwards.
+    WKLogStart();
+    WKLog("test", @"fixture starting");
     method_setImplementation(class_getInstanceMethod(TKWoWClient.class,@selector(planForProduct:region:locale:error:)),(IMP)Plan);
     method_setImplementation(class_getInstanceMethod(TKWoWUpdater.class,@selector(updatePlan:root:progress:error:)),(IMP)Update);
     [NSUserDefaults.standardUserDefaults setObject:@"wow_classic_beta" forKey:@"WoWProduct"];
@@ -94,43 +118,68 @@ static UIView *Find(UIView *view, NSString *identifier) {
 - (void)checkReady {
     assert([self primary].enabled);
     assert([[self status] isEqual:@"Ready to play"] && self.controller.title.length==0);
-    assert([[(UILabel *)Find(self.controller.view,@"wow.title") text] isEqual:@"WOLKARA"]);
+    // The mark is the artwork when the asset catalog reaches the build, and the
+    // wordmark when it does not. Either is a pass; neither is not.
+    assert(Find(self.controller.view,@"wow.logo") || Find(self.controller.view,@"wow.title"));
     // The manager must construct its table header before a device user can
     // reach any add-on action; this caught a live iPad constraint crash.
     TKWoWAddonManagerViewController *manager=[[TKWoWAddonManagerViewController alloc] initWithAddOnsDirectory:NSTemporaryDirectory() edition:@"Forever · Beta"];
     [manager loadViewIfNeeded];
     [manager.view layoutIfNeeded];
     assert(manager.tableView.tableHeaderView.bounds.size.height==178);
-    // The launcher pushes the manager into the window's navigation controller.
-    // Reproduce that path on a probe window: loading the manager's view during
-    // the push must not raise, and its search field must be hit-testable and
-    // able to take first responder (a device report said tapping it did nothing).
+    // The launcher opens the manager over itself as a popup now, so the path to
+    // reproduce is a presentation. Loading the manager's view during it must not
+    // raise, and its search field must be hit-testable and able to take first
+    // responder (a device report said tapping it did nothing).
     UIWindow *probe=[[UIWindow alloc] initWithWindowScene:(UIWindowScene *)self.window.windowScene];
     probe.frame=self.window.bounds;
-    UINavigationController *probeNavigation=[[UINavigationController alloc] initWithRootViewController:[UIViewController new]];
+    UIViewController *probeHost=[UIViewController new];
+    UINavigationController *probeNavigation=[[UINavigationController alloc] initWithRootViewController:probeHost];
     probe.rootViewController=probeNavigation;
-    probe.hidden=NO;
+    [probe makeKeyAndVisible];
     TKWoWAddonManagerViewController *pushed=[[TKWoWAddonManagerViewController alloc] initWithAddOnsDirectory:NSTemporaryDirectory() edition:@"Forever · Beta"];
-    [probeNavigation pushViewController:pushed animated:YES];
+    UINavigationController *probeFrame=[[UINavigationController alloc] initWithRootViewController:pushed];
+    probeFrame.modalPresentationStyle=UIModalPresentationPageSheet;
+    [probeHost presentViewController:probeFrame animated:NO completion:nil];
+    assert(probeHost.presentedViewController==probeFrame);
+    // A push loaded the page's view on the way in; a presentation loads it on the
+    // transition instead, and the sheet only reaches its real size once the window
+    // has laid out. Both are done here before anything is measured: a page measured
+    // before it is on screen measures zero, which says nothing about the page.
+    [pushed loadViewIfNeeded];
+    [probeFrame.view layoutIfNeeded];
     [probe layoutIfNeeded];
-    UISearchBar *search=(id)[pushed valueForKey:@"search"];
+    self.probeHost=probeHost;
+    self.probeManager=pushed;
+    self.probeWindow=probe;
+    // Measured in the next turn, not here. A sheet is still being placed while it is
+    // being presented, and hit-testing a view that UIKit is in the middle of moving
+    // answers a question nobody has: measured too early, the search field hits the
+    // transition view and looks broken when it is not.
+    [self performSelector:@selector(checkAddonsSearch) withObject:nil afterDelay:0.6];
+    return;
+}
+- (void)checkAddonsSearch {
+    UIWindow *probe=self.probeWindow;
+    [probe layoutIfNeeded];
+    UISearchBar *search=(id)[self.probeManager valueForKey:@"search"];
     assert(search!=nil && search.frame.size.height>0);
     [search layoutIfNeeded];
     CGPoint centre=[search convertPoint:CGPointMake(CGRectGetMidX(search.bounds),CGRectGetMidY(search.bounds)) toView:probe];
     UIView *hit=[probe hitTest:centre withEvent:nil];
-    NSLog(@"ADDONS_SEARCH bar=%@ hit=%@",NSStringFromCGRect(search.frame),NSStringFromClass(hit.class));
+    NSLog(@"ADDONS_SEARCH bar=%@ centre=%@ hit=%@",
+          NSStringFromCGRect(search.frame),NSStringFromCGPoint(centre),NSStringFromClass(hit.class));
     assert(hit!=nil && ([hit isDescendantOfView:search] || hit==search));
     // Control: a plain text field in the same window. If it raises no keyboard
     // either, the simulator itself has a hardware keyboard attached and only a
     // search bar that behaves differently points at our own layout.
     UITextField *plain=[[UITextField alloc] initWithFrame:CGRectMake(0,0,300,40)];
-    [pushed.view addSubview:plain];
+    [self.probeManager.view addSubview:plain];
     keyboardShown=NO;
     [probe makeKeyAndVisible];
     [plain becomeFirstResponder];
-    self.probeWindow=probe; self.probeSearch=search; self.probePlain=plain;
+    self.probeSearch=search; self.probePlain=plain;
     [self performSelector:@selector(checkPlainKeyboard) withObject:nil afterDelay:0.6];
-    return;
 }
 - (void)checkPlainKeyboard {
     NSLog(@"ADDONS_KEYBOARD_PLAIN shown=%d firstResponder=%d",keyboardShown?1:0,[self.probePlain isFirstResponder]?1:0);
@@ -144,9 +193,78 @@ static UIView *Find(UIView *view, NSString *identifier) {
 - (void)checkSearchKeyboard {
     NSLog(@"ADDONS_KEYBOARD shown=%d firstResponder=%d",keyboardShown?1:0,[self.probeSearch isFirstResponder]?1:0);
     [self.probeSearch resignFirstResponder];
+    // One Done button, and it has to work on a presentation: these pages were
+    // pushed once and are popups now, and a popup that cannot be closed is worse
+    // than one in the wrong place.
+    [self.probeManager done];
+    [self performSelector:@selector(checkPopupClosed) withObject:nil afterDelay:0.6];
+}
+- (void)checkPopupClosed {
+    assert(self.probeHost.presentedViewController==nil);
     self.probeWindow.hidden=YES; self.probeWindow.rootViewController=nil;
-    self.probeWindow=nil; self.probeSearch=nil;
-    [self.window makeKeyAndVisible];
+    self.probeWindow=nil; self.probeSearch=nil; self.probeManager=nil; self.probeHost=nil;
+    // The same page on the real controller, because what matters next is what
+    // closing it does to the launcher: nothing. The game files are read once per
+    // launch, so opening a page over the home page and closing it must not send the
+    // launcher back to the network - which is what it used to do, every time.
+    requestsBeforePopup=atomic_load(&requests);
+    [self.controller manageAddons];
+    [self performSelector:@selector(checkAddonsPopupSettled) withObject:nil afterDelay:0.6];
+}
+- (void)checkAddonsPopupSettled {
+    UINavigationController *frame=(id)self.controller.presentedViewController;
+    assert(frame!=nil);
+    // Drawn and closed only once it is actually up: dismissing a sheet that is still
+    // arriving is a race, and the race is the test's fault, not the app's.
+    [self.window layoutIfNeeded];
+    [self capture:@"addons-popup.png"];
+    [(TKWoWAddonManagerViewController *)frame.topViewController done];
+    [self performSelector:@selector(checkVoiceSettingsPage) withObject:nil afterDelay:0.8];
+}
+// Both voice pages, opened the way the launcher opens them and drawn for the record.
+// They were built out of system colours while everything around them was navy and
+// gold; a screenshot is the only way to see that they are not any more.
+//
+// Each is opened, waited for, and only then drawn and closed. Asking a sheet to
+// dismiss while it is still arriving is a race, and losing it looks exactly like a
+// page that cannot be closed - which is how this fixture spent an hour lying about
+// the voice page.
+- (void)checkVoiceSettingsPage {
+    assert(self.controller.presentedViewController==nil);
+    [self.controller manageVoice];
+    assert(self.controller.presentedViewController!=nil);
+    [self performSelector:@selector(captureVoiceSettings) withObject:nil afterDelay:0.7];
+}
+- (void)captureVoiceSettings {
+    UINavigationController *frame=(id)self.controller.presentedViewController;
+    assert(frame!=nil && [frame.topViewController isKindOfClass:AKVoiceViewController.class]);
+    [self.window layoutIfNeeded];
+    [self capture:@"voice-settings.png"];
+    [(AKVoiceViewController *)frame.topViewController done];
+    [self performSelector:@selector(checkVoiceTestPage) withObject:nil afterDelay:0.9];
+}
+- (void)checkVoiceTestPage {
+    assert(self.controller.presentedViewController==nil);
+    [self.controller testVoice];
+    assert(self.controller.presentedViewController!=nil);
+    [self performSelector:@selector(captureVoiceTest) withObject:nil afterDelay:0.7];
+}
+- (void)captureVoiceTest {
+    UINavigationController *frame=(id)self.controller.presentedViewController;
+    assert(frame!=nil && [frame.topViewController isKindOfClass:AKVoiceTestViewController.class]);
+    [self.window layoutIfNeeded];
+    [self capture:@"voice-test.png"];
+    [(AKVoiceTestViewController *)frame.topViewController done];
+    [self performSelector:@selector(checkNoRecheck) withObject:nil afterDelay:0.9];
+}
+- (void)checkNoRecheck {
+    assert(self.controller.presentedViewController==nil);
+    assert(atomic_load(&requests)==requestsBeforePopup);
+    // And appearing again cannot either. This is the rule itself, called directly
+    // so that it does not depend on how UIKit treats a sheet: the check runs once.
+    [self.controller viewDidAppear:NO];
+    [self.controller viewDidAppear:NO];
+    assert(atomic_load(&requests)==requestsBeforePopup);
     self.controller.executionMode=TKExecutionModeNone;
     assert(![self primary].enabled);
     self.controller.executionMode=TKExecutionModeDeveloperService;

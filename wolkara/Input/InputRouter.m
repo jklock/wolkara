@@ -2,11 +2,14 @@
 
 #import "InputRouter.h"
 
+#import "../App/WolkaraLog.h"
+
+// Both channels; see ControllerInspector.m for why.
 #if __has_include("AKSupport.h")
 #import "AKSupport.h"
-#define AKIRLog(...) AKLog(__VA_ARGS__)
+#define AKIRLog(...) do { AKLog(__VA_ARGS__); WKLog("input", __VA_ARGS__); } while (0)
 #else
-#define AKIRLog(...) NSLog(@"[ak] %@", [NSString stringWithFormat:__VA_ARGS__])
+#define AKIRLog(...) do { NSLog(@"[ak] %@", [NSString stringWithFormat:__VA_ARGS__]); WKLog("input", __VA_ARGS__); } while (0)
 #endif
 
 #import "../Controller/ControllerInspector.h"
@@ -90,6 +93,13 @@ static AKInputSource AKInputSourceFromName(NSString *name) {
     _learning = YES;
     _learningDevice = nil;
     AKIRLog(@"input: learning — press the button you want to use");
+}
+
+- (void)cancelLearning {
+    if (!_learning) return;
+    _learning = NO;
+    _learningDevice = nil;
+    AKIRLog(@"input: learning cancelled; nothing was saved");
 }
 
 #pragma mark - The one entry point for every source
