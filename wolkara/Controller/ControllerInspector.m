@@ -36,6 +36,17 @@ static double const AKCIAxisBucket = 2.0;
     NSMutableDictionary<NSString *, NSNumber *> *_axisBuckets;
     UILabel *_panel;
     BOOL _began;
+    NSString *_currentDevice;
+    NSString *_currentSourceName;
+}
+
+- (NSString *)currentDevice { return _currentDevice; }
+- (NSString *)currentSourceName { return _currentSourceName; }
+
+- (BOOL)currentControllerDeclaresShare {
+    for (GCController *pad in GCController.controllers)
+        if (pad.physicalInputProfile.buttons[GCInputButtonShare]) return YES;
+    return NO;
 }
 
 + (instancetype)shared {
@@ -84,12 +95,18 @@ static double const AKCIAxisBucket = 2.0;
 
 - (void)screenshotTaken:(NSNotification *)notification {
     (void)notification;
-    // A press of the pad's Share button, as far as this app can tell.
+    // A press of the pad's Share button, as far as this app can tell. Attributed
+    // to the connected pad when there is one, so a per-controller choice
+    // applies to it.
+    _currentDevice = GCController.controllers.firstObject.vendorName ?: @"System";
+    _currentSourceName = @"system";
     [self reportLine:@"Share (system screenshot)" element:@"Share" value:1 pressed:YES];
 }
 
 - (void)screenCaptureChanged:(NSNotification *)notification {
     (void)notification;
+    _currentDevice = GCController.controllers.firstObject.vendorName ?: @"System";
+    _currentSourceName = @"system";
     AKCILog(@"inspector: screen capture changed, captured=%d", UIScreen.mainScreen.isCaptured);
     [self reportLine:[NSString stringWithFormat:@"Share held (screen capture %@)", UIScreen.mainScreen.isCaptured ? @"on" : @"off"]
               element:@"Share" value:(UIScreen.mainScreen.isCaptured ? 1 : 0) pressed:UIScreen.mainScreen.isCaptured];
@@ -206,19 +223,23 @@ static double const AKCIAxisBucket = 2.0;
 
 - (void)attachPad:(GCController *)pad {
     GCPhysicalInputProfile *profile = pad.physicalInputProfile;
+    // Carried with every report from this pad, so a trigger can be remembered
+    // against it rather than against "the controller".
+    NSString *device = pad.vendorName ?: @"Controller";
     __weak AKControllerInspector *weakSelf = self;
 
     for (NSString *name in profile.buttons) {
         GCControllerButtonInput *button = profile.buttons[name];
         button.pressedChangedHandler = ^(GCControllerButtonInput *input, float value, BOOL pressed) {
             (void)input;
-            [weakSelf noteElement:name value:value pressed:pressed];
-        };
+            [weakSelf markDevice:device source:@"controller"];
+            [weakSelf noteElement:name value:value pressed:pressed];        };
     }
     for (NSString *name in profile.axes) {
         GCControllerAxisInput *axis = profile.axes[name];
         axis.valueChangedHandler = ^(GCControllerAxisInput *input, float value) {
             (void)input;
+            [weakSelf markDevice:device source:@"controller"];
             [weakSelf noteAxis:name value:value];
         };
     }
@@ -226,6 +247,7 @@ static double const AKCIAxisBucket = 2.0;
         GCControllerDirectionPad *dpad = profile.dpads[name];
         dpad.valueChangedHandler = ^(GCControllerDirectionPad *input, float x, float y) {
             (void)input;
+            [weakSelf markDevice:device source:@"controller"];
             [weakSelf noteElement:[NSString stringWithFormat:@"%@ x=%.2f y=%.2f", name, x, y]
                             value:(x != 0 ? x : y) pressed:(x != 0 || y != 0)];
         };
@@ -234,10 +256,12 @@ static double const AKCIAxisBucket = 2.0;
         GCControllerTouchpad *touchpad = profile.touchpads[name];
         touchpad.touchDown = ^(GCControllerTouchpad *input, float x, float y, float buttonValue, BOOL buttonPressed) {
             (void)input; (void)buttonValue;
+            [weakSelf markDevice:device source:@"touchpad"];
             [weakSelf noteElement:[NSString stringWithFormat:@"%@ down x=%.2f y=%.2f button=%d", name, x, y, buttonPressed] value:1 pressed:YES];
         };
         touchpad.touchUp = ^(GCControllerTouchpad *input, float x, float y, float buttonValue, BOOL buttonPressed) {
             (void)input; (void)buttonValue;
+            [weakSelf markDevice:device source:@"touchpad"];
             [weakSelf noteElement:[NSString stringWithFormat:@"%@ up x=%.2f y=%.2f button=%d", name, x, y, buttonPressed] value:0 pressed:NO];
         };
         touchpad.touchMoved = ^(GCControllerTouchpad *input, float x, float y, float buttonValue, BOOL buttonPressed) {
@@ -259,6 +283,7 @@ static double const AKCIAxisBucket = 2.0;
     __weak AKControllerInspector *weakSelf = self;
     keyboard.keyboardInput.keyChangedHandler = ^(GCKeyboardInput *input, GCDeviceButtonInput *key, GCKeyCode keyCode, BOOL pressed) {
         (void)input; (void)key;
+        [weakSelf markDevice:@"Keyboard" source:@"keyboard"];
         [weakSelf noteElement:[NSString stringWithFormat:@"keycode %ld", (long)keyCode] value:(pressed ? 1 : 0) pressed:pressed];
     };
 }
@@ -268,6 +293,7 @@ static double const AKCIAxisBucket = 2.0;
     GCMouseInput *input = mouse.mouseInput;
     input.leftButton.pressedChangedHandler = ^(GCControllerButtonInput *button, float value, BOOL pressed) {
         (void)button;
+        [weakSelf markDevice:@"Mouse" source:@"mouse"];
         [weakSelf noteElement:@"mouse left" value:value pressed:pressed];
     };
     input.rightButton.pressedChangedHandler = ^(GCControllerButtonInput *button, float value, BOOL pressed) {
@@ -287,8 +313,15 @@ static double const AKCIAxisBucket = 2.0;
 
 #pragma mark - Reporting
 
-- (void)noteElement:(NSString *)element value:(double)value pressed:(BOOL)pressed {
-    NSString *line = [NSString stringWithFormat:@"%@ %@=%.2f", element, pressed ? @"pressed" : @"value", value];
+// Called from the input handlers so that every report carries the device it
+// came from. A message to a weak reference is safe where reading an ivar
+// through one is not.
+- (void)markDevice:(NSString *)device source:(NSString *)source {
+    _currentDevice = device;
+    _currentSourceName = source;
+}
+
+- (void)noteElement:(NSString *)element value:(double)value pressed:(BOOL)pressed {    NSString *line = [NSString stringWithFormat:@"%@ %@=%.2f", element, pressed ? @"pressed" : @"value", value];
     [self reportLine:line element:element value:value pressed:pressed];
 }
 

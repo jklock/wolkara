@@ -33,6 +33,16 @@ NS_ASSUME_NONNULL_BEGIN
 // Show the same events in a small panel over the game. Off unless asked for.
 - (void)showPanel:(BOOL)visible;
 
+// Which device and kind of source reported the event currently being delivered.
+// Read from inside the `onInput` block: it is set for the duration of the call,
+// so a trigger can be remembered per controller.
+@property (nonatomic, copy, readonly, nullable) NSString *currentDevice;
+@property (nonatomic, copy, readonly, nullable) NSString *currentSourceName;
+
+// Whether a connected controller declares the Share element that iPadOS
+// reserves. If one does, its gesture is released and the press lands with us.
+@property (nonatomic, readonly) BOOL currentControllerDeclaresShare;
+
 @end
 
 NS_ASSUME_NONNULL_END
