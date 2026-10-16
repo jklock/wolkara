@@ -78,15 +78,21 @@ intent() {
         echo "$f $dst $(intent "$dst")"
     done
     echo "#"
-    echo "# Voice: what you say, turned into text in the game"
+    echo "# Voice: what you say, turned into text in the game, and its tests"
     git ls-files wolkara/Voice | while read -r f; do
-        dst=launcher/Voice/${f#wolkara/Voice/}
+        case "$f" in
+            wolkara/Voice/tests/*) dst=tests/${f#wolkara/Voice/tests/};;
+            *) dst=launcher/Voice/${f#wolkara/Voice/};;
+        esac
         echo "$f $dst $(intent "$dst")"
     done
     echo "#"
     echo "# Input: any button, on any controller, in one stream (see docs/INPUT_TRIGGERS.md)"
     git ls-files wolkara/Input | while read -r f; do
-        dst=launcher/Input/${f#wolkara/Input/}
+        case "$f" in
+            wolkara/Input/tests/*) dst=tests/${f#wolkara/Input/tests/};;
+            *) dst=launcher/Input/${f#wolkara/Input/};;
+        esac
         echo "$f $dst $(intent "$dst")"
     done
 } > "$out"

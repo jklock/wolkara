@@ -1,0 +1,636 @@
+// Focused tests for the input, voice and configuration rules.
+//
+// The 2026-10-16 audit's required verification, in one place:
+//
+//   1. canonical element ids, mapping persistence and migration, cancellation,
+//      controller disconnect, screenshot isolation, and every trigger pattern;
+//   2. dictation: permission denial, unavailable on-device recognition, final-result
+//      ordering, rapid toggles, exactly one delivery, and audio-session restoration;
+//   3. a malformed configuration corpus: version, types, enums, trigger values,
+//      oversized data, and a file that is not a file.
+//
+// It runs as a tiny app in the simulator because UIKit and GameController are what the
+// code under test is made of. The recogniser and the audio session are the two things a
+// test cannot run, and both are behind protocols in Dictation.h so they can be faked.
+//
+//   wolkara/tools/test_voice.sh
+
+#import <UIKit/UIKit.h>
+
+#import "../launcher/Input/InputElement.h"
+#import "../launcher/Input/InputRouter.h"
+#import "../launcher/Input/Trigger.h"
+#import "../launcher/Voice/Dictation.h"
+#import "../launcher/Voice/VoiceSettings.h"
+#import "../launcher/Controller/ControllerInspector.h"
+#import "../launcher/App/WolkaraConfig.h"
+#import "../launcher/App/WolkaraLog.h"
+
+static NSUInteger checks, failures;
+
+static void Check(BOOL condition, NSString *what) {
+    checks++;
+    if (condition) return;
+    failures++;
+    fprintf(stderr, "FAIL: %s\n", what.UTF8String);
+}
+#define CHECK(condition, ...) Check((condition), [NSString stringWithFormat:__VA_ARGS__])
+
+// Runs the main run loop, because a few of these paths are asynchronous on purpose.
+static void Pump(NSTimeInterval seconds) {
+    NSDate *until = [NSDate dateWithTimeIntervalSinceNow:seconds];
+    while (until.timeIntervalSinceNow > 0)
+        [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode
+                                 beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
+}
+
+#pragma mark - The two fakes
+
+@interface FakeSpeech : NSObject <AKDictationSpeech>
+@property (nonatomic) BOOL available;
+@property (nonatomic) BOOL onDevice;
+@property (nonatomic) BOOL authorized;
+@property (nonatomic, copy) void (^handler)(NSString *, BOOL, NSError *);
+@property (nonatomic) NSUInteger starts, finishes, cancels;
+@property (nonatomic, copy) NSArray<NSString *> *words;
+@end
+
+@implementation FakeSpeech
+- (instancetype)init { if ((self = [super init])) { _available = YES; _onDevice = YES; _authorized = YES; } return self; }
+- (BOOL)isAvailable { return self.available; }
+- (BOOL)supportsOnDeviceRecognition { return self.onDevice; }
+- (void)requestAuthorization:(void (^)(BOOL))completion { completion(self.authorized); }
+- (void)startOnDevice:(BOOL)onDevice words:(NSArray<NSString *> *)words handler:(void (^)(NSString *, BOOL, NSError *))handler {
+    (void)onDevice;
+    self.starts++;
+    self.words = words;
+    self.handler = handler;
+}
+- (void)finish { self.finishes++; }
+- (void)cancel { self.cancels++; self.handler = nil; }
+// What a recogniser would do next.
+- (void)say:(NSString *)text final:(BOOL)isFinal {
+    void (^handler)(NSString *, BOOL, NSError *) = self.handler;
+    if (handler) handler(text, isFinal, nil);
+}
+@end
+
+@interface FakeAudio : NSObject <AKDictationAudio>
+@property (nonatomic) BOOL refuse;
+@property (nonatomic) BOOL recording;
+@property (nonatomic) NSUInteger begins, restores;
+@end
+
+@implementation FakeAudio
+- (BOOL)beginRecording:(NSError **)error {
+    self.begins++;
+    if (self.refuse) {
+        if (error) *error = [NSError errorWithDomain:@"test" code:1 userInfo:@{NSLocalizedDescriptionKey: @"the session said no"}];
+        return NO;
+    }
+    self.recording = YES;
+    return YES;
+}
+- (void)restore { self.restores++; self.recording = NO; }
+@end
+
+// The game's own text view, as far as dictation is concerned.
+@interface FakeGameTextView : UIView
+@property (nonatomic) NSUInteger inserts, returns;
+@property (nonatomic, copy) NSString *lastText;
+@end
+
+@implementation FakeGameTextView
+- (void)touchInsertText:(NSString *)text { self.inserts++; self.lastText = text; }
+- (void)touchSpecialKey:(NSNumber *)code characters:(NSString *)characters {
+    (void)code; (void)characters;
+    self.returns++;
+}
+@end
+
+#pragma mark - The tests
+
+static void TestElements(void) {
+    CHECK(([AKInputElementForControllerButton(@"Button Share") isEqualToString:@"controller.button.share"]),
+          @"a pad's Share button should be controller.button.share, got %@", AKInputElementForControllerButton(@"Button Share"));
+    CHECK(([AKInputElementForControllerButton(@"Button Left Shoulder") isEqualToString:@"controller.button.left.shoulder"]),
+          @"a two-word button should be slugged, got %@", AKInputElementForControllerButton(@"Button Left Shoulder"));
+    CHECK(([AKInputElementForKeyboardKey(36) isEqualToString:@"keyboard.key.36"]), @"a key code should be keyboard.key.36");
+    CHECK(([AKInputElementForMouseButton(@"left") isEqualToString:@"mouse.button.left"]), @"a mouse button should be mouse.button.left");
+    CHECK(([AKInputElementForTouchpad(@"Touchpad", @"down") isEqualToString:@"touchpad.touchpad.down"]), @"a touchpad phase should be touchpad.touchpad.down");
+
+    // The two that used to change with every movement, which is why nothing learned
+    // from one press ever matched the next one.
+    NSString *up = AKInputElementForDirectionPad(@"Left Thumbstick", 0.1, -0.9);
+    NSString *upAgain = AKInputElementForDirectionPad(@"Left Thumbstick", 0.3, -0.8);
+    CHECK(([up isEqualToString:upAgain]), @"two presses of the same d-pad direction must be the same id (%@ vs %@)", up, upAgain);
+    CHECK(([up isEqualToString:@"dpad.left.thumbstick.up.centre"]), @"got %@", up);
+    CHECK(([AKInputElementForDirectionPad(@"Left Thumbstick", -0.9, -0.9) isEqualToString:@"dpad.left.thumbstick.up.left"]),
+          @"a diagonal must be a name, not numbers");
+    CHECK(([AKInputElementForDirectionPad(@"Left Thumbstick", 0, 0) isEqualToString:@"dpad.left.thumbstick.centre.centre"]),
+          @"the middle must be centre");
+
+    CHECK((AKInputElementIsCanonical(@"controller.button.share")), @"a controller id is canonical");
+    CHECK((AKInputElementIsCanonical(@"system.screenshot")), @"a system id is canonical");
+    CHECK((!AKInputElementIsCanonical(@"Button Share")), @"display text is not canonical");
+    CHECK((!AKInputElementIsCanonical(@"dpad x=0.42 y=-1.00")), @"a value is not an id");
+
+    CHECK(([AKInputElementCanonicalized(@"Button Share") isEqualToString:@"controller.button.share"]), @"legacy button name");
+    CHECK(([AKInputElementCanonicalized(@"Share") isEqualToString:@"system.screenshot"]), @"the old screenshot spelling");
+    CHECK(([AKInputElementCanonicalized(@"keycode 70") isEqualToString:@"keyboard.key.70"]), @"legacy key name");
+    CHECK(([AKInputElementCanonicalized(@"mouse right") isEqualToString:@"mouse.button.right"]), @"legacy mouse name");
+    CHECK(([AKInputElementCanonicalized(@"controller.button.a") isEqualToString:@"controller.button.a"]), @"an id is left alone");
+
+    CHECK(([AKInputElementDisplay(@"controller.button.share") isEqualToString:@"Share"]), @"share reads as Share");
+    CHECK(([AKInputElementDisplay(@"keyboard.key.36") isEqualToString:@"Key 36"]), @"a key reads as Key 36");
+    CHECK(([AKInputElementDisplay(@"system.screenshot") containsString:@"Share"]), @"the screenshot signal reads as Share");
+}
+
+static void TestTriggers(void) {
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    for (NSString *key in defaults.dictionaryRepresentation.allKeys)
+        if ([key hasPrefix:@"AKInputTrigger."]) [defaults removeObjectForKey:key];
+
+    AKTrigger *trigger = [AKTrigger new];
+    trigger.element = @"controller.button.share";
+    trigger.pattern = AKTriggerPatternPress;
+    CHECK(([trigger watchesElement:@"controller.button.share"]), @"an exact match");
+    CHECK((![trigger watchesElement:@"controller.button.a"]), @"and nothing else");
+    CHECK(([trigger watchesElement:@"controller.button.share"]), @"matching is by id, not by display text");
+
+    AKTrigger *family = [AKTrigger new];
+    family.element = @"controller.button.";
+    CHECK(([family watchesElement:@"controller.button.a"]), @"a family covers every button");
+    CHECK((![family watchesElement:@"keyboard.key.36"]), @"and not other kinds");
+
+    AKTrigger *any = [AKTrigger new];
+    any.element = AKTriggerAnyElement;
+    CHECK(([any watchesElement:@"keyboard.key.36"]), @"any covers everything");
+
+    // Storage round trip, then the corpus of things that must be refused.
+    NSDictionary *stored = [trigger storedForm];
+    AKTrigger *back = [AKTrigger triggerFromStored:stored];
+    CHECK((back && [back.element isEqualToString:trigger.element] && back.pattern == trigger.pattern),
+          @"a stored trigger comes back the same");
+    CHECK(([AKTrigger triggerFromStored:nil] == nil), @"nothing is not a trigger");
+    CHECK(([AKTrigger triggerFromStored:@{}] == nil), @"an empty dictionary is not a trigger");
+    CHECK(([AKTrigger triggerFromStored:@{@"element": @42, @"pattern": @0}] == nil), @"a number is not an element");
+    // A name an older build wrote is *migrated*, not refused: refusing it would throw
+    // away the mapping a user made. What must be refused is a name we cannot read.
+    AKTrigger *legacy = [AKTrigger triggerFromStored:@{@"element": @"Button Share", @"pattern": @0}];
+    CHECK((legacy != nil && [legacy.element isEqualToString:@"controller.button.share"]),
+          @"a legacy element name is migrated to its id, got %@", legacy.element);
+    CHECK(([AKTrigger triggerFromStored:@{@"element": @"what is this", @"pattern": @0}] == nil),
+          @"a name we cannot read is refused");
+    CHECK(([AKTrigger triggerFromStored:@{@"element": @"controller.button.a", @"pattern": @9}] == nil), @"a pattern out of range");
+    CHECK(([AKTrigger triggerFromStored:@{@"element": @"controller.button.a", @"pattern": @0, @"hold": @0.001}] == nil), @"a hold that is not a hold");
+    CHECK(([AKTrigger triggerFromStored:@{@"element": @"controller.button.a", @"pattern": @0, @"hold": @99}] == nil), @"a hold that is forever");
+    CHECK(([AKTrigger triggerFromStored:@{@"element": @"controller.button.a", @"pattern": @0, @"double": @0.001}] == nil), @"a double window of nothing");
+    CHECK(([AKTrigger triggerFromStored:@{@"element": @"controller.button.a", @"pattern": @0, @"chord": @"Button X"}] == nil),
+          @"a chord partner must be an id too");
+    CHECK(([AKTrigger triggerFromStored:@{@"element": @"controller.button.a", @"pattern": @"press"}] == nil), @"a pattern must be a number");
+    CHECK(([AKTrigger triggerFromStored:@{@"element": @"controller.button.a", @"pattern": @0, @"hold": @0.5}] != nil),
+          @"a reasonable hold is fine");
+
+    // Migration: what an older build wrote, and one entry that cannot be read at all.
+    [defaults setObject:@{@"element": @"Button Share", @"pattern": @0} forKey:@"AKInputTrigger.vendor"];
+    [defaults setObject:@{@"element": @"Button X", @"pattern": @9} forKey:@"AKInputTrigger.broken"];
+    NSUInteger migrated = [AKTrigger migrateStoredTriggersInDefaults:defaults];
+    CHECK((migrated == 2), @"both entries needed attention, got %lu", (unsigned long)migrated);
+    CHECK(([[defaults dictionaryForKey:@"AKInputTrigger.vendor"][@"element"] isEqualToString:@"controller.button.share"]),
+          @"a mapping made before this change keeps working");
+    CHECK(([defaults dictionaryForKey:@"AKInputTrigger.broken"] == nil), @"an unreadable mapping is dropped");
+
+    // Two controllers from one vendor are two controllers.
+    CHECK((![[AKTrigger defaultsKeyForDevice:@"8bitdo.pro"] isEqualToString:[AKTrigger defaultsKeyForDevice:@"8bitdo.controller"]]),
+          @"the key is the controller's identity, not its vendor");
+    CHECK(([[AKTrigger legacyDefaultsKeyForVendor:@"8bitdo"] isEqualToString:@"AKInputTrigger.8bitdo"]), @"the old key is still readable");
+
+    for (NSString *key in defaults.dictionaryRepresentation.allKeys)
+        if ([key hasPrefix:@"AKInputTrigger."]) [defaults removeObjectForKey:key];
+}
+
+static void TestSettings(void) {
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    for (NSString *key in defaults.dictionaryRepresentation.allKeys)
+        if ([key hasPrefix:@"AKInputTrigger."] || [key hasPrefix:@"AKVoice"]) [defaults removeObjectForKey:key];
+    AKVoiceSettings *settings = AKVoiceSettings.shared;
+    settings.enabled = NO;
+    settings.mode = AKVoiceModeHold;
+
+    CHECK((!settings.enabled), @"voice is off until it is asked for");
+    CHECK(([settings triggerForDevice:@"pad"] == nil), @"with nothing mapped there is no trigger at all");
+    CHECK(([[settings mappingSummaryForDevice:@"pad"] isEqualToString:@"Not set"]), @"and the screen says so");
+
+    // Enabled but unmapped is still nothing: no fallback, which is the audit's first
+    // release blocker.
+    settings.enabled = YES;
+    CHECK(([settings triggerForDevice:@"pad"] == nil), @"switching it on does not invent a trigger");
+
+    [settings setLearnedElement:@"controller.button.share" forDevice:@"pad"];
+    AKTrigger *mapped = [settings triggerForDevice:@"pad"];
+    CHECK((mapped && [mapped.element isEqualToString:@"controller.button.share"]), @"the learned element is stored as an id");
+    CHECK((mapped.pattern == AKTriggerPatternPushToTalk), @"hold to talk is the pattern in hold mode");
+    CHECK(([[settings mappingSummaryForDevice:@"pad"] containsString:@"Share"]), @"and it reads as Share");
+
+    settings.mode = AKVoiceModeToggle;
+    CHECK(([settings triggerForDevice:@"pad"].pattern == AKTriggerPatternPress),
+          @"the mode owns the pattern, so changing it changes the mapping's behaviour");
+
+    settings.enabled = NO;
+    CHECK(([settings triggerForDevice:@"pad"] == nil), @"switching it off stops it firing, whatever is stored");
+    CHECK(([[settings mappingSummaryForDevice:@"pad"] containsString:@"Share"]), @"but the screen still shows what is set");
+    settings.enabled = YES;
+
+    [settings clearMappingForDevice:@"pad"];
+    CHECK(([settings triggerForDevice:@"pad"] == nil), @"clearing the mapping leaves nothing");
+
+    // A mapping from an older build, keyed by the vendor name alone.
+    [defaults setObject:@{@"element": @"Button X", @"pattern": @0} forKey:@"AKInputTrigger.8bitdo"];
+    CHECK(([settings adoptLegacyMappingForDevice:@"8bitdo.pro" vendor:@"8bitdo"]), @"the old mapping is adopted");
+    CHECK(([settings triggerForDevice:@"8bitdo.pro"] != nil), @"onto the controller's identity");
+    CHECK(([defaults dictionaryForKey:@"AKInputTrigger.8bitdo"] == nil), @"and the old key is gone");
+    CHECK((![settings adoptLegacyMappingForDevice:@"8bitdo.pro" vendor:@"8bitdo"]), @"adopting twice does nothing");
+
+    // The dictionary is biased into the recogniser, so it is bounded and cleaned.
+    settings.customWords = @[@"Thunderfury", @"Thunderfury", @"", @"  ", [@"" stringByPaddingToLength:200 withString:@"x" startingAtIndex:0], @42, @"Ragnaros"];
+    CHECK((settings.customWords.count == 2), @"duplicates, blanks and overlong words are dropped, got %lu", (unsigned long)settings.customWords.count);
+    CHECK(([settings.customWords containsObject:@"Thunderfury"] && [settings.customWords containsObject:@"Ragnaros"]), @"the real words stay");
+
+    for (NSString *key in defaults.dictionaryRepresentation.allKeys)
+        if ([key hasPrefix:@"AKInputTrigger."] || [key hasPrefix:@"AKVoice"]) [defaults removeObjectForKey:key];
+}
+
+static void TestLearning(void) {
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    for (NSString *key in defaults.dictionaryRepresentation.allKeys)
+        if ([key hasPrefix:@"AKInputTrigger."]) [defaults removeObjectForKey:key];
+    AKVoiceSettings *settings = AKVoiceSettings.shared;
+    settings.enabled = YES;
+    settings.mode = AKVoiceModeToggle;
+
+    AKInputRouter *router = AKInputRouter.shared;
+    router.learningTimeout = 20.0;
+    __block NSString *learnedElement = nil;
+    router.onLearned = ^(AKTrigger *trigger, NSString *device) {
+        (void)device;
+        learnedElement = trigger.element;
+        [AKVoiceSettings.shared setLearnedElement:trigger.element forDevice:device];
+    };
+
+    [router beginLearning];
+    CHECK((router.learning), @"arming a mapping listens");
+    [router reportElement:@"controller.button.y" value:1 pressed:YES device:@"pad" source:AKInputSourceController];
+    CHECK((!router.learning), @"the first press ends the listening");
+    CHECK(([learnedElement isEqualToString:@"controller.button.y"]), @"and it is the press that was adopted, got %@", learnedElement);
+    CHECK(([settings triggerForDevice:@"pad"] != nil), @"which is now the mapping");
+
+    // The timeout disarms, and a press afterwards must not become the mapping. This is
+    // the audit's "post-timeout event cannot modify persistence".
+    NSString *before = [[settings triggerForDevice:@"pad"] element];
+    __block BOOL expired = NO;
+    id token = [NSNotificationCenter.defaultCenter addObserverForName:AKInputRouterLearningDidExpireNotification
+                                                              object:nil queue:NSOperationQueue.mainQueue
+                                                          usingBlock:^(NSNotification *note) { (void)note; expired = YES; }];
+    router.learningTimeout = 0.15;
+    [router beginLearning];
+    Pump(0.5);
+    CHECK((expired), @"an armed mapping that hears nothing says so");
+    CHECK((!router.learning), @"and disarms itself");
+    [router reportElement:@"controller.button.b" value:1 pressed:YES device:@"pad" source:AKInputSourceController];
+    CHECK(([[[settings triggerForDevice:@"pad"] element] isEqualToString:before]),
+          @"a press after the timeout must not rewrite the mapping");
+    [NSNotificationCenter.defaultCenter removeObserver:token];
+
+    // Backgrounding clears it too.
+    router.learningTimeout = 20.0;
+    [router beginLearning];
+    [NSNotificationCenter.defaultCenter postNotificationName:UIApplicationDidEnterBackgroundNotification object:nil];
+    CHECK((!router.learning), @"going to the background disarms the mapper");
+
+    router.onLearned = nil;
+    for (NSString *key in defaults.dictionaryRepresentation.allKeys)
+        if ([key hasPrefix:@"AKInputTrigger."]) [defaults removeObjectForKey:key];
+}
+
+// The audit's first release blocker, tested from the system signal inwards.
+static void TestScreenshotIsolation(void) {
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    for (NSString *key in defaults.dictionaryRepresentation.allKeys)
+        if ([key hasPrefix:@"AKInputTrigger."]) [defaults removeObjectForKey:key];
+
+    AKDictation *dictation = AKDictation.shared;
+    FakeSpeech *speech = [FakeSpeech new];
+    FakeAudio *audio = [FakeAudio new];
+    dictation.speech = speech;
+    dictation.audio = audio;
+    AKVoiceSettings *settings = AKVoiceSettings.shared;
+
+    // Wire it the way Shell/main.m does, so what is tested is the real wiring.
+    AKInputRouter.shared.onTrigger = ^(AKTrigger *trigger, AKInputEvent *event) {
+        (void)trigger; (void)event;
+        [AKDictation.shared toggle];
+    };
+    AKInputRouter.shared.onTriggerBegan = ^(AKTrigger *trigger, AKInputEvent *event) {
+        (void)trigger; (void)event;
+        [AKDictation.shared begin];
+    };
+    AKInputRouter.shared.onTriggerEnded = ^(AKTrigger *trigger, AKInputEvent *event) {
+        (void)trigger; (void)event;
+        [AKDictation.shared end];
+    };
+
+    settings.enabled = NO;
+    [NSNotificationCenter.defaultCenter postNotificationName:UIApplicationUserDidTakeScreenshotNotification object:nil];
+    CHECK((speech.starts == 0), @"a screenshot must not start dictation while the feature is off");
+
+    settings.enabled = YES;
+    [NSNotificationCenter.defaultCenter postNotificationName:UIApplicationUserDidTakeScreenshotNotification object:nil];
+    CHECK((speech.starts == 0), @"nor while it is on but nothing is mapped");
+
+    // The capture notification is never an input, whatever the state.
+    [NSNotificationCenter.defaultCenter postNotificationName:UIScreenCapturedDidChangeNotification object:nil];
+    CHECK((speech.starts == 0), @"and neither must a screen capture");
+
+    // Mapped deliberately, it does fire: that is the opt-in the audit asked for. The
+    // mapping is made against the device the inspector will attribute the signal to,
+    // which is the connected pad when there is one - the simulator always has one.
+    settings.mode = AKVoiceModeToggle;
+    GCController *connected = GCController.controllers.firstObject;
+    NSString *systemDevice = connected ? AKControllerIdentity(connected) : @"system";
+    [settings setLearnedElement:AKInputElementSystemScreenshot() forDevice:systemDevice];
+    [NSNotificationCenter.defaultCenter postNotificationName:UIApplicationUserDidTakeScreenshotNotification object:nil];
+    CHECK((speech.starts == 1), @"a screenshot the user mapped does start it, got %lu", (unsigned long)speech.starts);
+
+    // And the capture still does not, even with a mapping in place.
+    [NSNotificationCenter.defaultCenter postNotificationName:UIScreenCapturedDidChangeNotification object:nil];
+    CHECK((speech.starts == 1), @"but a screen capture never does");
+
+    [dictation cancel];
+    settings.enabled = NO;
+    for (NSString *key in defaults.dictionaryRepresentation.allKeys)
+        if ([key hasPrefix:@"AKInputTrigger."]) [defaults removeObjectForKey:key];
+}
+
+static void TestDictation(void) {
+    AKDictation *dictation = AKDictation.shared;
+    FakeSpeech *speech = [FakeSpeech new];
+    FakeAudio *audio = [FakeAudio new];
+    dictation.speech = speech;
+    dictation.audio = audio;
+    dictation.finalizeTimeout = 0.2;
+    __block NSMutableArray<NSString *> *heard = [NSMutableArray array];
+    dictation.transcriptHandler = ^(NSString *text) { [heard addObject:text]; };
+    __block NSString *problem = nil;
+    dictation.problemHandler = ^(NSString *message) { problem = message; };
+    AKVoiceSettings.shared.enabled = YES;
+    AKVoiceSettings.shared.autoSubmit = NO;
+    AKVoiceSettings.shared.trailingSpace = NO;
+
+    // A refused permission: nothing opens, and the user is told.
+    speech.authorized = NO;
+    [dictation begin];
+    CHECK((dictation.state == AKDictationStateIdle), @"a refused permission leaves it idle");
+    CHECK((audio.begins == 0), @"and the audio session is never taken");
+    CHECK((problem.length > 0), @"and the user is told why");
+    speech.authorized = YES;
+
+    // A device that cannot recognise speech on its own is refused, not sent away.
+    speech.onDevice = NO;
+    [dictation begin];
+    CHECK((dictation.state == AKDictationStateIdle && speech.starts == 0), @"no on-device recognition means no session");
+    speech.onDevice = YES;
+
+    // The audio session refusing is reported and nothing is left open.
+    audio.refuse = YES;
+    [dictation begin];
+    CHECK((dictation.state == AKDictationStateIdle && speech.starts == 0), @"an audio session that will not start stops it");
+    audio.refuse = NO;
+
+    // The final result is what is delivered, not the last partial. This is the audit's
+    // "the last words can arrive after the text has gone".
+    [heard removeAllObjects];
+    [dictation begin];
+    CHECK((dictation.state == AKDictationStateListening), @"the microphone is open");
+    [speech say:@"hello" final:NO];
+    [dictation end];
+    CHECK((dictation.state == AKDictationStateFinalizing), @"ending the audio waits for the last words");
+    CHECK((heard.count == 0), @"and nothing is delivered while it waits");
+    [speech say:@"hello world" final:YES];
+    CHECK((heard.count == 1 && [heard.firstObject isEqualToString:@"hello world"]),
+          @"the final result is what is delivered, got %@", heard);
+    CHECK((dictation.state == AKDictationStateIdle), @"and the session is over");
+    CHECK((audio.restores > 0 && !audio.recording), @"the audio session was given back");
+
+    // A late final result after delivery must not deliver again.
+    [speech say:@"hello world again" final:YES];
+    CHECK((heard.count == 1), @"exactly once, even if the recogniser says so twice");
+
+    // If the last words never come, what was heard is delivered, once, after the wait.
+    [heard removeAllObjects];
+    [dictation begin];
+    [speech say:@"half a sentence" final:NO];
+    [dictation end];
+    Pump(0.6);
+    CHECK((heard.count == 1 && [heard.firstObject isEqualToString:@"half a sentence"]),
+          @"a recogniser that never finishes is timed out, got %@", heard);
+    CHECK((dictation.state == AKDictationStateIdle), @"and the session still ends");
+
+    // Repeated triggers while it is already listening are the same press.
+    [heard removeAllObjects];
+    NSUInteger startsBefore = speech.starts;
+    [dictation begin];
+    [dictation begin];
+    [dictation begin];
+    CHECK((speech.starts == startsBefore + 1), @"three presses while it is open are one session");
+    [dictation cancel];
+
+    // Rapid toggles: each utterance is delivered once and they do not run together.
+    [heard removeAllObjects];
+    [dictation toggle];
+    [speech say:@"one" final:NO];
+    [dictation toggle];
+    [speech say:@"one" final:YES];
+    [dictation toggle];
+    [speech say:@"two" final:NO];
+    [dictation toggle];
+    [speech say:@"two" final:YES];
+    CHECK((heard.count == 2 && [heard[0] isEqualToString:@"one"] && [heard[1] isEqualToString:@"two"]),
+          @"two utterances, two deliveries, in order: got %@", heard);
+
+    // Cancel delivers nothing at all.
+    [heard removeAllObjects];
+    [dictation begin];
+    [speech say:@"never mind" final:NO];
+    [dictation cancel];
+    [speech say:@"never mind" final:YES];
+    CHECK((heard.count == 0), @"a cancelled session delivers nothing");
+    CHECK((dictation.state == AKDictationStateIdle), @"and ends");
+
+    dictation.transcriptHandler = nil;
+    dictation.problemHandler = nil;
+}
+
+static void TestTypingIntoTheGame(void) {
+    AKDictation *dictation = AKDictation.shared;
+    FakeSpeech *speech = [FakeSpeech new];
+    FakeAudio *audio = [FakeAudio new];
+    dictation.speech = speech;
+    dictation.audio = audio;
+    dictation.transcriptHandler = nil;   // the game's path, not a screen's
+    AKVoiceSettings.shared.enabled = YES;
+    AKVoiceSettings.shared.trailingSpace = NO;
+    AKVoiceSettings.shared.autoSubmit = NO;
+
+    // Nothing registered: nothing is typed anywhere. The old code searched every window
+    // in every scene for the private selector, which is what this replaces.
+    [AKDictation setGameTextTarget:nil];
+    [dictation begin];
+    [speech say:@"into the void" final:NO];
+    [dictation end];
+    [speech say:@"into the void" final:YES];
+    CHECK((dictation.state == AKDictationStateIdle), @"it still ends cleanly with no target");
+
+    FakeGameTextView *target = [FakeGameTextView new];
+    [AKDictation setGameTextTarget:target];
+    [dictation begin];
+    [speech say:@"for the horde" final:NO];
+    [dictation end];
+    [speech say:@"for the horde" final:YES];
+    CHECK((target.inserts == 1 && [target.lastText isEqualToString:@"for the horde"]),
+          @"the words go into the game's own view, got %@", target.lastText);
+    CHECK((target.returns == 0), @"and Return only when it was asked for");
+
+    AKVoiceSettings.shared.autoSubmit = YES;
+    AKVoiceSettings.shared.trailingSpace = YES;
+    [dictation begin];
+    [speech say:@"again" final:NO];
+    [dictation end];
+    [speech say:@"again" final:YES];
+    CHECK(([target.lastText isEqualToString:@"again "]), @"the trailing space is theirs, got '%@'", target.lastText);
+    CHECK((target.returns == 1), @"and auto-submit sends Return once");
+    AKVoiceSettings.shared.autoSubmit = NO;
+    AKVoiceSettings.shared.trailingSpace = NO;
+    [AKDictation setGameTextTarget:nil];
+}
+
+static void TestConfigCorpus(void) {
+    NSString *problem = nil;
+    NSDictionary *file = @{@"version": @1, @"settings": @{@"WoWRegion": @"eu", @"AKVoiceMode": @1}};
+    NSDictionary *accepted = [TKWolkaraConfig validatedSettingsFromFile:file problem:&problem];
+    CHECK((accepted.count == 2 && problem == nil), @"a good file is accepted whole");
+
+    // The shape of the file.
+    CHECK(([TKWolkaraConfig validatedSettingsFromFile:nil problem:&problem].count == 0 && problem.length), @"nil is not a file");
+    CHECK(([TKWolkaraConfig validatedSettingsFromFile:(id)@[@1] problem:&problem].count == 0 && problem.length), @"an array is not a file");
+    CHECK(([TKWolkaraConfig validatedSettingsFromFile:@{@"settings": @{}} problem:&problem].count == 0 && problem.length),
+          @"a file with no version is refused");
+    CHECK(([TKWolkaraConfig validatedSettingsFromFile:@{@"version": @99, @"settings": @{}} problem:&problem].count == 0 && problem.length),
+          @"a file from a newer version is refused");
+    CHECK(([TKWolkaraConfig validatedSettingsFromFile:@{@"version": @1} problem:&problem].count == 0 && problem.length),
+          @"a file with no settings is refused");
+
+    // Values that must not get through.
+    NSDictionary *bad = @{@"version": @1, @"settings": @{
+        @"WoWRegion": @"mars",
+        @"WoWProduct": @"not a name!",
+        @"WoWLocale": @7,
+        @"AKVoiceMode": @9,
+        @"AKVoiceEnabled": @"yes",
+        @"AKVoiceAutoSubmit": @2,
+        @"AKVoiceTrailingSpace": @[@1],
+        @"AKVoiceCustomWords": @[@"ok", @42],
+        @"AKNotOurs": @"whatever",
+        @"AKInputTrigger.pad": @{@"element": @"not a thing we know", @"pattern": @0},
+        @"AKInputTrigger.bad": @{@"element": @"controller.button.a", @"pattern": @99},
+    }};
+    accepted = [TKWolkaraConfig validatedSettingsFromFile:bad problem:&problem];
+    CHECK((accepted.count == 0), @"every value in that file is unusable, got %lu", (unsigned long)accepted.count);
+    CHECK((problem.length > 0), @"and the refusal is described");
+
+    // A file with one good value and one bad one keeps the good one.
+    NSDictionary *mixed = @{@"version": @1, @"settings": @{@"WoWRegion": @"us", @"AKVoiceMode": @5}};
+    accepted = [TKWolkaraConfig validatedSettingsFromFile:mixed problem:&problem];
+    CHECK((accepted.count == 1 && [accepted[@"WoWRegion"] isEqualToString:@"us"]),
+          @"a valid value beside an invalid one still stands");
+    CHECK((problem.length > 0), @"and the invalid one is reported");
+
+    // A trigger that is valid, to prove the schema does not simply refuse everything.
+    NSDictionary *mapping = @{@"version": @1, @"settings": @{
+        @"AKInputTrigger.pad": @{@"element": @"controller.button.share", @"pattern": @0, @"hold": @0.6}}};
+    accepted = [TKWolkaraConfig validatedSettingsFromFile:mapping problem:&problem];
+    CHECK((accepted.count == 1), @"a valid mapping is accepted");
+
+    // And the file the app writes is a file the app would accept.
+    [TKWolkaraConfig.shared save];
+    NSData *data = [NSData dataWithContentsOfFile:TKWolkaraConfig.shared.path];
+    CHECK((data.length > 0), @"the app writes a config file");
+    id written = data.length ? [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL] : nil;
+    CHECK(([written isKindOfClass:NSDictionary.class]), @"and it is JSON");
+    CHECK(([written[@"version"] integerValue] == 1), @"with the version it claims");
+    NSString *roundTrip = nil;
+    [TKWolkaraConfig validatedSettingsFromFile:written problem:&roundTrip];
+    CHECK((roundTrip == nil), @"and nothing in it is refused, got %@", roundTrip);
+}
+
+#pragma mark - Running them
+
+@interface TestDelegate : UIResponder <UIWindowSceneDelegate>
+@property (nonatomic) UIWindow *window;
+@end
+
+@implementation TestDelegate
+- (void)scene:(UIScene *)scene willConnectToSession:(UISceneSession *)session options:(UISceneConnectionOptions *)options {
+    (void)session; (void)options;
+    WKLogStart();
+    WKLog("test", @"voice suite starting");
+    self.window = [[UIWindow alloc] initWithWindowScene:(UIWindowScene *)scene];
+    self.window.rootViewController = [UIViewController new];
+    [self.window makeKeyAndVisible];
+
+    // The router and the inspector are what the real app starts; starting them here
+    // means the screenshot path is exercised end to end rather than in pieces.
+    [AKInputRouter.shared begin];
+
+    TestElements();
+    TestTriggers();
+    TestSettings();
+    TestLearning();
+    TestScreenshotIsolation();
+    TestDictation();
+    TestTypingIntoTheGame();
+    TestConfigCorpus();
+
+    if (failures == 0) {
+        printf("VOICE PASS: %lu checks\n", (unsigned long)checks);
+        fflush(stdout);
+        exit(0);
+    }
+    printf("VOICE FAIL: %lu of %lu checks failed\n", (unsigned long)failures, (unsigned long)checks);
+    fflush(stdout);
+    exit(1);
+}
+@end
+
+// A scene-based app needs to say which object is the scene's delegate; without this
+// the scene never connects and the suite silently does nothing.
+@interface TestApp : UIResponder <UIApplicationDelegate>
+@end
+
+@implementation TestApp
+- (UISceneConfiguration *)application:(UIApplication *)application
+    configurationForConnectingSceneSession:(UISceneSession *)session
+                                   options:(UISceneConnectionOptions *)options {
+    (void)application; (void)options;
+    UISceneConfiguration *configuration = [[UISceneConfiguration alloc] initWithName:@"Voice tests"
+                                                                        sessionRole:session.role];
+    configuration.delegateClass = TestDelegate.class;
+    return configuration;
+}
+@end
+
+int main(int argc, char *argv[]) {
+    @autoreleasepool {
+        return UIApplicationMain(argc, argv, nil, NSStringFromClass(TestApp.class));
+    }
+}

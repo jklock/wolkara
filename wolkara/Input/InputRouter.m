@@ -15,6 +15,8 @@
 #import "../Controller/ControllerInspector.h"
 #import "../Voice/VoiceSettings.h"
 
+NSNotificationName const AKInputRouterLearningDidExpireNotification = @"AKInputRouterLearningDidExpire";
+
 static AKInputSource AKInputSourceFromName(NSString *name) {
     if ([name isEqualToString:@"keyboard"]) return AKInputSourceKeyboard;
     if ([name isEqualToString:@"mouse"]) return AKInputSourceMouse;
@@ -48,6 +50,9 @@ static AKInputSource AKInputSourceFromName(NSString *name) {
     BOOL _began;
     BOOL _learning;
     NSString *_learningDevice;
+    // Every arming gets a number, so a deadline set for one arming cannot cancel a
+    // later one that replaced it.
+    NSUInteger _learningGeneration;
 }
 
 + (instancetype)shared {
@@ -61,6 +66,7 @@ static AKInputSource AKInputSourceFromName(NSString *name) {
     if ((self = [super init])) {
         _states = [NSMutableDictionary dictionary];
         _down = [NSMutableSet set];
+        _learningTimeout = 20.0;
     }
     return self;
 }
@@ -84,21 +90,95 @@ static AKInputSource AKInputSourceFromName(NSString *name) {
                          source:AKInputSourceFromName(inspector.currentSourceName)];
     };
     [AKControllerInspector.shared begin];
+
+    NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
+    // A mapping is armed by a screen and lives here. Everything that can make the
+    // armed state wrong clears it: the app going away, a pad going away, and the
+    // deadline below.
+    [center addObserver:self selector:@selector(cancelLearning)
+                   name:UIApplicationDidEnterBackgroundNotification object:nil];
+    [center addObserver:self selector:@selector(padConnected:)
+                   name:GCControllerDidConnectNotification object:nil];
+    [center addObserver:self selector:@selector(padDisconnected:)
+                   name:GCControllerDidDisconnectNotification object:nil];
+    // Any change to what the user has chosen re-decides which system gestures are
+    // ours to hold. This is the only place that decides it.
+    [center addObserver:self selector:@selector(applyMappings)
+                   name:AKVoiceSettingsDidChangeNotification object:nil];
+    [self applyMappings];
     AKIRLog(@"input: router watching every source");
+}
+
+// A pad arriving means the stored mapping for it may now need its gesture released.
+// It does NOT disarm the mapper: the user may be sitting there waiting to press a
+// button on the pad that just connected, and cancelling then would make mapping
+// impossible. Measured in the fixture on 2026-10-16, where a controller connects a
+// moment after launch and the second mapping attempt was silently cancelled.
+- (void)padConnected:(NSNotification *)notification {
+    AKIRLog(@"input: %@", notification.name);
+    [self applyMappings];
+}
+
+// A pad leaving does disarm it: the element that was being learned no longer exists.
+- (void)padDisconnected:(NSNotification *)notification {
+    AKIRLog(@"input: %@", notification.name);
+    [self cancelLearning];
+    [self applyMappings];
+}
+
+#pragma mark - Which system gestures are ours to hold
+
+- (void)applyMappings {
+    AKControllerInspector *inspector = AKControllerInspector.shared;
+    // Start from the system's own behaviour every time, then hand over only what the
+    // user actually asked for. Any other order leaves a gesture released for a mapping
+    // that no longer exists, or for a feature that is switched off.
+    [inspector restoreAllSystemGestures];
+    if (!AKVoiceSettings.shared.enabled) return;
+
+    for (GCController *pad in GCController.controllers) {
+        NSString *device = AKControllerIdentity(pad);
+        [AKVoiceSettings.shared adoptLegacyMappingForDevice:device vendor:pad.vendorName];
+        AKTrigger *trigger = [AKVoiceSettings.shared triggerForDevice:device];
+        if (!trigger) continue;
+        // Only a controller button can have a system gesture to give up. A keyboard
+        // key or a mouse button needs nothing from us.
+        if (![trigger.element hasPrefix:@"controller.button."]) continue;
+        [inspector releaseSystemGestureForElement:trigger.element device:device];
+    }
 }
 
 #pragma mark - Learning
 
+// Long enough to find a button, short enough that a forgotten mapper is not left
+// listening. The screen that armed it is told, so it can say so.
+static NSTimeInterval const AKLearningTimeoutDefault = 20.0;
+
 - (void)beginLearning {
     _learning = YES;
     _learningDevice = nil;
+    _learningGeneration++;
+    NSUInteger generation = _learningGeneration;
+    NSTimeInterval timeout = _learningTimeout > 0 ? _learningTimeout : AKLearningTimeoutDefault;
     AKIRLog(@"input: learning — press the button you want to use");
+    __weak AKInputRouter *weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(timeout * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        AKInputRouter *strongSelf = weakSelf;
+        if (!strongSelf || strongSelf->_learningGeneration != generation) return;
+        if (!strongSelf->_learning) return;
+        [strongSelf cancelLearning];
+        [NSNotificationCenter.defaultCenter postNotificationName:AKInputRouterLearningDidExpireNotification
+                                                         object:strongSelf];
+    });
 }
 
 - (void)cancelLearning {
     if (!_learning) return;
     _learning = NO;
     _learningDevice = nil;
+    // Bumped so the outstanding deadline cannot fire against a later arming.
+    _learningGeneration++;
     AKIRLog(@"input: learning cancelled; nothing was saved");
 }
 
@@ -120,14 +200,18 @@ static AKInputSource AKInputSourceFromName(NSString *name) {
     event.time = NSProcessInfo.processInfo.systemUptime;
 
     if (_learning && pressed) {
-        // Whatever arrives first is what the user wants. This is how any button
-        // on any controller becomes usable without a line of per-device code.
+        // Whatever arrives first is what the user wants. This is how any button on any
+        // controller becomes usable without a line of per-device code.
         AKTrigger *learned = [AKTrigger new];
         learned.element = element;
+        // Only a placeholder: the pattern belongs to the mode, and the settings decide
+        // it when they store this. The router does not write anything itself, so there
+        // is one owner of what is remembered.
         learned.pattern = AKTriggerPatternPress;
         _learning = NO;
         _learningDevice = event.device;
-        [learned saveForVendor:event.device defaults:NSUserDefaults.standardUserDefaults];
+        // The deadline that was armed for this mapping has nothing left to do.
+        _learningGeneration++;
         AKIRLog(@"input: learned %@ on %@", element, event.device);
         if (self.onLearned) self.onLearned(learned, event.device);
         return;
@@ -149,6 +233,9 @@ static AKInputSource AKInputSourceFromName(NSString *name) {
     [_down addObject:key];
 
     AKTrigger *trigger = [self triggerForDevice:event.device];
+    // Nothing mapped, or the feature is off: the event is still tracked, so a release
+    // still clears it, but nothing fires.
+    if (!trigger) return;
     if (![trigger watchesElement:element]) return;
 
     switch (trigger.pattern) {
@@ -209,7 +296,7 @@ static AKInputSource AKInputSourceFromName(NSString *name) {
 
 - (void)handleRelease:(AKInputEvent *)event element:(NSString *)element key:(NSString *)key state:(AKInputElementState *)state {
     AKTrigger *trigger = [self triggerForDevice:event.device];
-    if (state.consumed && trigger.pattern == AKTriggerPatternPushToTalk &&
+    if (state.consumed && trigger && trigger.pattern == AKTriggerPatternPushToTalk &&
         [trigger watchesElement:element]) {
         AKIRLog(@"input: trigger %@ ended from %@", [trigger summary], event);
         if (self.onTriggerEnded) self.onTriggerEnded(trigger, event);

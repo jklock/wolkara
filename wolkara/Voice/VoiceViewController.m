@@ -1,13 +1,14 @@
 // Wolkara: the Voice settings screen, in full.
 //
 // Laid out as cards, matching how the rest of the launcher is built, and drawn from
-// WolkaraTheme so it is the same navy and the same gold as the Add-on Manager it
-// sits beside. It used to be built out of system colours, which made it the one
-// page in the launcher that did not look like the launcher.
+// WolkaraTheme so it is the same navy and the same gold as the Add-on Manager it sits
+// beside.
 //
-// The mapping row is the interesting one: it does not offer a list of supported
-// controllers — it asks the user to press the button, and whichever event arrives
-// becomes the trigger. That is what makes it work for hardware we have never seen.
+// The order of the page is the order of the decisions, and the first one is whether to
+// have the feature at all. The 2026-10-16 audit's first release blocker was a voice
+// path that could start by itself, so nothing here is armed, and no element of the
+// controller is touched, until the switch at the top is on and the user has pressed
+// the button they want.
 
 #import "VoiceViewController.h"
 
@@ -15,18 +16,28 @@
 
 #import "VoiceSettings.h"
 #import "Trigger.h"
+#import "Dictation.h"
 #import "../Input/InputRouter.h"
+#import "../Input/InputElement.h"
+#import "../Controller/ControllerInspector.h"
 #import "../App/WolkaraLog.h"
 #import "../App/WolkaraTheme.h"
 
 @interface AKVoiceViewController ()
+@property (nonatomic, strong) UISwitch *enabledSwitch;
+@property (nonatomic, strong) UILabel *enabledNote;
 @property (nonatomic, strong) UILabel *mappingValue;
 @property (nonatomic, strong) UILabel *mappingHint;
 @property (nonatomic, strong) UIButton *mapButton;
+@property (nonatomic, strong) UIButton *clearButton;
 @property (nonatomic, strong) UISegmentedControl *modeControl;
 @property (nonatomic, strong) UISwitch *autoSubmitSwitch;
 @property (nonatomic, strong) UISwitch *trailingSpaceSwitch;
 @property (nonatomic, strong) UITextField *dictionaryField;
+@property (nonatomic, strong) UIView *mappingCard;
+@property (nonatomic, strong) UIView *modeCard;
+@property (nonatomic, strong) UIView *afterCard;
+@property (nonatomic, strong) UIView *wordsCard;
 @end
 
 @implementation AKVoiceViewController
@@ -52,15 +63,25 @@
     rows.translatesAutoresizingMaskIntoConstraints = NO;
     [scroll addSubview:rows];
 
-    [rows addArrangedSubview:WKNote(@"Anything you press can start dictation: a button on a controller, a key, a mouse button. The game keeps its own use of that button.")];
+    [rows addArrangedSubview:WKNote(@"Nothing here happens on its own. Until this is switched on and a button is set, the microphone is never opened and no controller behaves any differently.")];
+
+    // --- On, or off ---------------------------------------------------------
+    [rows addArrangedSubview:WKHeading(@"Voice")];
+    self.enabledSwitch = [self switchWithAction:@selector(enabledChanged)];
+    self.enabledSwitch.accessibilityIdentifier = @"voice.enabled";
+    self.enabledNote = WKNote(@"");
+    [rows addArrangedSubview:[self card:@[[self switchRow:@"Use a button to talk"
+                                                  control:self.enabledSwitch], self.enabledNote]]];
 
     // --- Which button -------------------------------------------------------
     [rows addArrangedSubview:WKHeading(@"Button")];
     self.mappingValue = WKLabel(16, UIFontWeightSemibold, UIColor.whiteColor);
     self.mappingValue.accessibilityIdentifier = @"voice.mapping";
     self.mapButton = [self filledButton:@"voice.map" title:@"Map a button…" action:@selector(beginMapping)];
+    self.clearButton = [self borderedButton:@"voice.clear" title:@"Clear" action:@selector(clearMapping)];
     self.mappingHint = WKNote(@"Tap Map, then press the button you want to use.");
-    [rows addArrangedSubview:[self card:@[self.mappingValue, self.mapButton, self.mappingHint]]];
+    self.mappingCard = [self card:@[self.mappingValue, self.mapButton, self.clearButton, self.mappingHint]];
+    [rows addArrangedSubview:self.mappingCard];
 
     // --- How it behaves -----------------------------------------------------
     [rows addArrangedSubview:WKHeading(@"Mode")];
@@ -71,19 +92,25 @@
     [self.modeControl setTitleTextAttributes:@{NSForegroundColorAttributeName: WKOnGold()} forState:UIControlStateSelected];
     [self.modeControl setTitleTextAttributes:@{NSForegroundColorAttributeName: WKMuted()} forState:UIControlStateNormal];
     [self.modeControl addTarget:self action:@selector(modeChanged) forControlEvents:UIControlEventValueChanged];
-    [rows addArrangedSubview:[self card:@[self.modeControl,
-        WKNote(@"Hold to talk needs a button whose press and release both reach us. A button Apple keeps for itself, like Share, can only press to start and stop.")]]];
+    self.modeCard = [self card:@[self.modeControl,
+        WKNote(@"Hold to talk needs a button whose press and release both reach us. A button Apple keeps for itself, like Share, can only press to start and stop.")]];
+    [rows addArrangedSubview:self.modeCard];
 
     // --- What happens to the words ------------------------------------------
     [rows addArrangedSubview:WKHeading(@"After transcribing")];
-    [rows addArrangedSubview:[self card:@[
-        [self switchRow:@"Send it straight away" isAutoSubmit:YES action:@selector(autoSubmitChanged)],
-        [self switchRow:@"Add a space after the text" isAutoSubmit:NO action:@selector(trailingSpaceChanged)]
-    ]]];
+    self.autoSubmitSwitch = [self switchWithAction:@selector(autoSubmitChanged)];
+    self.trailingSpaceSwitch = [self switchWithAction:@selector(trailingSpaceChanged)];
+    self.afterCard = [self card:@[
+        [self switchRow:@"Send it straight away" control:self.autoSubmitSwitch],
+        [self switchRow:@"Add a space after the text" control:self.trailingSpaceSwitch]
+    ]];
+    [rows addArrangedSubview:self.afterCard];
 
     // --- Dictionary ---------------------------------------------------------
     [rows addArrangedSubview:WKHeading(@"Words to expect")];
-    [rows addArrangedSubview:[self card:@[self.dictionaryField, WKNote(@"These bias the recogniser, so a name comes out spelled the way you mean it.")]]];
+    self.wordsCard = [self card:@[self.dictionaryField,
+        WKNote(@"These bias the recogniser, so a name comes out spelled the way you mean it.")]];
+    [rows addArrangedSubview:self.wordsCard];
 
     [NSLayoutConstraint activateConstraints:@[
         [scroll.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor],
@@ -97,79 +124,127 @@
         [rows.widthAnchor constraintEqualToAnchor:scroll.frameLayoutGuide.widthAnchor constant:-40],
     ]];
 
-    // The switch rows are built by the helper, which keeps them next to the
-    // switch it created for each setting.
+    self.enabledSwitch.on = AKVoiceSettings.shared.enabled;
     self.autoSubmitSwitch.on = AKVoiceSettings.shared.autoSubmit;
     self.trailingSpaceSwitch.on = AKVoiceSettings.shared.trailingSpace;
 
     [self refreshMapping];
+    [self refreshEnabledAppearance];
 
     __weak AKVoiceViewController *weakSelf = self;
     AKInputRouter.shared.onLearned = ^(AKTrigger *trigger, NSString *device) {
-        [AKVoiceSettings.shared setLearnedElement:trigger.element forDevice:device];
+        AKVoiceSettings *settings = AKVoiceSettings.shared;
+        // The element arrives as a canonical id, so what is stored is the same thing
+        // that will be compared on the next press.
+        [settings setLearnedElement:trigger.element forDevice:device];
         WKLog("voice", @"mapped %@ for %@", trigger.element, device);
         [weakSelf refreshMapping];
         weakSelf.mappingHint.text = @"Saved. It applies whenever that controller is connected.";
     };
+    // The arming expires in the router, not here, but this is where the user is
+    // looking when it does.
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(learningExpired:)
+                                               name:AKInputRouterLearningDidExpireNotification object:nil];
+}
+
+- (void)dealloc {
+    [NSNotificationCenter.defaultCenter removeObserver:self];
 }
 
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
-    // The popup is built once and reused, so the current mapping is re-read here
-    // rather than going stale behind it.
     [self refreshMapping];
+    [self refreshEnabledAppearance];
 }
 
 - (void)viewWillDisappear:(BOOL)animated {
     [super viewWillDisappear:animated];
-    // Leaving the page must not leave the mapper armed: the next press anywhere
-    // would otherwise be taken as the mapping and saved.
+    // Leaving the page must not leave the mapper armed: the next press anywhere would
+    // otherwise be taken as the mapping and saved.
     [AKInputRouter.shared cancelLearning];
     AKInputRouter.shared.onLearned = nil;
 }
 
 - (void)done { WKDismissPage(self); }
 
-#pragma mark - The mapping row
+#pragma mark - The device
 
-- (nullable NSString *)targetDevice {
-    GCController *pad = GCController.controllers.firstObject;
-    return pad.vendorName;
+// The controller the user is holding, and the identity a mapping is remembered
+// against. Identity, not the vendor name: two pads from one vendor are two pads.
+- (nullable GCController *)pad { return GCController.controllers.firstObject; }
+- (nullable NSString *)deviceIdentity { GCController *pad = self.pad; return pad ? AKControllerIdentity(pad) : nil; }
+
+#pragma mark - On, or off
+
+- (void)enabledChanged {
+    AKVoiceSettings.shared.enabled = self.enabledSwitch.on;
+    if (!self.enabledSwitch.on) {
+        // The router gives every system gesture back on this notification; the words
+        // stop here as well, so switching off is never half done.
+        [AKInputRouter.shared cancelLearning];
+        [AKDictation.shared cancel];
+    }
+    [self refreshEnabledAppearance];
 }
+
+- (void)refreshEnabledAppearance {
+    BOOL on = AKVoiceSettings.shared.enabled;
+    NSString *device = self.pad.vendorName;
+    self.enabledNote.text = on
+        ? (device ? [NSString stringWithFormat:@"On. The button below applies to %@.", device]
+                  : @"On. Connect a controller and map a button.")
+        : @"Off. The microphone is not opened and no controller is affected.";
+    for (UIView *card in @[self.mappingCard, self.modeCard, self.afterCard, self.wordsCard]) {
+        card.alpha = on ? 1.0 : 0.4;
+        card.userInteractionEnabled = on;
+    }
+    self.mapButton.enabled = on && !AKInputRouter.shared.learning;
+    self.clearButton.enabled = on;
+    self.modeControl.enabled = on;
+    self.autoSubmitSwitch.enabled = on;
+    self.trailingSpaceSwitch.enabled = on;
+    self.dictionaryField.enabled = on;
+}
+
+#pragma mark - The mapping
 
 - (void)beginMapping {
     WKLog("voice", @"waiting for a button to map");
     self.mappingHint.text = @"Press the button you want to use now…";
     self.mapButton.enabled = NO;
     [AKInputRouter.shared beginLearning];
-    // Learning also takes the first event, so if nothing arrives the button
-    // comes back rather than leaving the screen stuck.
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(20 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{
-        if (!AKInputRouter.shared.learning) return;
-        // Disarm, do not just re-enable the button. This used to say "nothing
-        // arrived" and then keep listening, so the next unrelated press was saved
-        // as the mapping without a word.
-        [AKInputRouter.shared cancelLearning];
-        WKLog("voice", @"nothing arrived to map after 20s; no longer listening");
-        self.mappingHint.text = @"Nothing arrived. Tap Map and try again.";
-        self.mapButton.enabled = YES;
-    });
+}
+
+- (void)clearMapping {
+    [AKVoiceSettings.shared clearMappingForDevice:[self deviceIdentity]];
+    [self refreshMapping];
+    self.mappingHint.text = @"Cleared. Nothing will start dictation until a button is set again.";
+}
+
+- (void)learningExpired:(NSNotification *)notification {
+    (void)notification;
+    if (!AKVoiceSettings.shared.enabled) return;
+    self.mappingHint.text = @"Nothing arrived, so nothing was set. Tap Map and try again.";
+    [self refreshEnabledAppearance];
 }
 
 - (void)refreshMapping {
-    self.mapButton.enabled = !AKInputRouter.shared.learning;
-    NSString *summary = [AKVoiceSettings.shared mappingSummaryForDevice:[self targetDevice]];
-    GCController *pad = GCController.controllers.firstObject;
+    NSString *device = [self deviceIdentity];
+    NSString *summary = [AKVoiceSettings.shared mappingSummaryForDevice:device];
+    GCController *pad = self.pad;
     self.mappingValue.text = pad
         ? [NSString stringWithFormat:@"%@ — %@", summary, pad.vendorName]
         : [NSString stringWithFormat:@"%@ — no controller connected", summary];
+    self.clearButton.hidden = [summary isEqualToString:@"Not set"];
+    self.mapButton.enabled = AKVoiceSettings.shared.enabled && !AKInputRouter.shared.learning;
 }
 
 #pragma mark - The other rows
 
 - (void)modeChanged {
     AKVoiceSettings.shared.mode = self.modeControl.selectedSegmentIndex == 0 ? AKVoiceModeHold : AKVoiceModeToggle;
+    // A pattern that was being learned was for the other mode.
+    [AKInputRouter.shared cancelLearning];
     WKLog("voice", @"mode is now %@", self.modeControl.selectedSegmentIndex == 0 ? @"hold" : @"toggle");
 }
 - (void)autoSubmitChanged { AKVoiceSettings.shared.autoSubmit = self.autoSubmitSwitch.on; }
@@ -186,9 +261,6 @@
 
 #pragma mark - Small pieces
 
-// The dictionary field is built here rather than in -viewDidLoad because the card
-// helper needs it ready, and because a rounded-rect field would draw its own
-// background over the panel's.
 - (UITextField *)dictionaryField {
     if (_dictionaryField) return _dictionaryField;
     _dictionaryField = [[UITextField alloc] init];
@@ -214,8 +286,6 @@
     return _dictionaryField;
 }
 
-// A group of rows on the launcher's panel colour. The padding lives here so every
-// card is the same shape without each caller repeating four constraints.
 - (UIView *)card:(NSArray<UIView *> *)rows {
     UIView *panel = WKCard();
     UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:rows];
@@ -232,6 +302,23 @@
     return panel;
 }
 
+- (UISwitch *)switchWithAction:(SEL)action {
+    UISwitch *toggle = [[UISwitch alloc] init];
+    toggle.onTintColor = WKGold();
+    [toggle addTarget:self action:action forControlEvents:UIControlEventValueChanged];
+    return toggle;
+}
+
+- (UIView *)switchRow:(NSString *)title control:(UISwitch *)control {
+    UILabel *label = WKLabel(16, UIFontWeightRegular, UIColor.whiteColor);
+    label.text = title;
+    [label setContentHuggingPriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
+    UIStackView *row = [[UIStackView alloc] initWithArrangedSubviews:@[label, control]];
+    row.axis = UILayoutConstraintAxisHorizontal;
+    row.alignment = UIStackViewAlignmentCenter;
+    return row;
+}
+
 - (UIButton *)filledButton:(NSString *)identifier title:(NSString *)title action:(SEL)action {
     UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
     button.accessibilityIdentifier = identifier;
@@ -246,21 +333,17 @@
     return button;
 }
 
-// Builds a row and, as a side effect, stores its switch, so the settings can be
-// read and written without hunting through the view tree.
-- (UIView *)switchRow:(NSString *)title isAutoSubmit:(BOOL)isAutoSubmit action:(SEL)action {
-    UILabel *label = WKLabel(16, UIFontWeightRegular, UIColor.whiteColor);
-    label.text = title;
-    [label setContentHuggingPriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
-    UISwitch *toggle = [[UISwitch alloc] init];
-    toggle.onTintColor = WKGold();
-    [toggle addTarget:self action:action forControlEvents:UIControlEventValueChanged];
-    if (isAutoSubmit) self.autoSubmitSwitch = toggle;
-    else self.trailingSpaceSwitch = toggle;
-    UIStackView *row = [[UIStackView alloc] initWithArrangedSubviews:@[label, toggle]];
-    row.axis = UILayoutConstraintAxisHorizontal;
-    row.alignment = UIStackViewAlignmentCenter;
-    return row;
+- (UIButton *)borderedButton:(NSString *)identifier title:(NSString *)title action:(SEL)action {
+    UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
+    button.accessibilityIdentifier = identifier;
+    UIButtonConfiguration *configuration = UIButtonConfiguration.grayButtonConfiguration;
+    configuration.title = title;
+    configuration.cornerStyle = UIButtonConfigurationCornerStyleMedium;
+    configuration.baseForegroundColor = WKGold();
+    configuration.contentInsets = NSDirectionalEdgeInsetsMake(10, 12, 10, 12);
+    button.configuration = configuration;
+    [button addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];
+    return button;
 }
 
 @end

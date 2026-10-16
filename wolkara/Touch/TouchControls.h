@@ -3,6 +3,11 @@
 // Posted when the guest asks for the draft keyboard - the AppKit adapter's
 // dictation trigger, a key combination the game itself never sees.
 extern NSNotificationName const AKTouchKeyboardRequestNotification;
+// Posted with the game's own text view as the object, when it is created. Shell/main.m
+// observes it and hands the view to dictation, which types into that view and nowhere
+// else. Kept as a notification because this module and the voice module cannot include
+// each other without spelling out the prepared tree's layout.
+extern NSNotificationName const AKTouchGameTextInputDidAppearNotification;
 // Whether the controls are wanted at all. The platform's install path asks this
 // before adding them, and the launcher's On-Screen Controls switch stores its
 // choice under this key.
