@@ -40,7 +40,10 @@ done
 sha=$(git rev-parse HEAD)
 short=$(git rev-parse --short HEAD)
 branch=$(git rev-parse --abbrev-ref HEAD)
-dirty=$(git status --porcelain)
+# The validation record itself is not part of what is being validated, and this run is
+# about to write one. Without this the file this script produces would make the tree
+# dirty *during* the run, and the build it then ran would say so.
+dirty=$(git status --porcelain -- . ':!development/validation')
 # A dirty run is named for when it happened, not only for the commit: it is evidence
 # about the working tree as much as about the commit, and the two must not be confused
 # when someone reads the directory listing.
@@ -64,7 +67,10 @@ fi
 
 mkdir -p "$(dirname "$out")"
 log=$(mktemp)
-trap 'rm -f "$log"' EXIT
+# Written to a temporary file and moved into place at the end, so a run that is
+# interrupted leaves no half-manifest that reads like evidence.
+record=$(mktemp)
+trap 'rm -f "$log" "$record"' EXIT
 
 {
     echo "# Validation: $short"
@@ -90,7 +96,7 @@ trap 'rm -f "$log"' EXIT
     echo
     echo "| Step | Result |"
     echo "| --- | --- |"
-} > "$out"
+} > "$record"
 
 # Each step is a command line and a name; the exit status decides the result, and the
 # tail of the output is kept so a failure can be read without re-running it.
@@ -163,8 +169,9 @@ fi
     echo
     echo "A step marked NOT RUN is not evidence. Anything the audit asked for that is not"
     echo "listed as PASS here has not been shown for this commit."
-} >> "$out"
+} >> "$record"
 
+mv "$record" "$out"
 echo
 echo "validation: $out"
 [ "$failures" -eq 0 ] || exit 1

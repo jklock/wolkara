@@ -23,7 +23,15 @@ fi
 dest=build/platform
 patches=$(ls wolkara/patches/*.patch 2>/dev/null || true)
 
-rm -rf "$dest"
+# Clearing the previous tree can lose a race with something writing into it - Spotlight,
+# or a build that has just finished and is still closing files - and `rm -rf` then fails
+# with "Directory not empty". That used to abort the whole install, which is a confusing
+# way to fail for a reason that has nothing to do with the app. One retry, then a clear
+# message.
+if ! rm -rf "$dest" 2>/dev/null; then
+    sleep 1
+    rm -rf "$dest" 2>/dev/null || { echo "prepare: cannot clear $dest - something is holding it" >&2; exit 1; }
+fi
 mkdir -p "$dest"
 git archive HEAD:platform | tar -x -C "$dest" || {
     echo "prepare: cannot export platform/ - is it vendored?" >&2
