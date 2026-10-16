@@ -255,7 +255,11 @@ require_safe_to_install() {
     fi
 }
 
-cmd_state() { verdict; }
+cmd_state() {
+    # The work files are per-run, so say where this run's are. Nothing else points at them.
+    say "session:        $SESSION"
+    verdict
+}
 
 # ---------------------------------------------------------------------------
 # Stopping. Ask first, wait for the answer, and never send a signal the client
@@ -355,6 +359,9 @@ cmd_launch() {
         die "the device could not be inspected, so whether anything is running is unknown.
        Not launching on a guess. Unlock the iPad and check the cable."
     fi
+    # Before the launch, so that afterwards we can tell a log written by this build from
+    # one left behind by the last one.
+    log_launch_count > "$SESSION/log-launches-before"
     record_baseline
     say "starting from error baseline $(cat "$BASELINE") and crash baseline $(cat "$CRASH_BASELINE")"
     if [ "$game" = "--game" ]; then
@@ -513,6 +520,23 @@ cmd_view() {
 # only reached a console that is not attached, and the platform only redirects them
 # into native-guest.log once a guest starts. Anything the launcher says while it is
 # opening, and anything it says while it is dying, is in this file.
+# How many times the app says it has been launched. Read before a launch and again after
+# it, so "is this log from the run I just did?" is answered by the file itself rather than
+# by a timestamp or by whatever happens to be sitting in the container. The first version
+# of the validation record read a log written by an earlier build and marked it PASS.
+log_launch_count() {
+    local destination=$SESSION/app-count.log
+    rm -f "$destination"
+    xcrun devicectl device copy from --device "$DEVICE" --domain-type appDataContainer \
+        --domain-identifier "$BUNDLE" --source "Documents/wolkara.log" \
+        --destination "$destination" >/dev/null 2>&1 || true
+    if [ -s "$destination" ]; then
+        grep -c ' launched ---$' "$destination" 2>/dev/null || echo 0
+    else
+        echo 0
+    fi
+}
+
 cmd_log() {
     local lines=${1:-60}
     local pattern=${2:-.}
@@ -524,6 +548,18 @@ cmd_log() {
     local total; total=$(wc -l < "$APP_LOG" | tr -d ' ')
     say "Documents/wolkara.log, $total lines; the last $lines matching /$pattern/"
     grep -E "$pattern" "$APP_LOG" | tail -"$lines" | cut -c1-200 | sed 's/^/  /'
+    # Whether this log is from the run that is being judged. A container holds one log
+    # across launches, so "the app logged something" is not evidence about this launch.
+    local before; before=$(cat "$SESSION/log-launches-before" 2>/dev/null || echo none)
+    if [ "$before" != none ]; then
+        local now; now=$(grep -c ' launched ---$' "$APP_LOG" 2>/dev/null || echo 0)
+        if [ "$now" -gt "$before" ]; then
+            say "this log holds the launch from this run ($before before it, $now now)"
+        else
+            say "NO LAUNCH FROM THIS RUN IS IN THIS LOG ($before before it, $now now)"
+            say "so what is above was written by an earlier build, whatever it says"
+        fi
+    fi
     if grep -q "\[fatal\]" "$APP_LOG"; then
         step "it says something fatal"
         grep -n "\[fatal\]" "$APP_LOG" | tail -4 | cut -c1-200 | sed 's/^/  /'

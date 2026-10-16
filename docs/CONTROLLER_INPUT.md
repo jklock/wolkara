@@ -92,6 +92,10 @@ the exact element the user has mapped, through
 `-releaseSystemGestureForElement:device:`, and given back when the mapping is cleared,
 voice is switched off, or the pad disconnects. Both are logged loudly when they happen.
 
+What the screenshot notification is *not* is a button. It is recorded in the log and
+reported to nobody: iPadOS does not say whether the pad or a thumb on the screen produced
+it, so it cannot be attributed and is not offered as a trigger.
+
 ### 2. Guest-side visibility — platform patch `0012`
 
 The guest's queue is where we find out what the game actually receives:

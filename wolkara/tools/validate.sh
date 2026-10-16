@@ -114,6 +114,16 @@ device_description() {
     echo "| --- | --- |"
 } > "$record"
 
+# Anything a step printed goes through this before it reaches the record. The commands
+# themselves can print the device they were given - `install.sh --build-only` prints the
+# `devicectl` line it would have run, device identifier and all - and this file is meant
+# to be committed. AGENTS.md is explicit that device identifiers stay out of commits.
+scrub() {
+    sed -E "s/[0-9A-F]{8}-[0-9A-F]{16}/<device>/g" | {
+        if [ -n "${DEVICE:-}" ]; then sed "s/${DEVICE}/<device>/g"; else cat; fi
+    }
+}
+
 # Each step is a command line and a name; the exit status decides the result, and the
 # tail of the output is kept so a failure can be read without re-running it.
 declare -a step_names=()
@@ -128,7 +138,7 @@ run_step() {
     local rc=$?
     step_names+=("$name")
     if [ $rc -eq 0 ]; then step_results+=("PASS"); else step_results+=("FAIL (exit $rc)"); fi
-    step_bodies+=("$(tail -25 "$log")")
+    step_bodies+=("$(tail -25 "$log" | scrub)")
     printf '   %s\n' "${step_results[${#step_results[@]}-1]}"
     return $rc
 }
@@ -152,8 +162,17 @@ else
     step_bodies+=("Not run. Pass --full to include it.")
 fi
 if [ "$device" = 1 ]; then
-    run_step "install and launch on the iPad" wolkara/tools/pilot.sh cycle || failures=$((failures+1))
-    run_step "the app's own log from the device" wolkara/tools/pilot.sh log 40 || failures=$((failures+1))
+    # A failed install means anything read afterwards is from a *different* build. The
+    # first version ran the log step anyway and recorded a stale log as PASS, which is
+    # worse than recording nothing: it is evidence for a commit that never ran.
+    if run_step "install and launch on the iPad" wolkara/tools/pilot.sh cycle; then
+        run_step "the app's own log, from the launch above" wolkara/tools/pilot.sh log 40 || failures=$((failures+1))
+    else
+        failures=$((failures+1))
+        step_names+=("the app's own log, from the launch above")
+        step_results+=("NOT RUN")
+        step_bodies+=("Not run: the install or launch above failed, so a log read now would be written by an older build. Nothing here is evidence about this commit.")
+    fi
 else
     step_names+=("device run (--device)")
     step_results+=("NOT RUN")

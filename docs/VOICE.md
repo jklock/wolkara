@@ -27,9 +27,11 @@ made them the one part of the launcher that did not look like the launcher.
 
 ## What it will not do
 
-- **It will not start by itself.** No default trigger, no fallback, and a screen capture
-  is not an input at all. A screenshot only starts dictation if the user mapped
-  `system.screenshot` deliberately.
+- **It will not start by itself.** No default trigger, no fallback, and a system signal is
+  not an input at all: iPadOS does not say whether a screenshot came from a controller or
+  from a thumb on the screen, so it is recorded in the log and offered to nobody. A
+  mapping that points at one is refused, and one written by an earlier build is dropped
+  with a line in the log saying so.
 - **It will not change a controller without being asked.** A reserved system gesture is
   released for the exact element the user mapped, and given back when the mapping is
   cleared, voice is switched off, or the pad disconnects.
@@ -37,10 +39,24 @@ made them the one part of the launcher that did not look like the launcher.
   device that cannot do that is refused with a message rather than quietly falling back
   to a server.
 - **It will not deliver twice, or deliver half.** The audio ends, the recogniser is asked
-  for its final result, and the text goes to the game once - when that result arrives or
-  when the wait times out. The game's audio session is put back the way it was found.
+  for its final result, and the text goes to the game once, when that result arrives. If
+  it never arrives - the recogniser is unavailable, or nothing was said - nothing is typed
+  and the user is told, because what is in hand at that point is a partial result, and half
+  a sentence in a chat box is worse than an empty one.
 - **It will not stop the game seeing the button.** The press reaches the game as well as
   us, so the button should be one the user is willing to share. See `INPUT_TRIGGERS.md`.
+- **It will not tell one identical pad from another.** GameController exposes no per-device
+  identity, so a mapping is remembered per *model* and two identical controllers share it.
+  The log says so when that is what is connected.
+
+## The audio session, as a policy rather than a promise
+
+Dictation takes the session as `Record`, and puts back the category, mode and options it
+found, leaving the session **active**. `AVAudioSession` has no public way to ask whether it
+was active beforehand, so the previous activation state cannot be observed and is not
+claimed: this is a deliberate policy for a foreground game host, not a snapshot of
+everything. An interruption - a call, Siri, anything else taking the audio - ends the
+session rather than leaving the microphone open behind a session we no longer own.
 
 ## Handy is the baseline
 

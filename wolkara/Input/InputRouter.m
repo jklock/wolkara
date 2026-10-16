@@ -17,6 +17,15 @@
 
 NSNotificationName const AKInputRouterLearningDidExpireNotification = @"AKInputRouterLearningDidExpire";
 
+// One queue for every piece of input state. Game Controller does not promise which
+// thread its handlers arrive on, the long-press timers run on the main queue, and both
+// touch the same dictionaries - so the inspector marshals every report onto the main
+// queue and this asserts it rather than hoping. The audit's point: callbacks mutating
+// state while timers run on main is a race waiting for the right load.
+static void AKAssertInputQueue(void) {
+    dispatch_assert_queue(dispatch_get_main_queue());
+}
+
 static AKInputSource AKInputSourceFromName(NSString *name) {
     if ([name isEqualToString:@"keyboard"]) return AKInputSourceKeyboard;
     if ([name isEqualToString:@"mouse"]) return AKInputSourceMouse;
@@ -76,6 +85,7 @@ static AKInputSource AKInputSourceFromName(NSString *name) {
 #pragma mark - Start
 
 - (void)begin {
+    AKAssertInputQueue();
     if (_began) return;
     _began = YES;
 
@@ -129,6 +139,7 @@ static AKInputSource AKInputSourceFromName(NSString *name) {
 #pragma mark - Which system gestures are ours to hold
 
 - (void)applyMappings {
+    AKAssertInputQueue();
     AKControllerInspector *inspector = AKControllerInspector.shared;
     // Start from the system's own behaviour every time, then hand over only what the
     // user actually asked for. Any other order leaves a gesture released for a mapping
@@ -146,6 +157,23 @@ static AKInputSource AKInputSourceFromName(NSString *name) {
         if (![trigger.element hasPrefix:@"controller.button."]) continue;
         [inspector releaseSystemGestureForElement:trigger.element device:device];
     }
+
+    // Two pads of the same model cannot be told apart by GameController, so one mapping
+    // applies to both. That is a property of the platform, not a bug to fix quietly: say it
+    // where someone will see it, because the alternative is a user wondering why the spare
+    // pad starts dictation too.
+    NSMutableDictionary<NSString *, NSNumber *> *models = [NSMutableDictionary dictionary];
+    for (GCController *pad in GCController.controllers) {
+        NSString *device = AKControllerIdentity(pad);
+        models[device] = @([models[device] integerValue] + 1);
+    }
+    for (NSString *device in models) {
+        if (models[device].integerValue < 2) continue;
+        WKLog("input", @"%@ controllers of the same model are connected, so the mapping for %@",
+              models[device], device);
+        WKLog("input", @"applies to all of them: GameController does not identify individual pads");
+        break;
+    }
 }
 
 #pragma mark - Learning
@@ -155,6 +183,7 @@ static AKInputSource AKInputSourceFromName(NSString *name) {
 static NSTimeInterval const AKLearningTimeoutDefault = 20.0;
 
 - (void)beginLearning {
+    AKAssertInputQueue();
     _learning = YES;
     _learningDevice = nil;
     _learningGeneration++;
@@ -174,6 +203,7 @@ static NSTimeInterval const AKLearningTimeoutDefault = 20.0;
 }
 
 - (void)cancelLearning {
+    AKAssertInputQueue();
     if (!_learning) return;
     _learning = NO;
     _learningDevice = nil;
@@ -189,6 +219,7 @@ static NSTimeInterval const AKLearningTimeoutDefault = 20.0;
               pressed:(BOOL)pressed
                device:(nullable NSString *)device
                source:(AKInputSource)source {
+    AKAssertInputQueue();
     if (!element.length) return;
 
     AKInputEvent *event = [AKInputEvent new];

@@ -27,6 +27,9 @@ NS_ASSUME_NONNULL_BEGIN
 // Write the defaults database back out. Called for every change, coalesced into one
 // write, on a queue of its own.
 - (void)save;
+// Read the file again from the top, as a fresh launch would. For tests, and for anything
+// that wants to re-read after the file has been changed by hand.
+- (void)reloadFromFile;
 
 // Where the file is, for the diagnostics screen and for logs.
 @property (nonatomic, readonly) NSString *path;

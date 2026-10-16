@@ -140,19 +140,25 @@ static NSTimeInterval const AKDefaultFinalizeTimeout = 3.0;
            [session setActive:YES error:error];
 }
 
+// What "restore" means here, exactly.
+//
+// The category, mode and options that were there before are put back, and the session is
+// left **active**. AVAudioSession has no public way to ask whether it was active before we
+// arrived, so the previous activation state cannot be observed and is not claimed: this is
+// an audio policy, not a snapshot of everything. The policy is right for this app - a
+// foreground game host whose session is expected to be active - and it is what the header
+// and docs/VOICE.md say, rather than "the session is restored exactly".
 - (void)restore {
     if (!_saved) return;
     _saved = NO;
     AVAudioSession *session = AVAudioSession.sharedInstance;
     NSError *error = nil;
-    // Category first, then active. Reactivating is deliberate: we activated the
-    // session for recording, so leaving it inactive would be the change, and the game
-    // would come back silent.
     if (![session setCategory:_category mode:_mode options:_options error:&error])
         WKLog("voice", @"audio: could not restore the category: %@", error.localizedDescription);
     if (![session setActive:YES error:&error])
-        WKLog("voice", @"audio: could not restore the session: %@", error.localizedDescription);
-    WKLog("voice", @"audio: restored %@/%@ (options %lu)", _category, _mode, (unsigned long)_options);
+        WKLog("voice", @"audio: could not reactivate the session: %@", error.localizedDescription);
+    WKLog("voice", @"audio: put back %@/%@ (options %lu) and left the session active",
+          _category, _mode, (unsigned long)_options);
 }
 
 @end
@@ -179,8 +185,22 @@ static NSTimeInterval const AKDefaultFinalizeTimeout = 3.0;
     if ((self = [super init])) {
         _transcript = [NSMutableString string];
         _finalizeTimeout = AKDefaultFinalizeTimeout;
+        // A call, Siri, or another app taking the session ends dictation rather than
+        // leaving the microphone open behind a session we no longer own.
+        [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(sessionWasInterrupted:)
+                                                   name:AVAudioSessionInterruptionNotification object:nil];
     }
     return self;
+}
+
+- (void)sessionWasInterrupted:(NSNotification *)note {
+    NSNumber *type = note.userInfo[AVAudioSessionInterruptionTypeKey];
+    if (![type isKindOfClass:NSNumber.class] || type.unsignedIntegerValue != AVAudioSessionInterruptionTypeBegan) return;
+    if (_state == AKDictationStateIdle) return;
+    WKLog("voice", @"dictation: the audio session was taken away; nothing will be typed");
+    [self cancel];
+    void (^problem)(NSString *) = self.problemHandler;
+    if (problem) problem(@"Something else took the audio, so nothing was typed.");
 }
 
 - (BOOL)listening { return _state == AKDictationStateListening || _state == AKDictationStateFinalizing; }
@@ -289,9 +309,29 @@ static __weak UIView *AKGameTextTarget = nil;
                    dispatch_get_main_queue(), ^{
         AKDictation *self2 = weakSelf;
         if (!self2 || self2->_state != AKDictationStateFinalizing || self2->_session != session) return;
-        WKLog("voice", @"dictation: no final result within %.1fs; using what was heard", self2.finalizeTimeout);
-        [self2 finishWithTranscript:nil];
+        [self2 abandonForTimeout];
     });
+}
+
+// The deadline passed. Nothing is delivered.
+//
+// What is in hand is a *partial* result, and the product's promise is a final transcript:
+// putting half a sentence into the game's chat box - and, with auto-submit on, sending it
+// - is worse than putting nothing there. The remediation review caught the first version
+// doing exactly that and calling it a timeout. The user is told instead, and because a
+// timeout is usually the recogniser being unavailable or the microphone being silent,
+// saying so is more useful than a guess at what they said.
+- (void)abandonForTimeout {
+    if (_state != AKDictationStateFinalizing) return;
+    WKLog("voice", @"dictation: no final result within %.1fs; nothing will be typed", self.finalizeTimeout);
+    [self.speech cancel];
+    [self.audio restore];
+    _abandoned = YES;
+    _delivered = YES;   // nothing may be delivered for this session
+    _session++;
+    [self setState:AKDictationStateIdle];
+    void (^problem)(NSString *) = self.problemHandler;
+    if (problem) problem(@"The recogniser did not finish in time, so nothing was typed.");
 }
 
 - (void)cancel {

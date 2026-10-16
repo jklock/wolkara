@@ -39,11 +39,45 @@ static NSUInteger const AKCIHistoryLimit = 12;
 // half-unit, so a stick reads as -2, -1, 0, 1, 2 rather than a river of floats.
 static double const AKCIAxisBucket = 2.0;
 
+// The model, not the device: see the header. GameController has no serial number to key a
+// per-device map on, so this is the finest identity available and the docs say so.
 NSString *AKControllerIdentity(GCController *pad) {
     if (!pad) return @"unknown";
     return [NSString stringWithFormat:@"%@.%@",
             AKInputIdentifierSlug(pad.vendorName ?: @"controller"),
             AKInputIdentifierSlug(pad.productCategory ?: @"unknown")];
+}
+
+// The two methods the queue helpers below call. Declared here because the helpers are
+// defined before the implementation, and a category on somebody else's class is the wrong
+// tool for a private method.
+@interface AKControllerInspector ()
+- (void)markDevice:(NSString *)device name:(NSString *)name source:(NSString *)source;
+- (void)noteElement:(NSString *)element value:(double)value pressed:(BOOL)pressed detail:(nullable NSString *)detail;
+- (void)noteAxis:(NSString *)element value:(double)value;
+@end
+
+// Every report is delivered on the main queue, whatever thread the system called the
+// handler on. This is what makes the router's state single-threaded by construction
+// rather than by assumption: the audit's point was that input callbacks mutate mutable
+// state while the long-press timers run on main, so one of the two had to move. Game
+// Controller does not promise which thread its handlers arrive on, and the timers cannot
+// be anywhere else, so the reports move.
+static void AKCIReport(AKControllerInspector *inspector, NSString *device, NSString *name,
+                       NSString *source, NSString *element, double value, BOOL pressed,
+                       NSString *detail) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [inspector markDevice:device name:name source:source];
+        [inspector noteElement:element value:value pressed:pressed detail:detail];
+    });
+}
+
+static void AKCIReportAxis(AKControllerInspector *inspector, NSString *device, NSString *name,
+                           NSString *source, NSString *element, double value) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [inspector markDevice:device name:name source:source];
+        [inspector noteAxis:element value:value];
+    });
 }
 
 @implementation AKControllerInspector {
@@ -116,12 +150,19 @@ NSString *AKControllerIdentity(GCController *pad) {
 
 - (void)screenshotTaken:(NSNotification *)notification {
     (void)notification;
-    // The pad's Share button is a Print Screen key and iPadOS spends that key on the
-    // screenshot gesture before any app is offered it, so a screenshot is as close to
-    // "Share was pressed" as the system gets. It is still only ever *reported*: it
-    // does nothing at all unless the user mapped it. See VoiceSettings.
-    [self markSystemDevice];
-    [self reportLine:@"system.screenshot" element:AKInputElementSystemScreenshot() value:1 pressed:YES];
+    // The pad's Share button is a Print Screen key, and iPadOS spends that key on the
+    // screenshot gesture before any app is offered it - so a screenshot is as close to
+    // "the pad's Share was pressed" as the system gets.
+    //
+    // It is recorded and **not** reported as input. The first version offered it as
+    // `system.screenshot` for the user to map, and the remediation review is right that
+    // this is not enough: nothing in the notification says whether a pad or a thumb on
+    // the screen produced it, so mapping it only moves the guess to the user. A button
+    // that can start the microphone has to be one we know was pressed.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self markSystemDevice];
+        [self recordLine:@"system.screenshot (recorded; not an input)"];
+    });
 }
 
 - (void)screenCaptureChanged:(NSNotification *)notification {
@@ -336,8 +377,7 @@ NSString *AKControllerIdentity(GCController *pad) {
         NSString *element = AKInputElementForControllerButton(name);
         button.pressedChangedHandler = ^(GCControllerButtonInput *input, float value, BOOL pressed) {
             (void)input;
-            [weakSelf markDevice:device name:deviceName source:@"controller"];
-            [weakSelf noteElement:element value:value pressed:pressed detail:nil];
+            AKCIReport(weakSelf, device, deviceName, @"controller", element, value, pressed, nil);
         };
     }
     for (NSString *name in profile.axes) {
@@ -345,21 +385,19 @@ NSString *AKControllerIdentity(GCController *pad) {
         NSString *element = AKInputElementForControllerAxis(name);
         axis.valueChangedHandler = ^(GCControllerAxisInput *input, float value) {
             (void)input;
-            [weakSelf markDevice:device name:deviceName source:@"controller"];
-            [weakSelf noteAxis:element value:value];
+            AKCIReportAxis(weakSelf, device, deviceName, @"controller", element, value);
         };
     }
     for (NSString *name in profile.dpads) {
         GCControllerDirectionPad *dpad = profile.dpads[name];
         dpad.valueChangedHandler = ^(GCControllerDirectionPad *input, float x, float y) {
             (void)input;
-            [weakSelf markDevice:device name:deviceName source:@"controller"];
             // The direction is the name; where the thumb actually is goes in the
             // detail. As a name it changed with every movement, so nothing learned
             // from one press could ever match the next one.
             NSString *element = AKInputElementForDirectionPad(name, x, y);
-            [weakSelf noteElement:element value:1 pressed:(x != 0 || y != 0)
-                           detail:[NSString stringWithFormat:@"x=%.2f y=%.2f", x, y]];
+            AKCIReport(weakSelf, device, deviceName, @"controller", element, 1, (x != 0 || y != 0),
+                       [NSString stringWithFormat:@"x=%.2f y=%.2f", x, y]);
         };
     }
     for (NSString *name in profile.touchpads) {
@@ -369,21 +407,18 @@ NSString *AKControllerIdentity(GCController *pad) {
         NSString *moved = AKInputElementForTouchpad(name, @"moved");
         touchpad.touchDown = ^(GCControllerTouchpad *input, float x, float y, float buttonValue, BOOL buttonPressed) {
             (void)input; (void)buttonValue;
-            [weakSelf markDevice:device name:deviceName source:@"touchpad"];
-            [weakSelf noteElement:down value:1 pressed:YES
-                           detail:[NSString stringWithFormat:@"x=%.2f y=%.2f button=%d", x, y, buttonPressed]];
+            AKCIReport(weakSelf, device, deviceName, @"touchpad", down, 1, YES,
+                       [NSString stringWithFormat:@"x=%.2f y=%.2f button=%d", x, y, buttonPressed]);
         };
         touchpad.touchUp = ^(GCControllerTouchpad *input, float x, float y, float buttonValue, BOOL buttonPressed) {
             (void)input; (void)buttonValue;
-            [weakSelf markDevice:device name:deviceName source:@"touchpad"];
-            [weakSelf noteElement:up value:0 pressed:NO
-                           detail:[NSString stringWithFormat:@"x=%.2f y=%.2f button=%d", x, y, buttonPressed]];
+            AKCIReport(weakSelf, device, deviceName, @"touchpad", up, 0, NO,
+                       [NSString stringWithFormat:@"x=%.2f y=%.2f button=%d", x, y, buttonPressed]);
         };
         touchpad.touchMoved = ^(GCControllerTouchpad *input, float x, float y, float buttonValue, BOOL buttonPressed) {
             (void)input; (void)buttonValue; (void)buttonPressed;
-            [weakSelf markDevice:device name:deviceName source:@"touchpad"];
-            [weakSelf noteElement:moved value:0 pressed:NO
-                           detail:[NSString stringWithFormat:@"x=%.2f y=%.2f", x, y]];
+            AKCIReport(weakSelf, device, deviceName, @"touchpad", moved, 0, NO,
+                       [NSString stringWithFormat:@"x=%.2f y=%.2f", x, y]);
         };
     }
 
@@ -408,9 +443,8 @@ NSString *AKControllerIdentity(GCController *pad) {
     NSString *name = keyboard.vendorName ?: @"Keyboard";
     keyboard.keyboardInput.keyChangedHandler = ^(GCKeyboardInput *input, GCDeviceButtonInput *key, GCKeyCode keyCode, BOOL pressed) {
         (void)input; (void)key;
-        [weakSelf markDevice:@"keyboard" name:name source:@"keyboard"];
-        [weakSelf noteElement:AKInputElementForKeyboardKey(keyCode) value:(pressed ? 1 : 0)
-                      pressed:pressed detail:nil];
+        AKCIReport(weakSelf, @"keyboard", name, @"keyboard",
+                   AKInputElementForKeyboardKey(keyCode), (pressed ? 1 : 0), pressed, nil);
     };
 }
 
@@ -422,18 +456,18 @@ NSString *AKControllerIdentity(GCController *pad) {
     NSString *name = mouse.vendorName ?: @"Mouse";
     input.leftButton.pressedChangedHandler = ^(GCControllerButtonInput *button, float value, BOOL pressed) {
         (void)button;
-        [weakSelf markDevice:@"mouse" name:name source:@"mouse"];
-        [weakSelf noteElement:AKInputElementForMouseButton(@"left") value:value pressed:pressed detail:nil];
+        AKCIReport(weakSelf, @"mouse", name, @"mouse",
+                   AKInputElementForMouseButton(@"left"), value, pressed, nil);
     };
     input.rightButton.pressedChangedHandler = ^(GCControllerButtonInput *button, float value, BOOL pressed) {
         (void)button;
-        [weakSelf markDevice:@"mouse" name:name source:@"mouse"];
-        [weakSelf noteElement:AKInputElementForMouseButton(@"right") value:value pressed:pressed detail:nil];
+        AKCIReport(weakSelf, @"mouse", name, @"mouse",
+                   AKInputElementForMouseButton(@"right"), value, pressed, nil);
     };
     input.middleButton.pressedChangedHandler = ^(GCControllerButtonInput *button, float value, BOOL pressed) {
         (void)button;
-        [weakSelf markDevice:@"mouse" name:name source:@"mouse"];
-        [weakSelf noteElement:AKInputElementForMouseButton(@"middle") value:value pressed:pressed detail:nil];
+        AKCIReport(weakSelf, @"mouse", name, @"mouse",
+                   AKInputElementForMouseButton(@"middle"), value, pressed, nil);
     };
     input.mouseMovedHandler = ^(GCMouseInput *mouseInput, float deltaX, float deltaY) {
         (void)mouseInput;

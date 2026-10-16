@@ -42,6 +42,8 @@ static NSUInteger const TKWolkaraConfigStringLimit = 64;
     BOOL _loaded;
     BOOL _writing;
     BOOL _writeScheduled;
+    // One attempt at the previous good copy per launch. See -rejectFileBecause:.
+    BOOL _recoveredFromBackup;
     dispatch_queue_t _queue;
     NSString *_lastImportProblem;
 }
@@ -225,6 +227,11 @@ static NSDictionary<NSString *, NSDictionary *> *TKWolkaraConfigSchema(void) {
     [self save];
 }
 
+- (void)reloadFromFile {
+    // The observers are left alone: this is a re-read, not a second launch.
+    [self importFromFile];
+}
+
 - (void)importFromFile {
     NSData *data = [NSData dataWithContentsOfFile:self.path];
     if (!data.length) {
@@ -247,40 +254,67 @@ static NSDictionary<NSString *, NSDictionary *> *TKWolkaraConfigSchema(void) {
     }
 
     NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
-    NSUInteger restored = 0;
-    for (NSString *key in settings) {
-        // The file is the durable copy, so a valid value in it wins over what is in the
-        // database. It is read once, at launch, before anything can change it.
-        if (![settings[key] isEqual:[defaults objectForKey:key]]) {
-            [defaults setObject:settings[key] forKey:key];
-            restored++;
-        }
-    }
+    // The file is the durable copy, so a valid value in it wins over what is in the
+    // database. It is read once, at launch, before anything can change it.
+    NSUInteger restored = [TKWolkaraConfig applySettings:settings toDefaults:defaults];
     _lastImportProblem = problem;
     if (problem) WKLog("config", @"%@", problem);
     WKLog("config", @"restored %lu choice(s) from %@", (unsigned long)restored, self.path.lastPathComponent);
 }
 
++ (NSUInteger)applySettings:(NSDictionary<NSString *, id> *)settings toDefaults:(NSUserDefaults *)defaults {
+    NSUInteger applied = 0;
+    for (NSString *key in settings) {
+        if ([settings[key] isEqual:[defaults objectForKey:key]]) continue;
+        [defaults setObject:settings[key] forKey:key];
+        applied++;
+    }
+    return applied;
+}
+
 // A file we could not read is kept, not overwritten: it is the user's, it may hold
 // something they want, and the next save would otherwise destroy the evidence.
+//
+// The previous good copy is tried once, and it is *validated before it is used*. The
+// first version copied it over the primary and re-read the file, which meant a malformed
+// primary beside an unusable-but-readable backup went round that loop until the stack ran
+// out - both files are reachable from the user-editable Documents boundary. Now the
+// backup has to pass the same schema as any other file, and the values are applied
+// directly, so there is no second read to recurse through.
 - (void)rejectFileBecause:(NSString *)reason {
     _lastImportProblem = [NSString stringWithFormat:@"%@ was not used: %@", self.path.lastPathComponent, reason];
     WKLog("config", @"%@", _lastImportProblem);
     NSFileManager *files = NSFileManager.defaultManager;
     [files removeItemAtPath:self.rejectedPath error:NULL];
     if (![files copyItemAtPath:self.path toPath:self.rejectedPath error:NULL])
-        WKLog("config", @"config: could not keep a copy of the refused file");
-    // Fall back to the last good copy, if there is one.
-    NSData *backup = [NSData dataWithContentsOfFile:self.backupPath];
-    if (backup.length) {
-        NSError *error = nil;
-        id parsed = [NSJSONSerialization JSONObjectWithData:backup options:0 error:&error];
-        if ([parsed isKindOfClass:NSDictionary.class]) {
-            WKLog("config", @"config: trying the previous copy");
-            [backup writeToFile:self.path atomically:YES];
-            [self importFromFile];
-        }
+        WKLog("config", @"could not keep a copy of the refused file");
+
+    if (_recoveredFromBackup) {
+        WKLog("config", @"the previous copy has already been tried once this launch");
+        return;
     }
+    _recoveredFromBackup = YES;
+
+    NSData *backup = [NSData dataWithContentsOfFile:self.backupPath];
+    if (!backup.length) {
+        WKLog("config", @"there is no previous copy to fall back on");
+        return;
+    }
+    id parsed = [NSJSONSerialization JSONObjectWithData:backup options:0 error:NULL];
+    NSString *why = nil;
+    NSDictionary<NSString *, id> *settings = [TKWolkaraConfig validatedSettingsFromFile:parsed problem:&why];
+    if (!settings.count) {
+        WKLog("config", @"the previous copy is not usable either (%@); nothing was applied", why ?: @"empty");
+        return;
+    }
+    // Put the good copy back where the app reads it, and apply it here rather than by
+    // re-reading: one path, no recursion.
+    if (![backup writeToFile:self.path atomically:YES]) {
+        WKLog("config", @"could not put the previous copy back");
+        return;
+    }
+    NSUInteger restored = [TKWolkaraConfig applySettings:settings toDefaults:NSUserDefaults.standardUserDefaults];
+    WKLog("config", @"recovered %lu choice(s) from the previous copy", (unsigned long)restored);
 }
 
 #pragma mark - Writing it out
@@ -356,23 +390,35 @@ static NSDictionary<NSString *, NSDictionary *> *TKWolkaraConfigSchema(void) {
         return;
     }
 
-    // Temporary file, then rename: a crash halfway through leaves the previous file
-    // whole rather than a truncated one. The previous file is kept as .bak, which is
-    // what a refused file falls back to.
+    // Temporary file, then an atomic replacement. The first version removed the primary
+    // and then moved the temporary over the gap, so a termination or a failed move
+    // between those two steps left no config file at all - and the previous copy that
+    // this class falls back to only exists after a second save. The old file now stays
+    // where it is until the new one is committed.
     NSString *temporary = [self.path stringByAppendingPathExtension:@"writing"];
     NSFileManager *files = NSFileManager.defaultManager;
-    if (![data writeToFile:temporary atomically:NO]) {
-        WKLog("config", @"could not write %@", temporary.lastPathComponent);
+    if (![data writeToFile:temporary options:NSDataWritingAtomic error:&error]) {
+        WKLog("config", @"could not write %@ (%@)", temporary.lastPathComponent, error.localizedDescription);
         @synchronized (self) { _writing = NO; }
         return;
     }
+    NSURL *destination = [NSURL fileURLWithPath:self.path];
     if ([files fileExistsAtPath:self.path]) {
+        // The previous file is kept as .bak before it is replaced: that is what the
+        // recovery path above reads.
         [files removeItemAtPath:self.backupPath error:NULL];
         [files copyItemAtPath:self.path toPath:self.backupPath error:NULL];
-    }
-    [files removeItemAtPath:self.path error:NULL];
-    if (![files moveItemAtPath:temporary toPath:self.path error:&error]) {
-        WKLog("config", @"could not replace %@ (%@)", self.path.lastPathComponent, error.localizedDescription);
+        NSError *replaceError = nil;
+        if (![files replaceItemAtURL:destination
+                       withItemAtURL:[NSURL fileURLWithPath:temporary]
+                      backupItemName:nil options:0 resultingItemURL:NULL error:&replaceError]) {
+            WKLog("config", @"could not replace %@ (%@); the previous file is untouched",
+                  self.path.lastPathComponent, replaceError.localizedDescription);
+            [files removeItemAtPath:temporary error:NULL];
+        }
+    } else if (![files moveItemAtPath:temporary toPath:self.path error:&error]) {
+        WKLog("config", @"could not put %@ in place (%@)", self.path.lastPathComponent, error.localizedDescription);
+        [files removeItemAtPath:temporary error:NULL];
     }
     @synchronized (self) { _writing = NO; }
 }
