@@ -472,7 +472,37 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
 }
 // The guest owns its text/selection. Explicit Replace replaces the field.
 // Accessory keys still allow editing existing text directly in the guest.
+// Touches pass through the toolbar except on its own chrome.
+//
+// The platform's version named the two buttons it had; this names every control the layer
+// puts on the same strip, which is the same rule with the layer's controls in it. It was
+// lost when the layer rewrote this file, and without it the toolbar claims every point in
+// its frame - so a tap in the gap between two buttons goes to the toolbar instead of to the
+// game. The platform's own test is what caught it.
+- (BOOL)pointInside:(CGPoint)point withEvent:(UIEvent *)event {
+    (void)event;
+    for (UIView *control in @[_trackpadButton, _keyboardButton, _gamepadButton, _settingsButton, _composer]) {
+        if (control && !control.hidden && CGRectContainsPoint(control.frame, point)) return YES;
+    }
+    return NO;
+}
+
 - (BOOL)hasText { return YES; }
+// The text-input traits, carried over from the platform's version of this class. It is what
+// makes iPadOS treat these controls as a text input and offer the layer's own accessory row
+// for them, and the platform's test asserts the two that decide that. They were lost when
+// the layer rewrote this file; restored verbatim, because none of the layer's changes need
+// them to differ.
+- (UITextAutocapitalizationType)autocapitalizationType { return UITextAutocapitalizationTypeNone; }
+- (UITextAutocorrectionType)autocorrectionType { return UITextAutocorrectionTypeNo; }
+- (UITextSpellCheckingType)spellCheckingType { return UITextSpellCheckingTypeNo; }
+- (UITextSmartQuotesType)smartQuotesType { return UITextSmartQuotesTypeNo; }
+- (UITextSmartDashesType)smartDashesType { return UITextSmartDashesTypeNo; }
+- (UITextSmartInsertDeleteType)smartInsertDeleteType { return UITextSmartInsertDeleteTypeNo; }
+- (UIKeyboardType)keyboardType { return UIKeyboardTypeDefault; }
+- (UIReturnKeyType)returnKeyType { return UIReturnKeyDefault; }
+// Secure, so the system never offers to remember or spell-check what is typed at the game.
+- (BOOL)isSecureTextEntry { return YES; }
 - (void)insertText:(NSString *)text { [self.delegate touchInsertText:text]; }
 - (void)replaceGameText:(NSString *)text {
     // A host with no draft panel leaves this out; the button then does nothing
