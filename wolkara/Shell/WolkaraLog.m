@@ -176,5 +176,35 @@ void WKLogStart(void) {
               getpid());
         WKLog("host", @"arguments: %@", [NSProcessInfo.processInfo.arguments componentsJoinedByString:@" "]);
         WKLog("host", @"log file: %@", WKLogPath());
+
+        // What this build carries, said once and in the open. This is the app's own evidence
+        // that the packaged bundle holds the licences it is obliged to hold, and
+        // `wolkara/tools/device_matrix.sh` reads this line back off the iPad: a fixture can
+        // supply the files and prove the page composes them, but only the installed app can
+        // say what it actually ships.
+        NSArray<NSArray<NSString *> *> *documents = WKBundledDocuments();
+        NSMutableArray<NSString *> *present = [NSMutableArray array];
+        NSMutableArray<NSString *> *missing = [NSMutableArray array];
+        for (NSArray<NSString *> *document in documents) {
+            NSString *path = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:document[1]];
+            BOOL there = [[NSFileManager defaultManager] fileExistsAtPath:path];
+            [(there ? present : missing) addObject:document[1]];
+        }
+        WKLog("host", @"notices: %lu of %lu in the bundle (%@)%@",
+              (unsigned long)present.count, (unsigned long)documents.count,
+              [present componentsJoinedByString:@", "],
+              missing.count ? [NSString stringWithFormat:@"; MISSING %@", [missing componentsJoinedByString:@", "]] : @"");
     });
+}
+
+NSArray<NSArray<NSString *> *> *WKBundledDocuments(void) {
+    static NSArray *documents = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        documents = @[@[@"Wolkara — this app's licence", @"Wolkara-LICENSE"],
+                      @[@"Wolkara — notices, and the licences of what this app adapts", @"Wolkara-NOTICE.md"],
+                      @[@"Tolkara — the platform this app is built on", @"LICENSE"],
+                      @[@"Tolkara — notices", @"NOTICE.md"]];
+    });
+    return documents;
 }

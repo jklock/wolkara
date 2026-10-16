@@ -286,14 +286,44 @@ pages were added. It now compiles them, and it captures `addons-popup.png`, `voi
 - It bundled `LICENSE`/`NOTICE.md` from `build/platform`, i.e. upstream's, while asserting our
   attribution. It bundles the repository's now.
 
-### Open: the app does not ship its notices
+### The app shipped the wrong notices, and nothing reached them
 
-Nothing in `platform/project.yml` refers to `LICENSE` or `NOTICE.md`, and they sit outside every source
-path the app target lists, so the packaged app's About page shows the introduction and no licenses. The
-fixture checks the About page's *composition* - it reads whatever the bundle holds - so a green fixture
-is not evidence that the app carries them. Fixing it means getting the two files into the app's
-resources without hand-editing `platform/`: a patch or an overlay entry, which is a decision rather
-than a chore.
+This was written down as "the app ships no `LICENSE`/`NOTICE.md`". That was wrong, and the
+way it was wrong is the point. The app shipped two documents: upstream's. Patch `0010` asked
+the target for resources called `LICENSE` and `NOTICE.md`, and the prepared tree already has
+files by those names - upstream Tolkara's - so those were the two that landed in the bundle.
+The About page listed them under this app's introduction, which credits the wrong people,
+and this repository's own `NOTICE.md` - the one carrying the TACTSharp and CascLib MIT
+terms, both of which say they must accompany the software, and CascLib and TACTSharp are
+adapted into `launcher/WoW/`, which is in the app - never reached the bundle at all. A
+missing licence file is a gap; a file that says the wrong thing under your own name is
+worse, and the note described the harmless version of what was happening.
+
+So it is four documents now, not two. The layer overlays this repository's `LICENSE` and
+`NOTICE.md` into the prepared tree as `Wolkara-LICENSE` and `Wolkara-NOTICE.md`, because
+upstream's have to stay put and both sets have to travel: the app is a fork and it ships
+upstream's code, so it owes upstream's notice and its own. By script, as ever - two entries
+in `overlay_map.sh`, so `prepare.sh` puts them there and the gate checks the map still
+matches the layer. One list in `WolkaraLog.h` names all four, the About page reads that list
+and says whose each one is in front of it, and a document that is missing says so on the page
+instead of being skipped in silence, which is how this stayed invisible for a day.
+
+The check that would have caught it is not a fixture. A fixture supplies the files, so it can
+only show that the page composes them; it passed the whole time. `device_matrix.sh` now reads
+the installed app's own log line - `notices: 4 of 4 in the bundle (...)`, written at launch
+from `NSBundle.mainBundle` - back off the iPad and fails if a build is missing one, or if
+this app's documents are not the ones that are there. The build that was installed is the
+subject, not a stand-in for it.
+
+Two smaller things came out of the same reading. The fixture had been copying the files in,
+with a comment explaining that the app's target did not carry them - true of the app as it
+was, and the reason to fix the app rather than the fixture; the fixture now mirrors the
+app's real layout, which is what makes its assertions mean anything. And the audit's list of
+required coverage names a config *write* failure, which had never been exercised: the suite
+now puts a directory where the temporary file goes, so the atomic write fails for real, and
+checks that the previous file survives, that the log names it, and that the next write
+lands once the way is clear. That is one of the paths where a bad answer loses the user's
+settings, and it was one of the few left with no test.
 
 ## 2026-10-16, last: working through the stability audit
 
@@ -499,9 +529,12 @@ one of these into a pass while quietly writing over a half-finished update.
 
 ### Still open, and known
 
-- The app still ships no `LICENSE`/`NOTICE.md` (above), so the About page lists no licenses.
 - Voice has no test for the *pages* beyond the fixture's screenshots; the rules are covered, the
   layout is not.
 - Input arbitration, which is what "collision-free" would require, is not started.
+
+Closed since this list was written: the notices the app carries. They were not missing, they
+were the wrong ones - upstream's, under our name - and it is four documents now, checked
+against the installed app. See "The app shipped the wrong notices" above.
 
 

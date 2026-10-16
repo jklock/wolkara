@@ -8,7 +8,7 @@ handoff, not a new device-validation claim.
 - `main` and `feature/wolkara-above-tolkara` are both at `1bb8d0f` (`notes: the
   dictation selector trap, and the enrolment screen the install leaves behind`).
   That branch completed the structural split: pristine `platform/`, the
-  `wolkara/` overlay layer, 13 patches, wrappers, and the recorded validation
+  `wolkara/` overlay layer, 14 patches, wrappers, and the recorded validation
   and device-work notes in this directory.
 - `controller` is checked out, tracks `origin/controller`, and is 11 commits
   ahead of that base, ending at `2190647` (`Voice: a Voice row in the launcher,
@@ -79,7 +79,7 @@ the targeted build or simulator path before considering this UI usable.
 | Check | Result |
 | --- | --- |
 | `git diff --check` and `git diff --cached --check` | pass |
-| `wolkara/tools/check_layers.sh` | pass: 11 checks, platform pin `00a8501`, 13 patches, prepared overlay accepted |
+| `wolkara/tools/check_layers.sh` | pass: 11 checks, platform pin `00a8501`, 14 patches, prepared overlay accepted |
 | `wolkara/tools/generate.sh` | pass: prepared `build/platform` and generated the platform project |
 
 Neither command compiled nor installed the current untracked voice-test UI, and

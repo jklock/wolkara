@@ -109,3 +109,11 @@ wolkara/Input/InputRouter.h launcher/Input/InputRouter.h add
 wolkara/Input/InputRouter.m launcher/Input/InputRouter.m add
 wolkara/Input/Trigger.h launcher/Input/Trigger.h add
 wolkara/Input/Trigger.m launcher/Input/Trigger.m add
+#
+# Notices: this repository's own licence and notice, which the packaged app must
+# carry. The prepared tree already has a LICENSE and a NOTICE.md at its top level,
+# and those are upstream's, so ours travel under names of their own: both have to
+# ship, because the app contains upstream's code as well as ours. The app's About
+# page names all four, which is the only way a reader can tell whose is whose.
+LICENSE Wolkara-LICENSE add
+NOTICE.md Wolkara-NOTICE.md add
