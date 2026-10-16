@@ -132,7 +132,10 @@ if [ "$build_only" = 1 ]; then
 #!/bin/bash
 for word in "$@"; do
     if [ "$word" = "devicectl" ]; then
-        echo "   build only: not touching the device (xcrun $*)"
+        # The device identifier is not printed. This line ends up in build logs and in
+        # the validation record, and that record is committed - see AGENTS.md. The
+        # subcommand is enough to see what was skipped.
+        echo "   build only: not touching the device (xcrun $1 $2 $3 …)"
         exit 0
     fi
 done

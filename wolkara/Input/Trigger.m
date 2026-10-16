@@ -2,6 +2,7 @@
 
 #import "Trigger.h"
 #import "InputElement.h"
+#import "../App/WolkaraLog.h"
 
 NSString *const AKTriggerAnyElement = @"*";
 
@@ -76,6 +77,12 @@ static NSTimeInterval const AKTriggerDoubleMaximum = 2.0;
     // saying so.
     if (!AKInputElementIsCanonical(canonical)) return nil;
     if (canonical.length > 128) return nil;
+    // A system signal is not a button. iPadOS does not say whether a screenshot came from
+    // a controller or from the user's own fingers, so attributing it to whichever pad is
+    // connected and letting that start the microphone is not something a mapping can make
+    // safe - the audit's second remediation blocker. It is recorded in the log and
+    // reported to nobody, and no stored mapping may point at it.
+    if (AKInputElementIsSystem(canonical)) return nil;
 
     id patternValue = stored[@"pattern"] ?: @(AKTriggerPatternPress);
     if (![patternValue isKindOfClass:NSNumber.class]) return nil;
@@ -165,7 +172,10 @@ static NSTimeInterval const AKTriggerDoubleMaximum = 2.0;
         NSDictionary *validated = [self validatedStoredForm:stored];
         if (!validated) {
             // Unreadable before and unreadable now: removed rather than left to be
-            // re-examined on every launch.
+            // re-examined on every launch. A mapping that pointed at a system signal is
+            // in here too, so say which key went and why, or a user would just find that
+            // their button stopped working.
+            WKLog("voice", @"dropping the stored mapping at %@: it is not a trigger this build can use", key);
             [defaults removeObjectForKey:key];
             changed++;
             continue;

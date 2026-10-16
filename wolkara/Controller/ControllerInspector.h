@@ -16,10 +16,12 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-/// A controller's identity for remembering a mapping against: vendor *and* category,
-/// because two pads from one vendor are two pads. Never the player index, which moves
-/// when pads come and go, and never the display name, which a mapping key should not
-/// have to be.
+/// A controller's *model* identity: vendor and product category. This is what a mapping is
+/// remembered against, and it is deliberately not claimed to be per-device. GameController
+/// exposes no serial number, so two identical pads are indistinguishable to this app and
+/// share one mapping; the log says so when that happens, and `docs/INPUT_TRIGGERS.md` says
+/// so to the reader. It is never the display name (a mapping key should not be), and never
+/// the player index, which moves as pads come and go.
 FOUNDATION_EXPORT NSString *AKControllerIdentity(GCController *pad);
 
 @interface AKControllerInspector : NSObject

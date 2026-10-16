@@ -34,6 +34,8 @@ xcrun --sdk iphonesimulator clang -target arm64-apple-ios17.0-simulator -fobjc-a
     -Wall -Wextra -Werror -Wno-deprecated-declarations \
     -Ilauncher/Input -Ilauncher/Voice -Ilauncher/Controller -Ilauncher/App -Itests \
     launcher/Input/*.m launcher/Voice/Dictation.m launcher/Voice/VoiceSettings.m \
+    launcher/Voice/VoiceViewController.m launcher/Voice/VoiceTestViewController.m \
+    launcher/App/WolkaraTheme.m \
     launcher/Controller/ControllerInspector.m launcher/App/WolkaraLog.m \
     launcher/App/WolkaraConfig.m tests/test_voice_app.m \
     -framework Foundation -framework UIKit -framework QuartzCore -framework GameController \

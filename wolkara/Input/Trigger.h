@@ -65,8 +65,9 @@ extern NSString *const AKTriggerAnyElement;
 
 #pragma mark - Remembering a choice, per controller
 
-// The key is the controller's identity, which is vendor *and* category: two pads
-// from one vendor are two pads.
+// The key is the controller's *model* identity - vendor and category - because that is the
+// finest thing GameController offers. Two identical pads share one mapping; that is stated
+// here rather than papered over with a per-device claim the platform cannot support.
 + (NSString *)defaultsKeyForDevice:(nullable NSString *)device;
 // The mapping for a controller, or nil when there is none. A mapping an older build
 // wrote under the vendor name alone is moved onto the identity first, by

@@ -33,54 +33,66 @@ mkdir -p "$work/bin" "$work/sessions"
 
 # A device, faked. WOLKARA_FAKE_BLIND names a subcommand that fails, which is the case
 # under test.
-cat > "$work/bin/xcrun" <<SH
+cat > "$work/bin/xcrun" <<'STUB'
 #!/bin/bash
-args="\$*"
-case "\$args" in
+# A device, faked. Quoted heredoc on purpose: this is plain bash, with no expansion
+# happening when the test writes it, so nothing here needs escaping.
+#   WOLKARA_FAKE_BLIND      a subcommand that should fail ("processes" or "files")
+#   WOLKARA_FAKE_PROCESSES  what `device info processes` lists
+#   WOLKARA_FAKE_LISTING    what the app container listing holds
+#   WOLKARA_FAKE_CRASHES    what the system crash-log listing holds
+#   WOLKARA_FAKE_IPS        the crash report a copy returns
+args="$*"
+case "$args" in
 *"device info processes"*)
-    [ "\${WOLKARA_FAKE_BLIND:-}" = processes ] && exit 1
-    printf '  1234   /private/var/containers/Bundle/Application/AAA/Tolkara.app/Tolkara\n'
+    [ "${WOLKARA_FAKE_BLIND:-}" = processes ] && exit 1
+    printf '%s\n' "${WOLKARA_FAKE_PROCESSES:-}"
     exit 0;;
 *"device info files"*)
-    [ "\${WOLKARA_FAKE_BLIND:-}" = files ] && exit 1
+    [ "${WOLKARA_FAKE_BLIND:-}" = files ] && exit 1
     out=""
     previous=""
-    for word in \$args; do
-        [ "\$previous" = "--json-output" ] && out="\$word"
-        previous="\$word"
+    for word in $args; do
+        [ "$previous" = "--json-output" ] && out="$word"
+        previous="$word"
     done
-    [ -n "\$out" ] || exit 1
-    case "\$args" in
-    *systemCrashLogs*) printf '%s' "\$WOLKARA_FAKE_CRASHES" > "\$out";;
-    *) printf '%s' "\$WOLKARA_FAKE_LISTING" > "\$out";;
+    [ -n "$out" ] || exit 1
+    case "$args" in
+    *systemCrashLogs*) printf '%s' "${WOLKARA_FAKE_CRASHES:-}" > "$out";;
+    *) printf '%s' "${WOLKARA_FAKE_LISTING:-}" > "$out";;
     esac
     exit 0;;
 *"device copy from"*)
     dest=""
     previous=""
-    for word in \$args; do
-        [ "\$previous" = "--destination" ] && dest="\$word"
-        previous="\$word"
+    source=""
+    for word in $args; do
+        [ "$previous" = "--destination" ] && dest="$word"
+        [ "$previous" = "--source" ] && source="$word"
+        previous="$word"
     done
-    [ -n "\$dest" ] || exit 1
-    printf 'guest log line\n' > "\$dest"
+    [ -n "$dest" ] || exit 1
+    case "$source" in
+    *.ips) printf '%s' "${WOLKARA_FAKE_IPS:-}" > "$dest";;
+    *) printf 'guest log line\n' > "$dest";;
+    esac
     exit 0;;
 *"device capture screenshot"*)
     dest=""
     previous=""
-    for word in \$args; do
-        [ "\$previous" = "--destination" ] && dest="\$word"
-        previous="\$word"
+    for word in $args; do
+        [ "$previous" = "--destination" ] && dest="$word"
+        previous="$word"
     done
-    [ -n "\$dest" ] || exit 1
-    printf 'not really a png\n' > "\$dest"
+    [ -n "$dest" ] || exit 1
+    printf 'not really a png\n' > "$dest"
     exit 0;;
 *"device info apps"*)
     printf 'Wolkara Forever  local.wolkara.johnklock\n'
     exit 0;;
 esac
 exit 0
-SH
+STUB
 chmod +x "$work/bin/xcrun"
 
 listing_with_error() {
@@ -93,6 +105,19 @@ listing_with_error() {
 JSON
 }
 
+# A device in the middle of an update: files under the staged-update directory, written
+# just now.
+listing_with_update_writing() {
+    local now
+    now=$(date -u '+%Y-%m-%dT%H:%M:%S.000Z')
+    cat <<JSON
+{"result":{"files":[
+ {"name":"Documents","relativePath":"Documents","metadata":{"lastModDate":"$now"},"resources":{"isDirectory":true}},
+ {"name":"Documents/.tolkara-updates/partial","relativePath":"Documents/.tolkara-updates/partial","metadata":{"lastModDate":"$now"},"resources":{"isDirectory":false}}
+]}}
+JSON
+}
+
 listing_without_errors() {
     cat <<JSON
 {"result":{"files":[
@@ -101,18 +126,21 @@ listing_without_errors() {
 JSON
 }
 
+# The stub has a default for everything it is not told, so a run only has to set what it
+# cares about - which is exported by the test and inherited here.
 run_pilot() {
     local session=$1; shift
-    ( cd "$root" && PATH="$work/bin:$PATH" \
-        DEVICE=FAKE TOLKARA_BUNDLE_ID=test.bundle \
-        WOLKARA_FAKE_LISTING="$WOLKARA_FAKE_LISTING" \
-        WOLKARA_FAKE_CRASHES='{"result":{"files":[]}}' \
+    ( cd "$root" && PATH="$work/bin:$PATH" DEVICE=FAKE TOLKARA_BUNDLE_ID=test.bundle \
         PILOT_SESSION="$session" "$pilot" "$@" ) > "$work/out.txt" 2>&1
     return $?
 }
 
-# A healthy-looking device with an error file: it must be seen and named.
+# What the fake device answers with. Everything the stub reads is exported here, once,
+# so a case only has to change what it is about.
+export WOLKARA_FAKE_PROCESSES="  1234   /private/var/containers/Bundle/Application/AAA/Tolkara.app/Tolkara"
 export WOLKARA_FAKE_LISTING="$(listing_with_error)"
+export WOLKARA_FAKE_CRASHES='{"result":{"files":[]}}'
+export WOLKARA_FAKE_IPS=""
 run_pilot "$work/sessions/seen" state
 check $? "state should succeed"
 grep -q "newest 2026-10-16_09.00.00_Error_1.txt" "$work/out.txt"
@@ -156,6 +184,76 @@ run_pilot "$work/sessions/two" state
 check $? "two runs should have two state files"
 [ "$(cat "$work/sessions/one/state.txt")" != "" ]
 check $? "and the first run's state should still be there"
+
+# An update being written right now must stop an install before it builds anything.
+export WOLKARA_FAKE_LISTING="$(listing_with_update_writing)"
+run_pilot "$work/sessions/writing" install
+[ $? -ne 0 ]
+check $? "install must refuse while an update is being written"
+grep -q "an update is writing" "$work/out.txt"
+check $? "and must say why it refused"
+
+# A crash report is read out, frames and all, not just named.
+export WOLKARA_FAKE_LISTING="$(listing_without_errors)"
+export WOLKARA_FAKE_CRASHES='{"result":{"files":[{"name":"Tolkara-2026-10-16-120000.ips","relativePath":"Tolkara-2026-10-16-120000.ips","metadata":{"lastModDate":"2026-10-16T12:00:00.000Z"}}]}}'
+export WOLKARA_FAKE_IPS='{"app_name":"Tolkara"}
+{"exception":{"type":"EXC_CRASH","signal":"SIGABRT"},"termination":{"indicator":"Abort trap: 6"},"usedImages":[{"name":"Tolkara.debug.dylib"}],"threads":[{"triggered":true,"frames":[{"imageIndex":0,"symbol":"-[AKVoiceViewController done]"}]}]}'
+run_pilot "$work/sessions/crash" crash
+crash_rc=$?
+crash_ok=0
+grep -q "AKVoiceViewController done" "$work/out.txt" || crash_ok=1
+if [ "$crash_ok" != 0 ]; then
+    echo "--- crash (exit $crash_rc) printed: ---"
+    sed 's/^/    /' "$work/out.txt"
+    echo "--- end ---"
+fi
+check "$crash_ok" "the crash report is read out with its frames"
+unset WOLKARA_FAKE_IPS
+
+# A crash report that appears while waiting is the answer, and is reported as one: the
+# process is already gone by then, so it beats anything the log would say.
+run_pilot "$work/sessions/timeout" wait --timeout 8
+[ $? -ne 0 ]
+check $? "wait must fail when a new crash report appears"
+grep -q "CRASHED" "$work/out.txt"
+check $? "and must say it crashed rather than waiting out the clock"
+
+# Nothing crashing, and nothing changing: a run that produces nothing conclusive must say
+# so rather than claiming success.
+export WOLKARA_FAKE_CRASHES='{"result":{"files":[]}}' 
+# Nothing runs and nothing changes, so there is nothing to conclude.
+export WOLKARA_FAKE_PROCESSES=""
+mkdir -p "$work/sessions/timeout"
+# Looking for the guest, not for the launcher: with a launcher wait and nothing running,
+# the honest answer is "the app is gone", which is a different path.
+echo game > "$work/sessions/timeout/mode.txt"
+run_pilot "$work/sessions/timeout" wait --timeout 4
+wait_rc=$?
+[ "$wait_rc" -ne 0 ]
+check $? "wait must not call an inconclusive run a success (exit $wait_rc)"
+wait_ok=0
+grep -q "nothing conclusive" "$work/out.txt" || wait_ok=1
+if [ "$wait_ok" != 0 ]; then
+    echo "--- wait printed: ---"
+    sed 's/^/    /' "$work/out.txt"
+    echo "--- end ---"
+fi
+check "$wait_ok" "and must say that instead"
+unset WOLKARA_FAKE_PROCESSES
+
+# Two runs with no session given must not share one. They are named in the output so a
+# run can be found afterwards.
+( cd "$root" && PATH="$work/bin:$PATH" DEVICE=FAKE TOLKARA_BUNDLE_ID=test.bundle \
+    "$pilot" state ) > "$work/out.txt" 2>&1
+first=$(sed -n 's/^  session: *//p' "$work/out.txt" | head -1)
+( cd "$root" && PATH="$work/bin:$PATH" DEVICE=FAKE TOLKARA_BUNDLE_ID=test.bundle \
+    "$pilot" state ) > "$work/out.txt" 2>&1
+second=$(sed -n 's/^  session: *//p' "$work/out.txt" | head -1)
+[ -n "$first" ] && [ -n "$second" ] && [ "$first" != "$second" ]
+check $? "two runs must not share a session directory (got '$first' and '$second')"
+[ -d "$first" ] && [ -d "$second" ]
+check $? "and both directories should exist"
+rm -rf "$first" "$second"
 
 # Nothing may be written to the shared /tmp names any more.
 before=$(ls /tmp 2>/dev/null | grep -c '^pilot-' || true)
