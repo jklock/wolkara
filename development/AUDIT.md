@@ -173,3 +173,52 @@ Three defects that only building and installing on the iPad could show. All are 
 
 None of the three was visible to the suites: all are properties of the *build*, not of the
 code. That is the argument for making the device install part of the phase gate.
+
+## Open audit work: resolved or deferred (2026-10-16)
+
+The stability audit's "open audit work" note asked for each of these to be resolved or
+explicitly deferred before a stable release. Here is which, and why.
+
+### Automated coverage
+
+- **The add-on store and the credential store: resolved.** `wolkara/WoW/tests/test_wow_launcher_app.m`
+  now drives `TKWoWAddonsAtDirectory` (which folders count, the TOC's title and version, a
+  folder with no TOC, a file that is not a folder, a hidden folder) and `TKAddonStore`
+  (import, the manifest it keeps, the duplicate refusal, a package with no TOC, an archive
+  the extractor cannot read, pinning, disabling and restoring, removal, and the refusal to
+  remove a package this store did not install). `TKAddonCredentialStore` is covered on both
+  branches: the round trip, and the entitlement failure an unsigned build gets.
+  **It found a data-loss bug on its first run**, now fixed in `AddonStore.m`: the failure
+  cleanup removed every folder in the import, and the duplicate-package check returns through
+  that path - so asking to install an add-on that was already installed deleted the one that
+  was already there, leaving the manifest claiming ownership of a folder that no longer
+  existed.
+- **The archive extractor: deferred.** `wolkara/WoW/AddonArchive.swift` uses **ZIPFoundation**,
+  a Swift package resolved at build time, so a fixture would have to fetch and build a
+  third-party package to reach it. The fixture stands in for the extractor at exactly that
+  boundary and tests everything on the store's side of it. The extractor itself is exercised
+  on the device by importing a real add-on - that is in the device matrix.
+- **CurseForge: deferred.** Everything interesting needs the network and an API key. The
+  client's tests would be tests of a mock; the paths worth having (rate limits, error
+  bodies, a rotated key) are only reachable against the real service. The key handling
+  itself - which is the part with a security consequence - is covered above.
+
+### Fixtures that can hang
+
+Resolved. Every fixture app now exits by itself and says so if it does not: the launcher and
+the two touch fixtures already had a 30-second watchdog, the voice fixture has one now, and
+`wolkara/tools/test_voice.sh` bounds the run from outside as well. A hang is a failure with
+a line in the log rather than a run that never ends.
+
+### Stale documentation and claims
+
+Resolved. `development/README.md` carries a "Current state" table with the counts that hold
+now (platform pin, 13 patches, 89 overlay entries, 11 gate checks) and the command that
+checks each one, and says that `wolkara/tools/validate.sh` is where release evidence comes
+from. `PLAN.md`, `VALIDATION.md` and this file had their stale counts corrected and the ones
+that are facts about the split are marked as of the split. `VALIDATION.md` points at the new
+mechanism rather than standing in for it.
+
+What is *not* resolved, and is recorded in `development/NOTES.md`: the app ships no
+`LICENSE`/`NOTICE.md`, voice has no test of the page layout beyond the fixture's screenshots,
+and input arbitration - what "collision-free" would actually require - is not started.
