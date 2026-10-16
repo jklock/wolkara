@@ -1,6 +1,7 @@
 #import "WoWViewController.h"
 #import "Client.h"
 #import "AddonManager.h"
+#import "../Voice/VoiceViewController.h"
 #import "Installation.h"
 #import "Updater.h"
 #import "../App/LaunchProgressView.h"
@@ -38,7 +39,7 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     UIStackView *_columns;
     NSLayoutConstraint *_leftWidth;
     UILabel *_stateLabel, *_detailLabel, *_versionLabel, *_startupLabel, *_compatibilityLabel;
-    UIButton *_editionButton, *_preferencesButton, *_addonsButton, *_primaryButton;
+    UIButton *_editionButton, *_preferencesButton, *_addonsButton, *_voiceButton, *_primaryButton;
     UIBarButtonItem *_refreshItem;
     UIActivityIndicatorView *_activity;
 }
@@ -89,8 +90,10 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     _preferencesButton=[self button:@"wow.preferences" action:@selector(preferences)];
     _addonsButton=[self button:@"wow.addons.manage" action:@selector(manageAddons)];
     [_addonsButton setTitle:@"Add-ons / Manage" forState:UIControlStateNormal];
+    _voiceButton=[self button:@"wow.voice" action:@selector(manageVoice)];
+    [_voiceButton setTitle:@"Voice / Button" forState:UIControlStateNormal];
     _compatibilityLabel=Label(12,UIFontWeightRegular,Muted());
-    UIStackView *left=Stack(@[title,editionLabel,_editionButton,_preferencesButton,_addonsButton,_compatibilityLabel],12);
+    UIStackView *left=Stack(@[title,editionLabel,_editionButton,_preferencesButton,_addonsButton,_voiceButton,_compatibilityLabel],12);
     [left setCustomSpacing:24 afterView:title];
 
     _activity=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
@@ -291,6 +294,10 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     [self configureButton:_addonsButton title:_installation.app?@"Add-ons / Manage":@"Add-ons / Manage (install game first)" filled:NO];
     _addonsButton.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;
     _addonsButton.enabled=_installation.app && !_busy && !_starting && !_sessionUsed;
+    [self configureButton:_voiceButton title:@"Voice / Button" filled:NO];
+    _voiceButton.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;
+    // Available before the game is installed: it is a setting, not a game action.
+    _voiceButton.enabled=!_busy && !_starting;
     _compatibilityLabel.text=([_product[@"id"] isEqual:@"wow"] || [_product[@"id"] isEqual:@"wow_beta"] || [_product[@"id"] isEqual:@"wow_classic"])?
         @"Compatibility with this edition is not yet verified.":
         @"";
@@ -442,6 +449,12 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     }]];
     [self presentSheet:sheet anchor:nil];
 }
+// Everything about dictation lives on its own screen: the button, the mode, and
+// what happens to the words afterwards.
+- (void)manageVoice {
+    [self.navigationController pushViewController:[AKVoiceViewController new] animated:YES];
+}
+
 - (void)manageAddons {
     NSError *error=nil; NSString *directory=[_library workingDirectoryForApp:_installation.app error:&error];
     if (!directory) {
