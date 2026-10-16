@@ -81,3 +81,7 @@ wolkara/Controller/ControllerInspector.h launcher/Controller/ControllerInspector
 wolkara/Controller/ControllerInspector.m launcher/Controller/ControllerInspector.m add
 wolkara/Controller/ControllerWindow.h launcher/Controller/ControllerWindow.h add
 wolkara/Controller/ControllerWindow.m launcher/Controller/ControllerWindow.m add
+#
+# Voice: what you say, turned into text in the game (Share to start and stop)
+wolkara/Voice/Dictation.h launcher/Voice/Dictation.h add
+wolkara/Voice/Dictation.m launcher/Voice/Dictation.m add
