@@ -29,6 +29,8 @@
 #import <GameController/GameController.h>
 #import <UIKit/UIKit.h>
 
+#import "../Input/InputElement.h"
+
 // How many events the on-screen panel keeps. The log itself is not limited.
 static NSUInteger const AKCIHistoryLimit = 12;
 
@@ -37,16 +39,28 @@ static NSUInteger const AKCIHistoryLimit = 12;
 // half-unit, so a stick reads as -2, -1, 0, 1, 2 rather than a river of floats.
 static double const AKCIAxisBucket = 2.0;
 
+NSString *AKControllerIdentity(GCController *pad) {
+    if (!pad) return @"unknown";
+    return [NSString stringWithFormat:@"%@.%@",
+            AKInputIdentifierSlug(pad.vendorName ?: @"controller"),
+            AKInputIdentifierSlug(pad.productCategory ?: @"unknown")];
+}
+
 @implementation AKControllerInspector {
     NSMutableArray<NSString *> *_history;
     NSMutableDictionary<NSString *, NSNumber *> *_axisBuckets;
+    // Element ids whose system gesture this app has released, per device identity, so
+    // the exact gesture can be handed back rather than guessed at.
+    NSMutableDictionary<NSString *, NSMutableSet<NSString *> *> *_releasedGestures;
     UILabel *_panel;
     BOOL _began;
     NSString *_currentDevice;
+    NSString *_currentDeviceName;
     NSString *_currentSourceName;
 }
 
 - (NSString *)currentDevice { return _currentDevice; }
+- (NSString *)currentDeviceName { return _currentDeviceName; }
 - (NSString *)currentSourceName { return _currentSourceName; }
 
 - (BOOL)currentControllerDeclaresShare {
@@ -66,6 +80,7 @@ static double const AKCIAxisBucket = 2.0;
     if ((self = [super init])) {
         _history = [NSMutableArray array];
         _axisBuckets = [NSMutableDictionary dictionary];
+        _releasedGestures = [NSMutableDictionary dictionary];
     }
     return self;
 }
@@ -101,37 +116,108 @@ static double const AKCIAxisBucket = 2.0;
 
 - (void)screenshotTaken:(NSNotification *)notification {
     (void)notification;
-    // A press of the pad's Share button, as far as this app can tell. Attributed
-    // to the connected pad when there is one, so a per-controller choice
-    // applies to it.
-    _currentDevice = GCController.controllers.firstObject.vendorName ?: @"System";
-    _currentSourceName = @"system";
-    [self reportLine:@"Share (system screenshot)" element:@"Share" value:1 pressed:YES];
+    // The pad's Share button is a Print Screen key and iPadOS spends that key on the
+    // screenshot gesture before any app is offered it, so a screenshot is as close to
+    // "Share was pressed" as the system gets. It is still only ever *reported*: it
+    // does nothing at all unless the user mapped it. See VoiceSettings.
+    [self markSystemDevice];
+    [self reportLine:@"system.screenshot" element:AKInputElementSystemScreenshot() value:1 pressed:YES];
 }
 
 - (void)screenCaptureChanged:(NSNotification *)notification {
     (void)notification;
-    _currentDevice = GCController.controllers.firstObject.vendorName ?: @"System";
-    _currentSourceName = @"system";
     BOOL captured = UIScreen.mainScreen.isCaptured;
+    [self markSystemDevice];
     AKCILog(@"inspector: screen capture changed, captured=%d", captured);
     // Recorded, never reported as input.
     //
     // This used to go through reportLine: as "Share held", on the reasoning that
     // iPadOS spends the pad's Share hold on screen recording, so seeing a capture
-    // start meant Share was held. That is only true when the pad started it, and
-    // this notification cannot tell us who did. Measured on 2026-10-16: with the
-    // iPad being captured from a Mac, `isCaptured` was already 1, the change fired
-    // about a tenth of a second after every launch, and the launcher started
-    // dictating by itself - six times in one log, with nobody touching anything.
-    // The device's own log is what showed it, which is why the line is kept.
-    [self recordLine:[NSString stringWithFormat:@"Share held (screen capture %@)", captured ? @"on" : @"off"]];
+    // start meant Share was held. That is only true when the pad started it, and this
+    // notification cannot tell us who did. Measured on 2026-10-16: with the iPad being
+    // captured from a Mac, `isCaptured` was already 1, the change fired about a tenth
+    // of a second after every launch, and the launcher started dictating by itself -
+    // six times in one log, with nobody touching anything.
+    [self recordLine:captured ? @"system.capture on" : @"system.capture off"];
+}
+
+// A system signal belongs to no controller, but it is still attributed to the pad
+// when there is one, so a per-controller choice applies to it.
+- (void)markSystemDevice {
+    GCController *pad = GCController.controllers.firstObject;
+    [self markDevice:pad ? AKControllerIdentity(pad) : @"system"
+                name:pad.vendorName ?: @"System"
+              source:@"system"];
 }
 
 - (void)padsChanged:(NSNotification *)notification {
     AKCILog(@"inspector: %@", notification.name);
+    if ([notification.name isEqualToString:GCControllerDidDisconnectNotification]) {
+        // A released gesture belongs to a connection, not to a pad forever. Forget it
+        // so a reconnect starts from the system's own behaviour, and so the router
+        // re-decides from the stored mapping rather than from stale state.
+        GCController *pad = notification.object;
+        NSString *identity = pad ? AKControllerIdentity(pad) : nil;
+        if (identity) [_releasedGestures removeObjectForKey:identity];
+        else [_releasedGestures removeAllObjects];
+    }
     [self attachEverything];
     [self logInventories];
+}
+
+#pragma mark - The system's gestures, released only on request
+
+- (nullable GCControllerButtonInput *)buttonForElement:(NSString *)element device:(nullable NSString *)device inPad:(GCController *)pad {
+    if (device.length && ![AKControllerIdentity(pad) isEqualToString:device]) return nil;
+    for (NSString *name in pad.physicalInputProfile.buttons)
+        if ([AKInputElementForControllerButton(name) isEqualToString:element])
+            return pad.physicalInputProfile.buttons[name];
+    return nil;
+}
+
+- (BOOL)releaseSystemGestureForElement:(NSString *)element device:(nullable NSString *)device {
+    BOOL released = NO;
+    for (GCController *pad in GCController.controllers) {
+        GCControllerButtonInput *button = [self buttonForElement:element device:device inPad:pad];
+        if (!button) continue;
+        if (button.preferredSystemGestureState != GCSystemGestureStateDisabled) {
+            button.preferredSystemGestureState = GCSystemGestureStateDisabled;
+            AKCILog(@"inspector: released the system gesture on %@ for %@, because the user mapped it", element, AKControllerIdentity(pad));
+        }
+        NSString *identity = AKControllerIdentity(pad);
+        if (!_releasedGestures[identity]) _releasedGestures[identity] = [NSMutableSet set];
+        [_releasedGestures[identity] addObject:element];
+        released = YES;
+    }
+    return released;
+}
+
+- (void)restoreSystemGestureForElement:(NSString *)element device:(nullable NSString *)device {
+    for (GCController *pad in GCController.controllers) {
+        NSString *identity = AKControllerIdentity(pad);
+        if (device.length && ![identity isEqualToString:device]) continue;
+        if (![_releasedGestures[identity] containsObject:element]) continue;
+        GCControllerButtonInput *button = [self buttonForElement:element device:identity inPad:pad];
+        // Back to what the system had, which is "the gesture is mine".
+        if (button.preferredSystemGestureState == GCSystemGestureStateDisabled)
+            button.preferredSystemGestureState = GCSystemGestureStateEnabled;
+        [_releasedGestures[identity] removeObject:element];
+        AKCILog(@"inspector: gave the system its gesture back on %@ for %@", element, identity);
+    }
+}
+
+- (void)restoreAllSystemGestures {
+    for (GCController *pad in GCController.controllers) {
+        NSString *identity = AKControllerIdentity(pad);
+        for (NSString *element in [_releasedGestures[identity] allObjects]) {
+            GCControllerButtonInput *button = [self buttonForElement:element device:identity inPad:pad];
+            if (button.preferredSystemGestureState == GCSystemGestureStateDisabled)
+                button.preferredSystemGestureState = GCSystemGestureStateEnabled;
+        }
+    }
+    NSUInteger count = _releasedGestures.count;
+    [_releasedGestures removeAllObjects];
+    if (count) AKCILog(@"inspector: every released system gesture has been given back");
 }
 
 #pragma mark - Inventories: what does this pad actually have?
@@ -239,86 +325,115 @@ static double const AKCIAxisBucket = 2.0;
 
 - (void)attachPad:(GCController *)pad {
     GCPhysicalInputProfile *profile = pad.physicalInputProfile;
-    // Carried with every report from this pad, so a trigger can be remembered
-    // against it rather than against "the controller".
-    NSString *device = pad.vendorName ?: @"Controller";
+    // Carried with every report from this pad. The identity is what a mapping is
+    // remembered against; the name is only ever shown to a person.
+    NSString *device = AKControllerIdentity(pad);
+    NSString *deviceName = pad.vendorName ?: @"Controller";
     __weak AKControllerInspector *weakSelf = self;
 
     for (NSString *name in profile.buttons) {
         GCControllerButtonInput *button = profile.buttons[name];
+        NSString *element = AKInputElementForControllerButton(name);
         button.pressedChangedHandler = ^(GCControllerButtonInput *input, float value, BOOL pressed) {
             (void)input;
-            [weakSelf markDevice:device source:@"controller"];
-            [weakSelf noteElement:name value:value pressed:pressed];        };
+            [weakSelf markDevice:device name:deviceName source:@"controller"];
+            [weakSelf noteElement:element value:value pressed:pressed detail:nil];
+        };
     }
     for (NSString *name in profile.axes) {
         GCControllerAxisInput *axis = profile.axes[name];
+        NSString *element = AKInputElementForControllerAxis(name);
         axis.valueChangedHandler = ^(GCControllerAxisInput *input, float value) {
             (void)input;
-            [weakSelf markDevice:device source:@"controller"];
-            [weakSelf noteAxis:name value:value];
+            [weakSelf markDevice:device name:deviceName source:@"controller"];
+            [weakSelf noteAxis:element value:value];
         };
     }
     for (NSString *name in profile.dpads) {
         GCControllerDirectionPad *dpad = profile.dpads[name];
         dpad.valueChangedHandler = ^(GCControllerDirectionPad *input, float x, float y) {
             (void)input;
-            [weakSelf markDevice:device source:@"controller"];
-            [weakSelf noteElement:[NSString stringWithFormat:@"%@ x=%.2f y=%.2f", name, x, y]
-                            value:(x != 0 ? x : y) pressed:(x != 0 || y != 0)];
+            [weakSelf markDevice:device name:deviceName source:@"controller"];
+            // The direction is the name; where the thumb actually is goes in the
+            // detail. As a name it changed with every movement, so nothing learned
+            // from one press could ever match the next one.
+            NSString *element = AKInputElementForDirectionPad(name, x, y);
+            [weakSelf noteElement:element value:1 pressed:(x != 0 || y != 0)
+                           detail:[NSString stringWithFormat:@"x=%.2f y=%.2f", x, y]];
         };
     }
     for (NSString *name in profile.touchpads) {
         GCControllerTouchpad *touchpad = profile.touchpads[name];
+        NSString *down = AKInputElementForTouchpad(name, @"down");
+        NSString *up = AKInputElementForTouchpad(name, @"up");
+        NSString *moved = AKInputElementForTouchpad(name, @"moved");
         touchpad.touchDown = ^(GCControllerTouchpad *input, float x, float y, float buttonValue, BOOL buttonPressed) {
             (void)input; (void)buttonValue;
-            [weakSelf markDevice:device source:@"touchpad"];
-            [weakSelf noteElement:[NSString stringWithFormat:@"%@ down x=%.2f y=%.2f button=%d", name, x, y, buttonPressed] value:1 pressed:YES];
+            [weakSelf markDevice:device name:deviceName source:@"touchpad"];
+            [weakSelf noteElement:down value:1 pressed:YES
+                           detail:[NSString stringWithFormat:@"x=%.2f y=%.2f button=%d", x, y, buttonPressed]];
         };
         touchpad.touchUp = ^(GCControllerTouchpad *input, float x, float y, float buttonValue, BOOL buttonPressed) {
             (void)input; (void)buttonValue;
-            [weakSelf markDevice:device source:@"touchpad"];
-            [weakSelf noteElement:[NSString stringWithFormat:@"%@ up x=%.2f y=%.2f button=%d", name, x, y, buttonPressed] value:0 pressed:NO];
+            [weakSelf markDevice:device name:deviceName source:@"touchpad"];
+            [weakSelf noteElement:up value:0 pressed:NO
+                           detail:[NSString stringWithFormat:@"x=%.2f y=%.2f button=%d", x, y, buttonPressed]];
         };
         touchpad.touchMoved = ^(GCControllerTouchpad *input, float x, float y, float buttonValue, BOOL buttonPressed) {
             (void)input; (void)buttonValue; (void)buttonPressed;
-            [weakSelf noteElement:[NSString stringWithFormat:@"%@ moved x=%.2f y=%.2f", name, x, y] value:0 pressed:NO];
+            [weakSelf markDevice:device name:deviceName source:@"touchpad"];
+            [weakSelf noteElement:moved value:0 pressed:NO
+                           detail:[NSString stringWithFormat:@"x=%.2f y=%.2f", x, y]];
         };
     }
 
-    // A reserved Share button is invisible until the reservation is cleared.
-    // That is a change to how the system behaves, so it is said out loud.
+    // The inventory is read-only. This used to disable Share's system gesture here,
+    // for every pad that declared one, at startup - which changed how the controller
+    // behaved before the user had asked for anything, and is the second of the
+    // audit's release blockers. The gesture is now released only by
+    // -releaseSystemGestureForElement:device:, which the router calls because the
+    // user mapped that element, and it is given back afterwards.
     GCControllerButtonInput *share = profile.buttons[GCInputButtonShare];
-    if (share && share.preferredSystemGestureState != GCSystemGestureStateDisabled) {
-        share.preferredSystemGestureState = GCSystemGestureStateDisabled;
-        AKCILog(@"inspector: Share released from the system gesture so it can be seen");
+    if (share) {
+        AKCILog(@"inspector: %@ declares Share; its system gesture is %@ until mapped",
+                deviceName,
+                share.preferredSystemGestureState == GCSystemGestureStateDisabled ? @"already released" : @"still the system's");
     }
 }
 
 - (void)attachKeyboard:(GCKeyboard *)keyboard API_AVAILABLE(ios(14.0)) {
     __weak AKControllerInspector *weakSelf = self;
+    // Read before the block: capturing the keyboard itself in its own handler is a
+    // retain cycle, and the handler only needs its name.
+    NSString *name = keyboard.vendorName ?: @"Keyboard";
     keyboard.keyboardInput.keyChangedHandler = ^(GCKeyboardInput *input, GCDeviceButtonInput *key, GCKeyCode keyCode, BOOL pressed) {
         (void)input; (void)key;
-        [weakSelf markDevice:@"Keyboard" source:@"keyboard"];
-        [weakSelf noteElement:[NSString stringWithFormat:@"keycode %ld", (long)keyCode] value:(pressed ? 1 : 0) pressed:pressed];
+        [weakSelf markDevice:@"keyboard" name:name source:@"keyboard"];
+        [weakSelf noteElement:AKInputElementForKeyboardKey(keyCode) value:(pressed ? 1 : 0)
+                      pressed:pressed detail:nil];
     };
 }
 
 - (void)attachMouse:(GCMouse *)mouse API_AVAILABLE(ios(14.0)) {
     __weak AKControllerInspector *weakSelf = self;
     GCMouseInput *input = mouse.mouseInput;
+    // Every handler marks the device first. The right and middle buttons used not to,
+    // so they were attributed to whatever had been pressed before them.
+    NSString *name = mouse.vendorName ?: @"Mouse";
     input.leftButton.pressedChangedHandler = ^(GCControllerButtonInput *button, float value, BOOL pressed) {
         (void)button;
-        [weakSelf markDevice:@"Mouse" source:@"mouse"];
-        [weakSelf noteElement:@"mouse left" value:value pressed:pressed];
+        [weakSelf markDevice:@"mouse" name:name source:@"mouse"];
+        [weakSelf noteElement:AKInputElementForMouseButton(@"left") value:value pressed:pressed detail:nil];
     };
     input.rightButton.pressedChangedHandler = ^(GCControllerButtonInput *button, float value, BOOL pressed) {
         (void)button;
-        [weakSelf noteElement:@"mouse right" value:value pressed:pressed];
+        [weakSelf markDevice:@"mouse" name:name source:@"mouse"];
+        [weakSelf noteElement:AKInputElementForMouseButton(@"right") value:value pressed:pressed detail:nil];
     };
     input.middleButton.pressedChangedHandler = ^(GCControllerButtonInput *button, float value, BOOL pressed) {
         (void)button;
-        [weakSelf noteElement:@"mouse middle" value:value pressed:pressed];
+        [weakSelf markDevice:@"mouse" name:name source:@"mouse"];
+        [weakSelf noteElement:AKInputElementForMouseButton(@"middle") value:value pressed:pressed detail:nil];
     };
     input.mouseMovedHandler = ^(GCMouseInput *mouseInput, float deltaX, float deltaY) {
         (void)mouseInput;
@@ -329,24 +444,28 @@ static double const AKCIAxisBucket = 2.0;
 
 #pragma mark - Reporting
 
-// Called from the input handlers so that every report carries the device it
-// came from. A message to a weak reference is safe where reading an ivar
-// through one is not.
-- (void)markDevice:(NSString *)device source:(NSString *)source {
+// Called from the input handlers so that every report carries the device it came
+// from. A message to a weak reference is safe where reading an ivar through one is
+// not. The identity is what a mapping is stored against; the name is for people.
+- (void)markDevice:(NSString *)device name:(NSString *)name source:(NSString *)source {
     _currentDevice = device;
+    _currentDeviceName = name;
     _currentSourceName = source;
 }
 
-- (void)noteElement:(NSString *)element value:(double)value pressed:(BOOL)pressed {    NSString *line = [NSString stringWithFormat:@"%@ %@=%.2f", element, pressed ? @"pressed" : @"value", value];
+- (void)noteElement:(NSString *)element value:(double)value pressed:(BOOL)pressed detail:(nullable NSString *)detail {
+    NSString *line = [NSString stringWithFormat:@"%@ %@=%.2f", element, pressed ? @"pressed" : @"value", value];
+    if (detail.length) line = [line stringByAppendingFormat:@" %@", detail];
     [self reportLine:line element:element value:value pressed:pressed];
 }
 
-- (void)noteAxis:(NSString *)name value:(double)value {
+- (void)noteAxis:(NSString *)element value:(double)value {
     NSInteger bucket = (NSInteger)lround(value * AKCIAxisBucket);
-    NSNumber *last = _axisBuckets[name];
+    NSNumber *last = _axisBuckets[element];
     if (last && last.integerValue == bucket) return;
-    _axisBuckets[name] = @(bucket);
-    [self reportLine:[NSString stringWithFormat:@"%@=%.2f", name, value] element:name value:value pressed:(bucket != 0)];
+    _axisBuckets[element] = @(bucket);
+    [self reportLine:[NSString stringWithFormat:@"%@=%.2f", element, value]
+              element:element value:value pressed:(bucket != 0)];
 }
 
 - (void)reportLine:(NSString *)line element:(NSString *)element value:(double)value pressed:(BOOL)pressed {

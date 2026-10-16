@@ -1,20 +1,20 @@
 // Wolkara: the voice settings, in full.
 
 #import "VoiceSettings.h"
-
-#if __has_include("AKSupport.h")
-#import "AKSupport.h"
-#define AKVSLog(...) AKLog(__VA_ARGS__)
-#else
-#define AKVSLog(...) NSLog(@"[ak] %@", [NSString stringWithFormat:__VA_ARGS__])
-#endif
+#import "../App/WolkaraLog.h"
 
 NSNotificationName const AKVoiceSettingsDidChangeNotification = @"AKVoiceSettingsDidChange";
 
+static NSString *const AKVoiceEnabledKey = @"AKVoiceEnabled";
 static NSString *const AKVoiceModeKey = @"AKVoiceMode";
 static NSString *const AKVoiceAutoSubmitKey = @"AKVoiceAutoSubmit";
 static NSString *const AKVoiceTrailingSpaceKey = @"AKVoiceTrailingSpace";
 static NSString *const AKVoiceCustomWordsKey = @"AKVoiceCustomWords";
+
+// The dictionary is biased into the recogniser, so it is bounded: a huge list is not a
+// dictionary, it is a corrupt file, and it would be handed to the SDK either way.
+static NSUInteger const AKVoiceWordLimit = 512;
+static NSUInteger const AKVoiceWordLengthLimit = 64;
 
 @implementation AKVoiceSettings
 
@@ -28,47 +28,79 @@ static NSString *const AKVoiceCustomWordsKey = @"AKVoiceCustomWords";
 - (instancetype)init {
     if ((self = [super init])) {
         NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
-        // Hold to talk unless the user says otherwise: it is what Handy defaults
-        // to, and it fails safe — a stuck toggle leaves the microphone open.
+        // Off, and staying off, until the user turns it on. See the header.
+        _enabled = [defaults boolForKey:AKVoiceEnabledKey];
+        // Hold to talk unless the user says otherwise: it is what Handy defaults to,
+        // and it fails safe - a stuck toggle leaves the microphone open.
         if ([defaults objectForKey:AKVoiceModeKey])
             _mode = (AKVoiceMode)[defaults integerForKey:AKVoiceModeKey];
         else
             _mode = AKVoiceModeHold;
         _autoSubmit = [defaults boolForKey:AKVoiceAutoSubmitKey];
         _trailingSpace = [defaults boolForKey:AKVoiceTrailingSpaceKey];
-        _customWords = [defaults arrayForKey:AKVoiceCustomWordsKey] ?: @[];
+        _customWords = [self sanitizedWords:[defaults arrayForKey:AKVoiceCustomWordsKey] ?: @[]];
+        // One pass at startup: an older build wrote element names that are not ids.
+        NSUInteger migrated = [AKTrigger migrateStoredTriggersInDefaults:defaults];
+        if (migrated) WKLog("voice", @"migrated %lu stored mapping(s) to canonical element ids", (unsigned long)migrated);
     }
     return self;
 }
 
-- (void)setMode:(AKVoiceMode)mode { _mode = mode; [self persist:AKVoiceModeKey value:@(mode)]; }
+- (void)setEnabled:(BOOL)enabled {
+    _enabled = enabled;
+    [self persist:AKVoiceEnabledKey value:@(enabled)];
+}
+- (void)setMode:(AKVoiceMode)mode {
+    _mode = mode;
+    // The mode owns the pattern; see the header. Rewriting the stored patterns here
+    // is what stops a mapping made in one mode behaving like the other one.
+    [self applyModeToStoredMappings];
+    [self persist:AKVoiceModeKey value:@(mode)];
+}
 - (void)setAutoSubmit:(BOOL)autoSubmit { _autoSubmit = autoSubmit; [self persist:AKVoiceAutoSubmitKey value:@(autoSubmit)]; }
 - (void)setTrailingSpace:(BOOL)trailingSpace { _trailingSpace = trailingSpace; [self persist:AKVoiceTrailingSpaceKey value:@(trailingSpace)]; }
 - (void)setCustomWords:(NSArray<NSString *> *)customWords {
-    _customWords = [customWords copy] ?: @[];
+    _customWords = [self sanitizedWords:customWords];
     [self persist:AKVoiceCustomWordsKey value:_customWords];
+}
+
+// Anything the recogniser is handed is bounded and stripped: empty entries dropped,
+// nothing longer than the limit kept, and the whole list capped.
+- (NSArray<NSString *> *)sanitizedWords:(NSArray *)words {
+    NSMutableArray<NSString *> *clean = [NSMutableArray array];
+    for (id entry in words) {
+        if (![entry isKindOfClass:NSString.class]) continue;
+        NSString *word = [(NSString *)entry stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        if (!word.length || word.length > AKVoiceWordLengthLimit) continue;
+        if ([clean containsObject:word]) continue;
+        [clean addObject:word];
+        if (clean.count >= AKVoiceWordLimit) break;
+    }
+    return clean;
 }
 
 - (void)persist:(NSString *)key value:(id)value {
     [NSUserDefaults.standardUserDefaults setObject:value forKey:key];
-    AKVSLog(@"voice: %@ set", key);
+    WKLog("voice", @"%@ set", key);
     [NSNotificationCenter.defaultCenter postNotificationName:AKVoiceSettingsDidChangeNotification
                                                       object:self];
 }
 
 #pragma mark - The button
 
-- (AKTrigger *)triggerForDevice:(nullable NSString *)device {
-    AKTrigger *chosen = [AKTrigger savedTriggerForVendor:device defaults:NSUserDefaults.standardUserDefaults];
-    if (chosen) return chosen;
-    // Nothing chosen yet. The default is the button iPadOS reserves, because
-    // that is the one a game cannot bind — and it arrives as the system's own
-    // screenshot signal. Tap to toggle only: a held reserved button is spent on
-    // iOS's recording gesture, so there is no release for us to see.
-    AKTrigger *fallback = [AKTrigger new];
-    fallback.element = @"Share";
-    fallback.pattern = AKTriggerPatternPress;
-    return fallback;
+- (nullable AKTrigger *)triggerForDevice:(nullable NSString *)device {
+    // Off means nothing fires, whatever is stored. One gate, here, rather than a check
+    // at every call site - and no fallback when nothing is stored, on purpose: the
+    // audit's first release blocker was a feature that started listening because an
+    // unrelated screenshot was taken.
+    if (!_enabled) return nil;
+    return [self storedTriggerForDevice:device];
+}
+
+// What is mapped, whether or not the feature is switched on: the settings screen has
+// to be able to show the user what they chose while it is off.
+- (nullable AKTrigger *)storedTriggerForDevice:(nullable NSString *)device {
+    return [AKTrigger savedTriggerForDevice:device defaults:NSUserDefaults.standardUserDefaults];
 }
 
 - (void)setLearnedElement:(NSString *)element forDevice:(nullable NSString *)device {
@@ -79,14 +111,57 @@ static NSString *const AKVoiceCustomWordsKey = @"AKVoiceCustomWords";
 }
 
 - (void)setTrigger:(AKTrigger *)trigger forDevice:(nullable NSString *)device {
-    [trigger saveForVendor:device defaults:NSUserDefaults.standardUserDefaults];
-    AKVSLog(@"voice: mapped %@ on %@", [trigger summary], device ?: @"any");
+    [trigger saveForDevice:device defaults:NSUserDefaults.standardUserDefaults];
+    WKLog("voice", @"mapped %@ on %@", [trigger summary], device ?: @"any");
     [NSNotificationCenter.defaultCenter postNotificationName:AKVoiceSettingsDidChangeNotification
                                                       object:self];
 }
 
+- (void)clearMappingForDevice:(nullable NSString *)device {
+    [AKTrigger forgetTriggerForDevice:device defaults:NSUserDefaults.standardUserDefaults];
+    WKLog("voice", @"mapping cleared for %@", device ?: @"any");
+    [NSNotificationCenter.defaultCenter postNotificationName:AKVoiceSettingsDidChangeNotification
+                                                      object:self];
+}
+
+- (BOOL)adoptLegacyMappingForDevice:(NSString *)device vendor:(nullable NSString *)vendor {
+    if (!device.length || !vendor.length) return NO;
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    if ([defaults dictionaryForKey:[AKTrigger defaultsKeyForDevice:device]] ) return NO;
+    NSDictionary *legacy = [defaults dictionaryForKey:[NSString stringWithFormat:@"AKInputTrigger.%@", vendor]];
+    if (![legacy isKindOfClass:NSDictionary.class]) return NO;
+    AKTrigger *trigger = [AKTrigger triggerFromStored:legacy];
+    if (!trigger) {
+        [defaults removeObjectForKey:[NSString stringWithFormat:@"AKInputTrigger.%@", vendor]];
+        return NO;
+    }
+    [trigger saveForDevice:device defaults:defaults];
+    [defaults removeObjectForKey:[NSString stringWithFormat:@"AKInputTrigger.%@", vendor]];
+    WKLog("voice", @"adopted the mapping made before this change (%@) for %@", [trigger summary], device);
+    [NSNotificationCenter.defaultCenter postNotificationName:AKVoiceSettingsDidChangeNotification
+                                                      object:self];
+    return YES;
+}
+
+// A mapping made in one mode must not keep the other mode's pattern.
+- (void)applyModeToStoredMappings {
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    AKTriggerPattern wanted = self.mode == AKVoiceModeHold ? AKTriggerPatternPushToTalk : AKTriggerPatternPress;
+    for (NSString *key in defaults.dictionaryRepresentation.allKeys) {
+        if (![key hasPrefix:@"AKInputTrigger."]) continue;
+        NSDictionary *stored = [defaults dictionaryForKey:key];
+        AKTrigger *trigger = [AKTrigger triggerFromStored:stored];
+        if (!trigger) continue;
+        // Only the two the launcher offers are rewritten: a long press or a chord that
+        // was set some other way is that, not a mode.
+        if (!trigger.patternIsOfferedInTheLauncher || trigger.pattern == wanted) continue;
+        trigger.pattern = wanted;
+        [trigger saveForDevice:[key substringFromIndex:@"AKInputTrigger.".length] defaults:defaults];
+    }
+}
+
 - (NSString *)mappingSummaryForDevice:(nullable NSString *)device {
-    AKTrigger *saved = [AKTrigger savedTriggerForVendor:device defaults:NSUserDefaults.standardUserDefaults];
+    AKTrigger *saved = [self storedTriggerForDevice:device];
     if (!saved) return @"Not set";
     return [saved summary];
 }

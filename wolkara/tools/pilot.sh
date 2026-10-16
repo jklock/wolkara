@@ -44,44 +44,62 @@ die()  { printf 'pilot: %s\n' "$*" >&2; exit 2; }
 [ -n "$DEVICE" ] || die "Set DEVICE=<iPad UDID> in local.env (see local.env.example)."
 [ -n "$BUNDLE" ] || die "Set TOLKARA_BUNDLE_ID in local.env (see local.env.example)."
 
-# Work files. Every launch records what was newest beforehand, so "did it fail?" is
-# always a comparison and never a file name written down in this script.
-STATE=/tmp/pilot-state.txt
-BASELINE=/tmp/pilot-baseline.txt
-CRASH_BASELINE=/tmp/pilot-crash-baseline.txt
-STARTS_BASELINE=/tmp/pilot-starts-baseline.txt
-LAUNCH_MODE=/tmp/pilot-mode.txt
-GUEST_LOG=/tmp/pilot-guest.log
-APP_LOG=/tmp/pilot-app.log
+# Work files, in one directory of this run's own. They used to be fixed names under
+# /tmp, which two pilots - or one pilot and a leftover from yesterday - would share:
+# the second run would compare against the first run's baseline and call a crash
+# "no new crash report". PILOT_SESSION lets a caller keep a session to look at.
+SESSION=${PILOT_SESSION:-$(mktemp -d -t pilot)}
+STATE=$SESSION/state.txt
+BASELINE=$SESSION/baseline.txt
+CRASH_BASELINE=$SESSION/crash-baseline.txt
+STARTS_BASELINE=$SESSION/starts-baseline.txt
+LAUNCH_MODE=$SESSION/mode.txt
+GUEST_LOG=$SESSION/guest.log
+APP_LOG=$SESSION/app.log
+PROCESSES=$SESSION/processes.txt
+FILES=$SESSION/files.json
+CRASHES=$SESSION/crashes.json
+ERRORS=$SESSION/errors
+CRASH_DIR=$SESSION/crash
 STAGED="Documents/.tolkara-updates"
+mkdir -p "$ERRORS" "$CRASH_DIR"
 # ---------------------------------------------------------------------------
 # What the device is doing. One python helper, because the answers come from
 # three different commands and comparing timestamps in shell is how mistakes
 # happen.
 # ---------------------------------------------------------------------------
 refresh_state() {
-    xcrun devicectl device info processes --device "$DEVICE" 2>/dev/null > /tmp/pilot-processes.txt || true
+    # Every one of these can fail, and a failed inspection that reads as "nothing
+    # there" is the most dangerous thing this script could do: it would report "the
+    # client did not assert" because it could not look. So the exit codes are kept and
+    # carried into the state, and everything that concludes anything checks them.
+    local processes_ok=1 files_ok=1 crashes_ok=1
+    xcrun devicectl device info processes --device "$DEVICE" 2>/dev/null > "$PROCESSES" || processes_ok=0
     # JSON, not the table. The table wraps its columns in the middle of the date and
     # reflows them by terminal width, and a parse that silently finds no error file reads
     # exactly like "the client did not assert" - the one answer that must never be wrong.
     xcrun devicectl device info files --device "$DEVICE" --domain-type appDataContainer \
         --domain-identifier "$BUNDLE" --username mobile \
-        --json-output /tmp/pilot-files.json >/dev/null 2>&1 || true
+        --json-output "$FILES" >/dev/null 2>&1 || files_ok=0
     # And the other place a failure shows up. Crash reports are written by the system, not
     # by the app, so they are not in the container above and no amount of looking there
     # will find one.
     xcrun devicectl device info files --device "$DEVICE" --domain-type systemCrashLogs \
-        --json-output /tmp/pilot-crash.json >/dev/null 2>&1 || true
+        --json-output "$CRASHES" >/dev/null 2>&1 || crashes_ok=0
 
     rm -f "$GUEST_LOG"
     xcrun devicectl device copy from --device "$DEVICE" --domain-type appDataContainer \
         --domain-identifier "$BUNDLE" --source "Documents/native-guest.log" \
         --destination "$GUEST_LOG" >/dev/null 2>&1 || true
 
-    python3 - "$STAGED" <<'PY' > "$STATE"
+    python3 - "$SESSION" "$STAGED" "$processes_ok" "$files_ok" "$crashes_ok" <<'PY' > "$STATE"
 import datetime, json, pathlib, re, sys
 
-staged_prefix = sys.argv[1]
+session = sys.argv[1]
+staged_prefix = sys.argv[2]
+processes_ok, files_ok, crashes_ok = (int(value) for value in sys.argv[3:6])
+def in_session(name):
+    return str(pathlib.Path(session) / name)
 now = datetime.datetime.now(datetime.timezone.utc)
 
 def read(path):
@@ -92,7 +110,7 @@ def read(path):
 
 def entries():
     try:
-        with open("/tmp/pilot-files.json") as handle:
+        with open(in_session("files.json")) as handle:
             listed = json.load(handle)
     except (OSError, ValueError):
         return []
@@ -111,7 +129,7 @@ def age_of(entry):
 files = entries()
 
 app = 0
-for line in read("/tmp/pilot-processes.txt"):
+for line in read(in_session("processes.txt")):
     if re.search(r"Tolkara\.app/Tolkara(\s|$)", line):
         app += 1
         break
@@ -133,7 +151,7 @@ error_files = sorted(((e.get("relativePath") or ""), age_of(e)) for e in files
 newest = error_files[-1][0].rsplit("/", 1)[-1] if error_files else "none"
 newest_age = error_files[-1][1] if error_files else None
 
-starts = [l for l in read("/tmp/pilot-guest.log") if "startup_return=" in l]
+starts = [l for l in read(in_session("guest.log")) if "startup_return=" in l]
 last = starts[-1].split("startup_return=", 1)[-1].strip() if starts else "none"
 # A live session: the guest started, nothing has finished it, and its log was written to
 # recently. The log outlives app restarts and holds every launch this install has done,
@@ -149,7 +167,7 @@ live = 1 if (app and last == "PASS" and log_age is not None and log_age < 3600) 
 # failures, and the dash in `Tolkara-<date>` is what keeps them out of this count.
 crashes = []
 try:
-    with open("/tmp/pilot-crash.json") as handle:
+    with open(in_session("crashes.json")) as handle:
         logged = json.load(handle)
 except (OSError, ValueError):
     logged = {}
@@ -163,6 +181,10 @@ newest_crash = crashes[0][0] if crashes else "none"
 newest_crash_age = crashes[0][1] if crashes else None
 
 print("app_running=%d" % app)
+# One flag for the whole inspection. Without it, a device that could not be looked at
+# and a device with nothing wrong would produce the same output, and only one of those
+# is safe to act on.
+print("inspection_ok=%d" % (1 if (processes_ok and files_ok and crashes_ok) else 0))
 print("update_writing=%d" % recent)
 print("newest_error=%s" % newest)
 print("newest_error_age=%s" % ("none" if newest_age is None else int(newest_age)))
@@ -174,19 +196,19 @@ print("session_live=%d" % live)
 print("crash_newest=%s" % newest_crash)
 print("crash_newest_age=%s" % ("none" if newest_crash_age is None else int(newest_crash_age)))
 print("crash_count=%d" % len(crashes))
-pathlib.Path("/tmp/pilot-newest-error").write_text(newest)
-pathlib.Path("/tmp/pilot-newest-crash").write_text(newest_crash)
+pathlib.Path(in_session("newest-error")).write_text(newest)
+pathlib.Path(in_session("newest-crash")).write_text(newest_crash)
 PY
 
     # Then fetch the one file that matters. `copy from` handed a directory copies nothing
     # at all - which reads exactly like "the client did not assert", the answer that must
     # never be wrong. It also wants the destination to be the file, not the folder.
-    rm -rf /tmp/pilot-errors && mkdir -p /tmp/pilot-errors
-    newest=$(cat /tmp/pilot-newest-error 2>/dev/null || echo none)
+    rm -rf "$ERRORS" && mkdir -p "$ERRORS"
+    newest=$(cat "$SESSION/newest-error" 2>/dev/null || echo none)
     if [ "$newest" != "none" ]; then
         xcrun devicectl device copy from --device "$DEVICE" --domain-type appDataContainer \
             --domain-identifier "$BUNDLE" --source "$GAME/Errors/$newest" \
-            --destination "/tmp/pilot-errors/$newest" >/dev/null 2>&1 || true
+            --destination "$ERRORS/$newest" >/dev/null 2>&1 || true
     fi
 }
 
@@ -194,6 +216,11 @@ state_value() { sed -n "s/^$1=//p" "$STATE"; }
 
 verdict() {
     refresh_state
+    if [ "$(state_value inspection_ok)" != "1" ]; then
+        say "THE DEVICE COULD NOT BE INSPECTED. Nothing below can be trusted:" >&2
+        say "  processes=$([ -s "$PROCESSES" ] && echo listed || echo failed) files=$([ -s "$FILES" ] && echo listed || echo failed) crash logs=$([ -s "$CRASHES" ] && echo listed || echo failed)" >&2
+        say "  (unlock the iPad and check the cable, then try again)" >&2
+    fi
     local over=""
     [ "$(state_value session_live)" = "1" ] && over="   <-- a game session is live"
     say "app running:    $(state_value app_running)$over"
@@ -216,6 +243,12 @@ require_safe_to_install() {
     local force=${1:-}
     [ "$force" = "--force" ] && return 0
     refresh_state
+    # Fail closed. A device that cannot be inspected might be mid-update, and the whole
+    # point of this guard is that guessing wrong there damages the client's store.
+    if [ "$(state_value inspection_ok)" != "1" ]; then
+        die "the device could not be inspected, so whether it is safe to install is unknown.
+       Unlock the iPad and check the cable, or override with --force if you are certain."
+    fi
     if [ "$(state_value update_writing)" != "0" ]; then
         die "an update is writing right now - leave the app alone and try again when it stops.
        (Only override if you are certain: --force)"
@@ -318,6 +351,10 @@ cmd_launch() {
        Use 'pilot.sh stop' first if it is yours to stop, or just use the iPad."
     fi
     refresh_state
+    if [ "$(state_value inspection_ok)" != "1" ]; then
+        die "the device could not be inspected, so whether anything is running is unknown.
+       Not launching on a guess. Unlock the iPad and check the cable."
+    fi
     record_baseline
     say "starting from error baseline $(cat "$BASELINE") and crash baseline $(cat "$CRASH_BASELINE")"
     if [ "$game" = "--game" ]; then
@@ -354,10 +391,18 @@ cmd_wait() {
         say "waiting up to ${timeout}s for the launcher to stay up, or for the client to fail"
     fi
     local waited=0
+    local blind=0
     while [ "$waited" -lt "$timeout" ]; do
         sleep 2
         waited=$((waited + 2))
         refresh_state
+        # Nothing may be concluded from an inspection that did not happen. This keeps
+        # waiting rather than calling a device it cannot see "fine".
+        if [ "$(state_value inspection_ok)" != "1" ]; then
+            blind=$((blind + 1))
+            printf '!'
+            continue
+        fi
         # A crash is the faster and more final answer, so it is asked for first: the
         # process is already gone by the time one appears.
         local crash; crash=$(state_value crash_newest)
@@ -392,19 +437,30 @@ cmd_wait() {
         printf '.'
     done
     printf '\n'
+    if [ "$blind" -gt 0 ]; then
+        say "nothing conclusive in ${timeout}s, and $blind of those looks could not see the device"
+        say "so 'no new error file' would be a guess, not an answer"
+        return 1
+    fi
     say "nothing conclusive in ${timeout}s: no new error file, no new crash report"
     return 1
 }
 
 cmd_view() {
     step "screen"
-    if xcrun devicectl device capture screenshot --device "$DEVICE" --destination /tmp/pilot.png >/dev/null 2>&1; then
-        sips -Z 1100 /tmp/pilot.png --out /tmp/pilot-view.png >/dev/null 2>&1 && say "look at /tmp/pilot-view.png"
+    if xcrun devicectl device capture screenshot --device "$DEVICE" --destination "$SESSION/screen.png" >/dev/null 2>&1; then
+        sips -Z 1100 "$SESSION/screen.png" --out "$SESSION/screen-small.png" >/dev/null 2>&1 && say "look at $SESSION/screen-small.png"
     else
         say "no screenshot (the device may be locked)"
     fi
     step "did the client assert?"
     refresh_state
+    if [ "$(state_value inspection_ok)" != "1" ]; then
+        say "THE DEVICE COULD NOT BE INSPECTED, so 'no new error file' would be a guess:"
+        say "  processes=$([ -s "$PROCESSES" ] && echo listed || echo failed) files=$([ -s "$FILES" ] && echo listed || echo failed) crash logs=$([ -s "$CRASHES" ] && echo listed || echo failed)"
+        step "state"
+        return 0
+    fi
     local baseline; baseline=$(cat "$BASELINE" 2>/dev/null || echo none)
     local newest; newest=$(state_value newest_error)
     say "baseline: $baseline"
@@ -416,9 +472,9 @@ cmd_view() {
         say "the newest error file was written $(state_value newest_error_age)s ago"
     elif [ "$newest" = "$baseline" ]; then
         say "no new error file: the client did not assert"
-    elif [ -f "/tmp/pilot-errors/$newest" ]; then
+    elif [ -f "$ERRORS/$newest" ]; then
         say "A NEW ERROR FILE. Read it before going any further:"
-        grep -m3 -E "Error:|Exception:" "/tmp/pilot-errors/$newest" 2>/dev/null | sed 's/^/    /'
+        grep -m3 -E "Error:|Exception:" "$ERRORS/$newest" 2>/dev/null | sed 's/^/    /'
     else
         say "A NEW ERROR FILE: $newest"
         say "it could not be fetched - read it on the device before going any further"
@@ -480,14 +536,14 @@ cmd_log() {
 # turns that into something readable without a trip through Xcode.
 cmd_crash() {
     refresh_state
-    local name; name=$(cat /tmp/pilot-newest-crash 2>/dev/null || echo none)
+    local name; name=$(cat "$SESSION/newest-crash" 2>/dev/null || echo none)
     [ "$name" = "none" ] && die "no crash reports on the device"
-    rm -rf /tmp/pilot-crash && mkdir -p /tmp/pilot-crash
+    rm -rf "$CRASH_DIR" && mkdir -p "$CRASH_DIR"
     xcrun devicectl device copy from --device "$DEVICE" --domain-type systemCrashLogs \
-        --source "$name" --destination "/tmp/pilot-crash/$name" >/dev/null 2>&1 \
+        --source "$name" --destination "$CRASH_DIR/$name" >/dev/null 2>&1 \
         || die "could not fetch $name from the device"
     say "$name, written $(state_value crash_newest_age)s ago"
-    python3 - "/tmp/pilot-crash/$name" <<'PY'
+    python3 - "$CRASH_DIR/$name" <<'PY'
 import json, sys
 
 raw = open(sys.argv[1], errors="replace").read().split("\n", 1)

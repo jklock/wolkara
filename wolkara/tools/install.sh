@@ -155,17 +155,13 @@ NEXT
     exit 0
 fi
 
-step "3/5 enroll the developer service (the platform's next step)"
-# Idempotent: with a valid pin it verifies and refuses to replace it, which is a success,
-# so the output decides rather than the exit code alone.
-enroll_out=$(tools/enroll.sh 2>&1) && enroll_rc=0 || enroll_rc=$?
-printf '%s\n' "$enroll_out"
-if [ "${enroll_rc:-0}" -ne 0 ] &&
-   ! printf '%s' "$enroll_out" | grep -q "no existing trust pin was replaced"; then
-    echo "   enrollment failed (exit $enroll_rc): the app is installed, but the developer" >&2
-    echo "   service cannot prepare memory until this succeeds" >&2
-    exit 1
-fi
+# What happens after the install depends on the execution mode. Enrolling is
+# developer-service work and is wrong for the other two modes, so the decision lives in
+# one small script that a test can drive with stubs in front of it. See
+# wolkara/tools/after_install.sh.
+step "3/5 after the install (mode: ${TOLKARA_MODE:-none})"
+WOLKARA_AFTER_INSTALL="$root/wolkara/tools/after_install.sh"
+"$WOLKARA_AFTER_INSTALL" "${TOLKARA_MODE:-}" || exit $?
 
 step "4/5 verify the app on the device"
 installed=$(xcrun devicectl device info apps --device "$DEVICE" 2>/dev/null | grep -i "$bundle" || true)

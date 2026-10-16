@@ -91,7 +91,7 @@ wolkara/Controller/ControllerInspector.m launcher/Controller/ControllerInspector
 wolkara/Controller/ControllerWindow.h launcher/Controller/ControllerWindow.h add
 wolkara/Controller/ControllerWindow.m launcher/Controller/ControllerWindow.m add
 #
-# Voice: what you say, turned into text in the game
+# Voice: what you say, turned into text in the game, and its tests
 wolkara/Voice/Dictation.h launcher/Voice/Dictation.h add
 wolkara/Voice/Dictation.m launcher/Voice/Dictation.m add
 wolkara/Voice/VoiceSettings.h launcher/Voice/VoiceSettings.h add
@@ -100,8 +100,11 @@ wolkara/Voice/VoiceTestViewController.h launcher/Voice/VoiceTestViewController.h
 wolkara/Voice/VoiceTestViewController.m launcher/Voice/VoiceTestViewController.m add
 wolkara/Voice/VoiceViewController.h launcher/Voice/VoiceViewController.h add
 wolkara/Voice/VoiceViewController.m launcher/Voice/VoiceViewController.m add
+wolkara/Voice/tests/test_voice_app.m tests/test_voice_app.m add
 #
 # Input: any button, on any controller, in one stream (see docs/INPUT_TRIGGERS.md)
+wolkara/Input/InputElement.h launcher/Input/InputElement.h add
+wolkara/Input/InputElement.m launcher/Input/InputElement.m add
 wolkara/Input/InputRouter.h launcher/Input/InputRouter.h add
 wolkara/Input/InputRouter.m launcher/Input/InputRouter.m add
 wolkara/Input/Trigger.h launcher/Input/Trigger.h add

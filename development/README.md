@@ -7,6 +7,25 @@ and what is still outstanding.
 
 Start with `PLAN.md` for the end-to-end plan and its per-step status.
 
+## Current state
+
+The numbers in the older notes below were written at different times and disagree with
+each other. These are the ones that hold now, and each can be checked in one command:
+
+| Thing | Now | Check it with |
+| --- | --- | --- |
+| Platform pin | `00a8501` | `wolkara/tools/check_layers.sh` |
+| Our patches | 13 | `ls wolkara/patches/*.patch \| wc -l` |
+| Overlay entries | 89 (9 replace, 80 add) | `wolkara/tools/overlay_map.sh` |
+| Layer files carried | every file under `wolkara/` | `check_layers.sh` |
+| Gate | 11 checks | `wolkara/tools/check_layers.sh` |
+
+Evidence for a release comes from `wolkara/tools/validate.sh`, which runs the suites and
+writes one file per commit under `development/validation/`, naming the commit, whether
+the tree was clean, every command it ran and what each printed. It refuses to run on a
+dirty worktree unless told to. `VALIDATION.md` is the older, hand-written record and is
+tied to the commit it names, not to the work after it.
+
 ## The split in one page
 
 | Path | Owner | Notes |

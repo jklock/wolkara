@@ -8,6 +8,18 @@ set -eu
 cd "$(dirname "$0")/../.." || exit 2
 root=$PWD
 
+# Say it out loud when the tree is dirty. platform/ comes from `git archive HEAD`, but
+# the overlay files come from the working tree, so a prepared tree can carry uncommitted
+# code while the platform half is a commit. That is fine while developing and not fine
+# as evidence, so the state is printed here and wolkara/tools/validate.sh - which is
+# what produces evidence - refuses to run at all unless the tree is clean.
+dirty=$(git status --porcelain)
+if [ -n "$dirty" ]; then
+    echo "prepare: the working tree is dirty; this tree carries uncommitted layer code" >&2
+    printf '%s\n' "$dirty" | head -20 | sed 's/^/         /' >&2
+    [ "$(printf '%s\n' "$dirty" | wc -l | tr -d ' ')" -le 20 ] || echo "         (and more)" >&2
+fi
+
 dest=build/platform
 patches=$(ls wolkara/patches/*.patch 2>/dev/null || true)
 

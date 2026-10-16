@@ -82,10 +82,15 @@ It must:
 - Optionally show a small on-screen panel of the last events, so the user can
   *see* it too. Off unless asked for (`--inspect-controller` or a notification).
 
-It reads. It never consumes an input, never writes to a pad, and changes nothing
-about how input reaches the game — with one deliberate exception: when it is
-enabled it clears the system gesture reservation on Share, because otherwise that
-button cannot be observed at all. That is logged loudly when it happens.
+It reads. It never consumes an input, never writes to a pad, and changes nothing about
+how input reaches the game — and, since 2026-10-16, it does not change the pad's
+behaviour at all. It used to clear the system's gesture reservation on Share for every
+pad that declared one, at startup, because otherwise that button cannot be observed.
+That is a change to how the controller behaves before the user has asked for anything,
+and it is one of the audit's release blockers. The reservation is now released only for
+the exact element the user has mapped, through
+`-releaseSystemGestureForElement:device:`, and given back when the mapping is cleared,
+voice is switched off, or the pad disconnects. Both are logged loudly when they happen.
 
 ### 2. Guest-side visibility — platform patch `0012`
 
