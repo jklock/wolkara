@@ -52,7 +52,7 @@ static NSString *const AKTriggerDefaultsPrefix = @"AKInputTrigger.";
 }
 
 - (NSString *)summary {
-    NSString *pattern = @[@"press", @"double", @"long", @"chord"][(NSUInteger)self.pattern];
+    NSString *pattern = @[@"press", @"double", @"long", @"chord", @"push to talk"][(NSUInteger)self.pattern];
     if (self.pattern == AKTriggerPatternChord && self.chordElement.length)
         return [NSString stringWithFormat:@"%@ + %@ (%@)", self.element, self.chordElement, pattern];
     return [NSString stringWithFormat:@"%@ (%@)", self.element, pattern];

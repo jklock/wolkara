@@ -37,8 +37,13 @@ typedef NS_ENUM(NSInteger, AKInputSource) {
 // Start watching. Safe to call more than once.
 - (void)begin;
 
-// Fired when a trigger is matched, once per activation.
+// Fired when a trigger is matched, once per activation. Toggle-style triggers
+// use this one.
 @property (nonatomic, copy, nullable) void (^onTrigger)(AKTrigger *trigger, AKInputEvent *event);
+// Push-to-talk triggers use these two instead: the first on press, the second
+// on release.
+@property (nonatomic, copy, nullable) void (^onTriggerBegan)(AKTrigger *trigger, AKInputEvent *event);
+@property (nonatomic, copy, nullable) void (^onTriggerEnded)(AKTrigger *trigger, AKInputEvent *event);
 
 // The device whose input should be remembered when learning finishes.
 - (void)beginLearning;

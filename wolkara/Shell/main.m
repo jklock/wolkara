@@ -214,6 +214,16 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
         fprintf(stderr,"[host] input trigger: %s\n", [trigger summary].UTF8String);
         [AKDictation.shared toggle];
     };
+    AKInputRouter.shared.onTriggerBegan = ^(AKTrigger *trigger, AKInputEvent *event) {
+        (void)event;
+        fprintf(stderr,"[host] input trigger began: %s\n", [trigger summary].UTF8String);
+        [AKDictation.shared begin];
+    };
+    AKInputRouter.shared.onTriggerEnded = ^(AKTrigger *trigger, AKInputEvent *event) {
+        (void)event;
+        fprintf(stderr,"[host] input trigger ended: %s\n", [trigger summary].UTF8String);
+        [AKDictation.shared end];
+    };
     [AKInputRouter.shared begin];
     if([arguments containsObject:@"--inspect-controller"]) {
         [AKControllerInspector.shared showPanel:YES];

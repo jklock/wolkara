@@ -10,6 +10,7 @@
 #endif
 
 #import "../Controller/ControllerInspector.h"
+#import "../Voice/VoiceSettings.h"
 
 static AKInputSource AKInputSourceFromName(NSString *name) {
     if ([name isEqualToString:@"keyboard"]) return AKInputSourceKeyboard;
@@ -175,6 +176,15 @@ static AKInputSource AKInputSourceFromName(NSString *name) {
             break;
         }
 
+        case AKTriggerPatternPushToTalk:
+            // Press starts it; the release below finishes it. Marked as consumed
+            // so the pair cannot overlap.
+            if (state.consumed) return;
+            state.consumed = YES;
+            AKIRLog(@"input: trigger %@ began from %@", [trigger summary], event);
+            if (self.onTriggerBegan) self.onTriggerBegan(trigger, event);
+            break;
+
         case AKTriggerPatternChord: {
             if (!trigger.chordElement.length) return;
             NSString *partner = [NSString stringWithFormat:@"%@|%@", event.device, trigger.chordElement];
@@ -188,8 +198,12 @@ static AKInputSource AKInputSourceFromName(NSString *name) {
 }
 
 - (void)handleRelease:(AKInputEvent *)event element:(NSString *)element key:(NSString *)key state:(AKInputElementState *)state {
-    (void)event;
-    (void)element;
+    AKTrigger *trigger = [self triggerForDevice:event.device];
+    if (state.consumed && trigger.pattern == AKTriggerPatternPushToTalk &&
+        [trigger watchesElement:element]) {
+        AKIRLog(@"input: trigger %@ ended from %@", [trigger summary], event);
+        if (self.onTriggerEnded) self.onTriggerEnded(trigger, event);
+    }
     state.down = NO;
     state.consumed = NO;
     state.pressedSince = 0;
@@ -204,18 +218,9 @@ static AKInputSource AKInputSourceFromName(NSString *name) {
 #pragma mark - Which trigger applies
 
 - (AKTrigger *)triggerForDevice:(nullable NSString *)device {
-    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
-
-    // 1. What the user chose for this controller, ever.
-    AKTrigger *chosen = [AKTrigger savedTriggerForVendor:device defaults:defaults];
-    if (chosen) return chosen;
-
-    // 2. A button iOS reserves, if this hardware declares one.
-    if (AKControllerInspector.shared.currentControllerDeclaresShare)
-        return [AKTrigger systemButtonTrigger];
-
-    // 3. A pattern on whatever the user presses next.
-    return [AKTrigger defaultTriggerForController:device];
+    // The choice, and what happens before one is made, both belong to the voice
+    // settings: they are what the user edits in the launcher.
+    return [AKVoiceSettings.shared triggerForDevice:device];
 }
 
 @end
