@@ -168,18 +168,31 @@ against observed events, and gaps in that table are findings too.
   either. `wantsPriorityOverSystemBehavior` (iOS 15+) is the documented way for an
   app to beat the system for a key, but it needs an input string to claim.
 
-### The one route left, and its cost
+### Confirmed on the device: Share reaches the app
 
-`UIApplicationUserDidTakeScreenshotNotification` (iOS 7+) is documented as
-*"posted after the user takes a screenshot"*. Since Share takes a screenshot,
-that notification is the only signal the system offers for this button, and the
-inspector now watches it and reports `Share (system screenshot)`.
+Both routes work, measured:
 
-- **If it fires**, Share is a working trigger, and the cost is one screenshot in
-  Photos per use.
-- **If it does not fire** for a controller-driven screenshot, then Share cannot
-  reach an app on iPadOS by any route, and the only remaining fix is the pad
-  declaring Share as a real button — a question for GameSir, not for code.
+```
+input: Share (system screenshot)        <- a short press
+```
+
+and, on the on-screen panel, `Share held (screen capture on)` — produced only by
+`UIScreenCapturedDidChangeNotification`, so a hold is visible too.
+
+| Press | What the system does | What reaches us |
+| --- | --- | --- |
+| Share, short | takes a screenshot | `UIApplicationUserDidTakeScreenshotNotification` |
+| Share, hold | starts screen capture | `UIScreenCapturedDidChangeNotification` |
+
+So the button is usable, through the system's own gesture: the press is spent on
+a screenshot, and the app is told the screenshot happened. The cost is one
+screenshot in Photos per use, which can be cleaned up afterwards with Photo
+Library access if that becomes annoying.
+
+`UIKeyInputPrintScreen` does not exist, so a key command cannot name the key, and
+`wantsPriorityOverSystemBehavior` (iOS 15+) has nothing to match against. Apple's
+documented opt-out — `preferredSystemGestureState` on `GCXboxGamepad.buttonShare`
+— cannot apply either, because this pad declares no Share element.
 
 ## Constraints this respects
 

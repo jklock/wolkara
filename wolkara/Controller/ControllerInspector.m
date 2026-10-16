@@ -135,6 +135,7 @@ static double const AKCIAxisBucket = 2.0;
             [self attachKeyboard:keyboard];
         }
     }
+    AKCILog(@"inspector: watching controller, keyboard, screenshot and capture");
 }
 
 - (void)describe:(GCController *)pad {
