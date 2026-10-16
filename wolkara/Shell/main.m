@@ -17,6 +17,7 @@
 #import "NativeGuest.h"
 #import "SignedFileProbe.h"
 #import "StartupActivity.h"
+#import "WolkaraConfig.h"
 #import "../Cloud/SteamCloudCoordinator.h"
 #include "HostDiagnostics.h"
 #include <errno.h>
@@ -199,6 +200,10 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     static BOOL started;
     if (started) return;
     started = YES;
+    // The user's choices, read back from the config file before anything asks for
+    // one: the edition, the language, the mapped button and the dictionary are all
+    // restored here rather than re-entered after an update. See WolkaraConfig.h.
+    [TKWolkaraConfig.shared load];
     NSArray<NSString *> *arguments=NSProcessInfo.processInfo.arguments;
     // Wolkara: report what the controller has and what it does, so pad input is
     // measured rather than assumed. It reads only, and never consumes an input.

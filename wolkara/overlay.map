@@ -12,13 +12,18 @@ wolkara/Shell/Assets.xcassets/Wolkara.appiconset/Contents.json launcher/Assets.x
 wolkara/Shell/Assets.xcassets/Wolkara.appiconset/Wolkara-dark.png launcher/Assets.xcassets/Wolkara.appiconset/Wolkara-dark.png add
 wolkara/Shell/Assets.xcassets/Wolkara.appiconset/Wolkara-default.png launcher/Assets.xcassets/Wolkara.appiconset/Wolkara-default.png add
 wolkara/Shell/Assets.xcassets/Wolkara.appiconset/Wolkara-tinted.png launcher/Assets.xcassets/Wolkara.appiconset/Wolkara-tinted.png add
+wolkara/Shell/Assets.xcassets/WolkaraLogo.imageset/Contents.json launcher/Assets.xcassets/WolkaraLogo.imageset/Contents.json add
+wolkara/Shell/Assets.xcassets/WolkaraLogo.imageset/WolkaraLogo.png launcher/Assets.xcassets/WolkaraLogo.imageset/WolkaraLogo.png add
 wolkara/Shell/ExecutionMode.h launcher/App/ExecutionMode.h replace
 wolkara/Shell/ExecutionMode.m launcher/App/ExecutionMode.m replace
 wolkara/Shell/Info.plist launcher/Info.plist replace
 wolkara/Shell/Integrated-Info.plist authorization/App/Integrated-Info.plist replace
+wolkara/Shell/WolkaraConfig.h launcher/App/WolkaraConfig.h add
+wolkara/Shell/WolkaraConfig.m launcher/App/WolkaraConfig.m add
 wolkara/Shell/artwork/dark.svg artwork/wolkara/dark.svg add
 wolkara/Shell/artwork/default.svg artwork/wolkara/default.svg add
 wolkara/Shell/artwork/tinted.svg artwork/wolkara/tinted.svg add
+wolkara/Shell/artwork/wolkara-logo.png artwork/wolkara/wolkara-logo.png add
 wolkara/Shell/main.m launcher/App/main.m replace
 wolkara/Shell/tests/test_execution_mode.m tests/test_execution_mode.m replace
 #
@@ -82,16 +87,18 @@ wolkara/Controller/ControllerInspector.m launcher/Controller/ControllerInspector
 wolkara/Controller/ControllerWindow.h launcher/Controller/ControllerWindow.h add
 wolkara/Controller/ControllerWindow.m launcher/Controller/ControllerWindow.m add
 #
-# Voice: what you say, turned into text in the game (Share to start and stop)
+# Voice: what you say, turned into text in the game
 wolkara/Voice/Dictation.h launcher/Voice/Dictation.h add
 wolkara/Voice/Dictation.m launcher/Voice/Dictation.m add
 wolkara/Voice/VoiceSettings.h launcher/Voice/VoiceSettings.h add
 wolkara/Voice/VoiceSettings.m launcher/Voice/VoiceSettings.m add
+wolkara/Voice/VoiceTestViewController.h launcher/Voice/VoiceTestViewController.h add
+wolkara/Voice/VoiceTestViewController.m launcher/Voice/VoiceTestViewController.m add
 wolkara/Voice/VoiceViewController.h launcher/Voice/VoiceViewController.h add
 wolkara/Voice/VoiceViewController.m launcher/Voice/VoiceViewController.m add
 #
 # Input: any button, on any controller, in one stream (see docs/INPUT_TRIGGERS.md)
-wolkara/Input/Trigger.h launcher/Input/Trigger.h add
-wolkara/Input/Trigger.m launcher/Input/Trigger.m add
 wolkara/Input/InputRouter.h launcher/Input/InputRouter.h add
 wolkara/Input/InputRouter.m launcher/Input/InputRouter.m add
+wolkara/Input/Trigger.h launcher/Input/Trigger.h add
+wolkara/Input/Trigger.m launcher/Input/Trigger.m add

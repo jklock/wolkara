@@ -28,7 +28,7 @@
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = @"Voice";
+    self.title = @"Key / Button Configuration";
     self.view.backgroundColor = UIColor.systemBackgroundColor;
 
     UIStackView *rows = [[UIStackView alloc] init];

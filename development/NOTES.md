@@ -154,3 +154,51 @@ and leaves it there showing the result. On a re-install with a valid pin that sc
 import rejected; no existing trust pin was replaced." - the success path, but it reads like a failure,
 and the app is left running, so the next launch is refused as "already running". Stop that process and
 launch the game: the enrolment is fine.
+
+## 2026-10-16: the launcher page, the config file, and a toolchain that looks before it steps
+
+The main page is now four labelled groups - Game edition, Add-ons, Voice manager - with the layer's
+mark where the wordmark used to be, and **Open Add-on Directory** opens Files at the same
+`Interface/AddOns` folder the Addon Manager installs into, via `UIDocumentPickerViewController` with
+`directoryURL` (there is no supported `shareddocuments://` route, and we are not using one).
+`LSSupportsOpeningDocumentsInPlace` was added beside the `UIFileSharingEnabled` the app already had,
+which is what makes `Documents` a Files location. The user's choices are mirrored to
+`Documents/wolkara-config.json` (`wolkara/Shell/WolkaraConfig.*`), so an update does not mean
+re-entering them; the CurseForge key stays in the keychain and is deliberately not in that file.
+
+### Three defects, all found by looking rather than by reasoning
+
+1. **The overlay was not regenerable.** `wolkara/tools/overlay_map.sh` had sections for Shell, WoW,
+   Touch and Bridge only. Running it produced a map *missing* Controller, Voice and Input - 64 entries
+   instead of 78 - so a regeneration would have quietly stopped `prepare.sh` copying three whole
+   modules. The committed map had been hand-extended to cover them. The generator now has all
+   sections, and `check_layers.sh` compares the committed map against what the generator produces, so
+   a hand-edited map cannot pass again. That check also used to truncate its layer listing with
+   `head -50`, hiding any orphan past the fiftieth file.
+2. **A constraint across view hierarchies aborts the app at launch.** `-markView` activated
+   `imageView.heightAnchor <= self.view.heightAnchor` while the image view was still unattached:
+   UIKit raises *no common ancestor*, `NSLayoutConstraint` throws, and the process aborts. Found in a
+   **system crash report**, not in the client's own `Errors/` folder - the app died before it wrote
+   anything of its own, which is why `Documents/Errors/` looked clean and a `pilot.sh` launch read as
+   successful. The cap is now switched on in `-viewDidLayoutSubviews`, when both ends have an
+   ancestor. Rule: a constraint that spans a subview and the controller's view cannot be activated
+   from the code that *creates* the subview.
+3. **`cycle` could never reach its own launch.** `install.sh` ends by enrolling, and enrolling starts
+   the app into its import mode; `launch` then refused because something was already running. The
+   pilot now stops what the install left behind, gracefully, before launching.
+
+### The toolchain, and the facts it is built on
+
+- `wolkara/tools/pilot.sh`: `state`, `stop`, `install`, `launch`, `game`, `wait`, `view`, `crash`,
+  `cycle`. It never passes `--terminate-existing`; it asks with SIGTERM, waits, and refuses to
+  escalate to SIGKILL unless asked in so many words; it judges a launch by a **new** error file *or* a
+  **new crash report** compared against a recorded baseline; and it does not call a stale guest-log
+  line success - the log outlives app restarts, so yesterday's `PASS` would otherwise read as today's.
+- `wolkara/tools/install.sh --build-only`: builds through the platform's own script with
+  `xcrun devicectl` made a no-op, so a compile error costs nothing. `--replace-running` no longer
+  escalates to SIGKILL by itself; that is `--force-kill`.
+- `devicectl` facts, each measured the hard way: `info files` has `--json-output` and its table wraps
+  dates mid-value, so never parse the table; `copy from` takes `--username` only for `info files`, not
+  for `copy`; a directory given to `--source` copies *nothing at all* and reports success, which reads
+  exactly like "no error file"; and crash reports live in the `systemCrashLogs` domain, not in the
+  app's container.
