@@ -156,7 +156,12 @@ run_step() {
 # wolkara/tools/known_platform_failures.txt says which of them are not the layer's doing.
 # Everything else still fails the run.
 known_failures=$(mktemp)
-sed 's/[[:space:]]*-.*//' wolkara/tools/known_platform_failures.txt | grep -E "^[a-zA-Z_]" | sort -u > "$known_failures"
+# A line is a test id, optionally commented out, then a dash and the reason. Commented
+# entries count: this list is meant to be readable as a document, and the first version of
+# it had the only real entry behind a `#`, so nothing matched and the platform's known
+# failure read as ours.
+sed -E 's/^[[:space:]]*#?[[:space:]]*//; s/[[:space:]]+(-|—).*$//' wolkara/tools/known_platform_failures.txt \
+    | grep -E '^[a-zA-Z_][a-zA-Z0-9_.]*$' | sort -u > "$known_failures"
 run_platform_suite() {
     local name=$1; shift
     printf '\n== %s\n' "$name"
@@ -188,7 +193,7 @@ run_platform_suite() {
         step_results+=("FAIL (exit $rc, $mine failure(s) not known to be the platform's)")
     fi
     step_bodies+=("$( { printf '%s\n' "known platform failures in this run: $theirs"; \
-        [ "$theirs" -gt 0 ] && sed 's/^/  /' wolkara/tools/known_platform_failures.txt | grep -E "^  [a-zA-Z_]"; \
+        [ "$theirs" -gt 0 ] && sed -E 's/^([[:space:]]*#?[[:space:]]*)/  \1/' wolkara/tools/known_platform_failures.txt | grep -E "^  [a-zA-Z_]"; \
         [ "$mine" -gt 0 ] && echo "failures that are not on that list:" && grep -E "^(FAIL|ERROR): " "$log"; \
         tail -18 "$log"; } 2>/dev/null | scrub)")
     printf '   %s\n' "${step_results[${#step_results[@]}-1]}"
