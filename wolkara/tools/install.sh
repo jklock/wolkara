@@ -160,8 +160,9 @@ fi
 # one small script that a test can drive with stubs in front of it. See
 # wolkara/tools/after_install.sh.
 step "3/5 after the install (mode: ${TOLKARA_MODE:-none})"
-WOLKARA_AFTER_INSTALL="$root/wolkara/tools/after_install.sh"
-"$WOLKARA_AFTER_INSTALL" "${TOLKARA_MODE:-}" || exit $?
+# $ROOT, from env.sh: this script has already cd'd into the prepared tree, so a relative
+# path would look for the layer inside build/platform.
+"$ROOT/wolkara/tools/after_install.sh" "${TOLKARA_MODE:-}"
 
 step "4/5 verify the app on the device"
 installed=$(xcrun devicectl device info apps --device "$DEVICE" 2>/dev/null | grep -i "$bundle" || true)
