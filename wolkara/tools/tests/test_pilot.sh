@@ -241,13 +241,14 @@ fi
 check "$wait_ok" "and must say that instead"
 unset WOLKARA_FAKE_PROCESSES
 
-# Two runs with no session given must not share one. They are named in the output so a
-# run can be found afterwards.
+# Two runs with no session given must not share one. They are named in the output so a run
+# can be found afterwards. PILOT_SESSION is cleared for these two: a caller that hands one
+# over - validate.sh does, so its steps are one run - is a different case from the default.
 ( cd "$root" && PATH="$work/bin:$PATH" DEVICE=FAKE TOLKARA_BUNDLE_ID=test.bundle \
-    "$pilot" state ) > "$work/out.txt" 2>&1
+    env -u PILOT_SESSION "$pilot" state ) > "$work/out.txt" 2>&1
 first=$(sed -n 's/^  session: *//p' "$work/out.txt" | head -1)
 ( cd "$root" && PATH="$work/bin:$PATH" DEVICE=FAKE TOLKARA_BUNDLE_ID=test.bundle \
-    "$pilot" state ) > "$work/out.txt" 2>&1
+    env -u PILOT_SESSION "$pilot" state ) > "$work/out.txt" 2>&1
 second=$(sed -n 's/^  session: *//p' "$work/out.txt" | head -1)
 [ -n "$first" ] && [ -n "$second" ] && [ "$first" != "$second" ]
 check $? "two runs must not share a session directory (got '$first' and '$second')"
