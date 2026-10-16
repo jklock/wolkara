@@ -392,6 +392,52 @@ with a stub `enroll.sh` and a stub `xcrun`.
   now says so where the button is chosen, and `INPUT_TRIGGERS.md` says so in its own section. What is
   no longer claimed is that a long press or a chord is free.
 
+## 2026-10-16, end: the remediation review, and what it found in the remediation
+
+The audit was updated with a review of the remediation itself (`1dec7d6`, `fe03af0`), and it
+found five more P1s - all of them in my own work, and all of them real.
+
+**A rejected config file could recurse until the stack ran out.** `rejectFileBecause:` copied
+the previous good copy over the primary and called `importFromFile` again. With a malformed
+primary beside a backup that was readable JSON but not a config file, that went round and
+round: both files sit in the user-editable Documents boundary. The copy is now validated
+against the same schema as any other file, applied directly rather than by re-reading, and
+attempted at most once per launch. The suite has the corpus case the review asked for.
+
+**A screenshot was still offered as a trigger.** I had made it opt-in, and the review is
+right that this is not enough: nothing in the notification says whether a pad or a thumb on
+the screen produced it, so mapping it only moves the guess to the user. The signal is now
+recorded in the log and reported to nobody; a stored mapping that points at one is refused,
+and one written by an earlier build is dropped with a line explaining it.
+
+**A timeout typed a partial transcript.** The deadline delivered whatever had been
+recognised so far, which contradicts the product's promise and can send half a sentence to
+the game's chat. It now delivers nothing and tells the user.
+
+**The audio session's active state was still changed.** `AVAudioSession` has no public way
+to ask whether it was active before we arrived, so exact restoration cannot be claimed. What
+is there now is a policy, named as one in the header and in `docs/VOICE.md`: category, mode
+and options are put back and the session is left active, because this is a foreground game
+host. Interruptions are handled - a call or anything else taking the audio ends the session
+instead of leaving the microphone open behind it.
+
+**The validation record combined a failed install with a passing log.** `fe03af0`'s manifest
+shows `pilot.sh cycle` failing and then a log step passing, and that log was written by an
+older build. A failed install now leaves the dependent log step `NOT RUN`, and the log step
+carries its own binding: `pilot.sh` counts the app's launch lines before launching and again
+afterwards, and says whether the log holds a launch from this run or an earlier one.
+
+Two P2s as well. Identical controllers share a mapping because GameController exposes no
+per-device identity - that was claimed as per-controller persistence and is now documented
+as per-model, with a log line when two pads of one model are connected. And the config write
+removed the primary before moving the temporary over the gap, so an interruption there left
+no config at all; it is an atomic replacement now, with the previous file kept as the copy
+the recovery path reads.
+
+Already fixed by the time the review was written: the concurrency boundary, which the review
+lists as P2. Every input report is delivered on the main queue - GameController does not
+promise a thread - and the router asserts it.
+
 ### Still open, and known
 
 - The app still ships no `LICENSE`/`NOTICE.md` (above), so the About page lists no licenses.

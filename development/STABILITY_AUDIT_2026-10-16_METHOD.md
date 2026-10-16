@@ -15,16 +15,20 @@ controller/voice/config/tooling conclusion:
 | `wolkara-pre-layer` | `02ec787` | Beginning of the Wolkara layer history |
 | `main` / `feature/wolkara-above-tolkara` | `1bb8d0f` | Completed merged layer work |
 | `controller` pre-home | `2190647` | Eleven controller/input/voice commits after main |
-| `controller` tip at review | `5b073ee` | Home, configuration, pilot, and integration work |
+| `controller` first reviewed tip | `5b073ee` | Home, configuration, pilot, and integration work |
+| `controller` remediation tip | `fe03af0` | Remediation, logging, fixtures, validation tooling, and documentation |
 
-The primary comparison was `1bb8d0f..5b073ee`, with a history review from
-`02ec787..5b073ee`. This means the conclusions include all committed work on
-`main` and then all committed `controller` work at the stated tip.
+The first comparison was `1bb8d0f..5b073ee`, with a history review from
+`02ec787..5b073ee`. The remediation review then used `5b073ee..fe03af0` and
+the complete current result `main..fe03af0`. This means the conclusions include
+all committed work on `main` and all committed `controller` work at the stated
+tip.
 
 The audit intentionally excludes uncommitted files and later changes. At the
-time this appendix was prepared, the checkout had modified voice/shell/WoW
-files and untracked Shell files. They must be reviewed against their own final
-commit; they are not evidence for or against the findings here.
+remediation review, the only observed uncommitted path was
+`development/validation/`, created by the candidate's validation command
+itself. That self-created dirtiness is a finding, not evidence that the
+candidate source was changed.
 
 ## Evidence collection
 
@@ -62,6 +66,23 @@ git show 5b073ee:wolkara/tools/apply.sh
 git diff --check wolkara-pre-layer..2190647
 ```
 
+The remediation review additionally used:
+
+```sh
+git log --oneline --decorate --graph --all -80
+git diff --stat 5b073ee..fe03af0
+git diff --name-status 5b073ee..fe03af0
+git diff --check 5b073ee..fe03af0
+git show --format=fuller --stat 1dec7d6
+git show --format=fuller --stat fe03af0
+sed -n '1,260p' development/validation/fe03af0.md
+wolkara/tools/check_layers.sh
+```
+
+Focused source review covered `WolkaraConfig.m`, `Dictation.m`,
+`ControllerInspector.m`, `InputRouter.m`, `Trigger.m`, `WolkaraLog.m`,
+`pilot.sh`, `validate.sh`, the new focused fixtures, and their documentation.
+
 The repository structural gate was also run:
 
 ```sh
@@ -79,6 +100,43 @@ from a proven-clean checkout pinned to `5b073ee`; accordingly they are not
 treated as release evidence in the audit.
 
 ## Finding-to-evidence map
+
+### Remediation review: remaining blockers at `fe03af0`
+
+The backup-recursion finding follows directly from `WolkaraConfig.m`:
+`rejectFileBecause:` accepts any dictionary-shaped `.bak`, writes it over the
+primary, and calls `importFromFile` again. An invalid backup therefore returns
+to the same rejection path with no recursion guard. The existing corpus checks
+invalid primary data but not invalid-primary plus invalid-backup recovery.
+
+The screenshot finding remains because `screenshotTaken:` emits an input and
+`markSystemDevice` assigns it to `GCController.controllers.firstObject`. The
+mapping is opt-in, but attribution remains impossible; a physical iPad
+screenshot and controller Share are indistinguishable at that API boundary.
+
+The partial-delivery finding follows from the finalization timeout calling
+`finishWithTranscript:nil`, which falls through to delivery of `_transcript`.
+The fixture's timeout expectation confirms that this is intentional current
+behavior, not a hypothetical scheduling race.
+
+The audio finding follows from the absence of an active-state snapshot and the
+unconditional `setActive:YES` in restore. It is a direct mismatch with the
+header and documentation promise, whether or not a specific route exhibits an
+audible fault.
+
+The validation finding is recorded in `development/validation/fe03af0.md`:
+the manifest says its initial tree was clean, then its own output directory
+makes later prepare/build commands dirty; `pilot.sh cycle` fails; and a later
+app-log step passes by reading the already-installed app. That log includes a
+screen-capture Share line removed by the reviewed source, proving it is not
+evidence of the candidate running. The device result is therefore failed, not
+partially passed.
+
+The identical-controller and concurrency findings come from the source-level
+identity construction and mutable callback state. They require physical-device
+and stress confirmation to quantify impact, but the implementation cannot
+deliver its claimed independent identical-controller mappings or prove safe
+cross-queue mutation as written.
 
 ### P1: screenshot can toggle voice
 

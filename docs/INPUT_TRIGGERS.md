@@ -7,7 +7,8 @@ that makes it work for whatever the user plugs in.
 on and pressed the button they want; until then the router is given no trigger at all and
 the inspector changes nothing about the pad. The 2026-10-16 audit's first release blocker
 was a path where an unrelated screenshot could start the microphone, and the answer is
-this rule rather than a better guess about who pressed what.
+this rule rather than a better guess about who pressed what - which is also why the
+screenshot signal is not a trigger at all.
 
 ## Why
 
@@ -107,12 +108,24 @@ because the client binds single presses only.
 There is no fallback. For a device the user has mapped:
 
 1. The element they chose, as a canonical id (`controller.button.share`,
-   `keyboard.key.36`, `system.screenshot`).
+   `keyboard.key.36`).
 2. If that element is a controller button iOS reserves, its system gesture is released
    for that button on that controller - and only then, and given back when the mapping is
    removed, when voice is switched off, or when the pad goes away.
 3. Nothing else. An unmapped device fires nothing, and no element of a pad is touched
    before the user asks.
+
+**System signals are not in that list.** A screenshot and a screen-capture change are
+recorded in the log and offered to nobody. iPadOS does not say which pad produced the key
+that became the screenshot, so treating one as a button press is a guess - and offering it
+for the user to map only moves the guess to them. The element ids for both exist
+(`system.screenshot`, `system.capture`) because the log needs names, and nothing can be
+stored pointing at them.
+
+Mappings are remembered per controller *model*: `AKControllerIdentity` is vendor and
+product category, and GameController exposes no serial number. Two identical pads are
+indistinguishable to this app and share one mapping; the log says so when that is what is
+connected.
 
 Element names are ids from `wolkara/Input/InputElement.h`, never display text. Display
 text was a bad key in three ways: the system's screenshot signal was called `Share`

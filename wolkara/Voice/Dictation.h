@@ -100,7 +100,10 @@ typedef NS_ENUM(NSInteger, AKDictationState) {
 /// session are used.
 @property (nonatomic, strong, nullable) id<AKDictationSpeech> speech;
 @property (nonatomic, strong, nullable) id<AKDictationAudio> audio;
-/// How long to wait for the recogniser's last words after the audio ends.
+/// How long to wait for the recogniser's last words after the audio ends. If they do not
+/// arrive in that time, nothing is typed and the user is told: what would otherwise be
+/// delivered is a partial result, and half a sentence in the game's chat box is worse than
+/// an empty one.
 @property (nonatomic) NSTimeInterval finalizeTimeout;
 
 @end

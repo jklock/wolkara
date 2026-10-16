@@ -2,21 +2,130 @@
 
 **Status: do not release as stable.**
 
-Read-only audit recorded 2026-10-16 for the next implementation agent.
+Read-only audit recorded 2026-10-16 and updated after remediation review.
 Scope is every committed change from `wolkara-pre-layer` (`02ec787`) through
-the `controller` tip `5b073ee`.
+the current `controller` tip `fe03af0`.
 
 - `main` and `feature/wolkara-above-tolkara` both stop at `1bb8d0f`.
 - `controller` adds eleven controller/voice commits through `2190647`, then
   `5b073ee` for the home screen, configuration persistence, pilot tooling, and
-  integration.
+  integration, plus remediation commits `1dec7d6` and `fe03af0`.
 - Do not silently apply this audit to future uncommitted work.
 
 The layer split is a good structural direction: pristine vendored `platform/`,
 small patches, an overlay map, wrappers, and a gate are safer than the prior
-fork. That does **not** make the application release-ready. The new
-controller/voice path can activate unexpectedly, lacks focused test coverage,
-and has no final exact-SHA validation.
+fork. That does **not** make the application release-ready. The remediation
+adds useful focused fixtures and fixes several original findings, but the
+remaining blockers below are sufficient to keep the release status unchanged.
+
+## Remediation review: `1dec7d6` and `fe03af0`
+
+The following original items are materially improved: voice is off by default;
+there is no fallback trigger; canonical element IDs replace display text; Share
+system gestures are released only for a mapped controller element; mapping
+timeout cancels; on-device recognition is required; mode-specific post-install
+work is split; and focused voice/config/tooling fixtures were added. The layer
+gate passes.
+
+Those changes are not a stable-release pass. The remediation itself leaves the
+following blockers.
+
+### P1: a rejected primary config can recurse through a rejected backup and crash
+
+`rejectFileBecause:` copies `.bak` over the primary and calls `importFromFile`
+again whenever the backup parses as a dictionary
+(`wolkara/Shell/WolkaraConfig.m:266-282`). It does not validate that backup
+against the schema first and has no one-attempt guard. A malformed primary plus
+an invalid-but-JSON `.bak` repeats this path until stack exhaustion. Both files
+are reachable from the user-editable Documents import boundary.
+
+Required fix: validate the backup before restoring it, attempt fallback at most
+once, and retain/report invalid snapshots without recursively importing them.
+Add a corpus case containing invalid primary and invalid backup; it must launch
+without recursion, data loss, or a crash.
+
+### P1: `system.screenshot` remains an untrustworthy voice trigger
+
+The default fallback is gone, but `screenshotTaken:` still reports
+`system.screenshot` (`ControllerInspector.m:117-125`) and `markSystemDevice`
+attributes it to the first connected controller (`ControllerInspector.m:144-150`).
+iPadOS does not reveal whether a controller or the user took the screenshot.
+If that system signal is deliberately mapped, an ordinary iPad screenshot can
+still start dictation for that controller.
+
+Required fix: do not offer or persist screenshot as a voice trigger unless a
+controller-specific event is available. A user mapping a signal does not make
+an un-attributable system notification safe.
+
+### P1: timeout delivers partial speech despite the final-transcript promise
+
+After the final-result deadline, `end` calls `finishWithTranscript:nil`
+(`wolkara/Voice/Dictation.m:282-294`). That delivers `_transcript`, which holds
+the latest partial result (`Dictation.m:309-335`). The focused fixture
+explicitly expects this behavior. It contradicts `docs/VOICE.md`'s claim that
+voice will not deliver a half transcript and can type/send incomplete chat.
+
+Required fix: on final-result timeout cancel without insertion and show an
+actionable error, or introduce an explicit, off-by-default user policy for
+partial delivery. Do not describe partial fallback as final recognition.
+
+### P1: audio-session active state is still changed
+
+`AKAudioSessionBridge` snapshots category, mode, and options, but no active
+state (`Dictation.m:123-140`). `restore` unconditionally calls
+`setActive:YES` (`Dictation.m:143-155`). This is not restoration of the
+previous session and can leave game/background audio active when it was not.
+
+Required fix: preserve the actual pre-dictation ownership/activation contract,
+including interruptions and route behavior, or use an audio-session policy
+whose documented, tested result does not claim exact restoration.
+
+### P1: generated validation falsely combines a failed install with a passing device log
+
+`validate.sh` checks cleanliness, then creates its output under
+`development/validation/` before invoking commands that run `prepare.sh`
+(`wolkara/tools/validate.sh:43-65,115-134`). It therefore dirties its own
+checkout. Its `fe03af0` manifest records a failed device install (`pilot.sh
+cycle`, exit 2) but subsequently runs `pilot.sh log` and records that stale log
+as PASS. That log contains old unsafe `Share held (screen capture on)` output,
+not proof that `fe03af0` ran.
+
+Required fix: collect transient validation output outside the checkout; only
+publish a manifest after all steps finish. Fail fast after install/launch
+failure and mark dependent device checks `NOT RUN`. Bind console/log evidence
+to the launched build ID and process launch, not merely to an app container.
+
+### P2: identical controllers still share a mapping identity
+
+`AKControllerIdentity` is vendor plus product category
+(`wolkara/Controller/ControllerInspector.m:43-46`). Two identical controllers
+therefore share one defaults key, despite the header claiming two pads are
+distinct. This can make one user's mapping alter another controller's behavior.
+
+Required fix: use a stable per-device identifier when GameController provides
+one; otherwise document and implement a safe per-model policy rather than
+claiming per-controller persistence.
+
+### P2: input state has no concurrency boundary
+
+GameController handlers mutate inspector/router state while delayed long-press
+work runs on the main queue (`ControllerInspector.m:450-474`,
+`Input/InputRouter.m:47-56,255-271`). No serial queue or main-thread assertion
+protects `_states`, `_down`, current-device fields, or learning state.
+
+Required fix: funnel every input event and mapping operation through one serial
+queue (or the main queue), then add a stress test and physical-controller test
+for concurrent/repeated input.
+
+### P2: config write is not atomic
+
+The code writes a temporary file, removes the primary, then moves the temporary
+file (`WolkaraConfig.m:359-376`). A termination or move failure between removal
+and move leaves no primary config; first-run users have no backup to recover.
+
+Required fix: use an atomic replacement API that preserves the old file until
+the new file is committed, fsync as appropriate, and test interruption/failure
+recovery.
 
 ## Release blockers (P1)
 
@@ -245,8 +354,10 @@ clean those without changing intentionally byte-identical vendored platform.
 ## Exit criteria
 
 Do not call the app stable until all P1 items are fixed and tested; voice is
-explicitly enabled; system/controller behavior is never changed without a user
-choice; dictation emits exactly one final transcript and restores audio state;
-install behavior is correct for every execution mode; release evidence comes
-from a clean exact SHA; and the physical-iPad matrix passes repeatedly without
-new app crashes, game error files, data loss, or orphaned input/audio state.
+explicitly enabled; no ambiguous system notification can start it; dictation
+emits exactly one final transcript and preserves the documented audio-session
+contract; config rejection/recovery cannot recurse or lose data; install
+behavior is correct for every execution mode; release evidence comes from a
+clean exact SHA that was actually installed; and the physical-iPad matrix passes
+repeatedly without new app crashes, game error files, data loss, or orphaned
+input/audio state.

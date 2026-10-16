@@ -22,8 +22,12 @@
 #import "../launcher/Input/Trigger.h"
 #import "../launcher/Voice/Dictation.h"
 #import "../launcher/Voice/VoiceSettings.h"
+#import "../launcher/Voice/VoiceViewController.h"
+#import "../launcher/Voice/VoiceTestViewController.h"
 #import "../launcher/Controller/ControllerInspector.h"
 #import "../launcher/App/WolkaraConfig.h"
+
+#import <AVFAudio/AVFAudio.h>
 #import "../launcher/App/WolkaraLog.h"
 
 static NSUInteger checks, failures;
@@ -42,6 +46,17 @@ static void Pump(NSTimeInterval seconds) {
     while (until.timeIntervalSinceNow > 0)
         [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode
                                  beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
+}
+
+// A view by the identifier the page gives it, so the test asks for what a person taps
+// rather than for an ivar.
+static UIView *Find(UIView *view, NSString *identifier) {
+    if ([view.accessibilityIdentifier isEqualToString:identifier]) return view;
+    for (UIView *child in view.subviews) {
+        UIView *match = Find(child, identifier);
+        if (match) return match;
+    }
+    return nil;
 }
 
 #pragma mark - The two fakes
@@ -308,12 +323,27 @@ static void TestLearning(void) {
     [NSNotificationCenter.defaultCenter postNotificationName:UIApplicationDidEnterBackgroundNotification object:nil];
     CHECK((!router.learning), @"going to the background disarms the mapper");
 
+    // And so does the pad going away: the element being learned no longer exists.
+    [router beginLearning];
+    [NSNotificationCenter.defaultCenter postNotificationName:GCControllerDidDisconnectNotification object:nil];
+    CHECK((!router.learning), @"a controller leaving disarms the mapper");
+
+    // But a pad arriving must not. It connects a moment after launch on real hardware,
+    // and cancelling then would make mapping impossible - measured in this fixture.
+    [router beginLearning];
+    [NSNotificationCenter.defaultCenter postNotificationName:GCControllerDidConnectNotification object:nil];
+    CHECK((router.learning), @"a controller arriving leaves the mapper armed");
+    [router cancelLearning];
+
     router.onLearned = nil;
     for (NSString *key in defaults.dictionaryRepresentation.allKeys)
         if ([key hasPrefix:@"AKInputTrigger."]) [defaults removeObjectForKey:key];
 }
 
-// The audit's first release blocker, tested from the system signal inwards.
+// A screenshot is not attributable to a controller, so it is not a voice trigger and cannot
+// be stored as one. The remediation review's point: offering it for the user to map only
+// moves the guess to them, because nothing in the notification says whether a pad or a
+// thumb on the screen produced it.
 static void TestScreenshotIsolation(void) {
     NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
     for (NSString *key in defaults.dictionaryRepresentation.allKeys)
@@ -342,34 +372,33 @@ static void TestScreenshotIsolation(void) {
 
     settings.enabled = NO;
     [NSNotificationCenter.defaultCenter postNotificationName:UIApplicationUserDidTakeScreenshotNotification object:nil];
+    Pump(0.1);
     CHECK((speech.starts == 0), @"a screenshot must not start dictation while the feature is off");
 
     settings.enabled = YES;
     [NSNotificationCenter.defaultCenter postNotificationName:UIApplicationUserDidTakeScreenshotNotification object:nil];
-    CHECK((speech.starts == 0), @"nor while it is on but nothing is mapped");
+    Pump(0.1);
+    CHECK((speech.starts == 0), @"nor with it on and a controller mapped, because it is not an input at all");
 
-    // The capture notification is never an input, whatever the state.
     [NSNotificationCenter.defaultCenter postNotificationName:UIScreenCapturedDidChangeNotification object:nil];
+    Pump(0.1);
     CHECK((speech.starts == 0), @"and neither must a screen capture");
 
-    // Mapped deliberately, it does fire: that is the opt-in the audit asked for. The
-    // mapping is made against the device the inspector will attribute the signal to,
-    // which is the connected pad when there is one - the simulator always has one.
-    settings.mode = AKVoiceModeToggle;
-    GCController *connected = GCController.controllers.firstObject;
-    NSString *systemDevice = connected ? AKControllerIdentity(connected) : @"system";
-    [settings setLearnedElement:AKInputElementSystemScreenshot() forDevice:systemDevice];
-    [NSNotificationCenter.defaultCenter postNotificationName:UIApplicationUserDidTakeScreenshotNotification object:nil];
-    CHECK((speech.starts == 1), @"a screenshot the user mapped does start it, got %lu", (unsigned long)speech.starts);
+    // It cannot be stored as a mapping either.
+    CHECK(([AKTrigger triggerFromStored:@{@"element": @"system.screenshot", @"pattern": @0}] == nil),
+          @"a system signal must not be storable as a voice trigger");
 
-    // And the capture still does not, even with a mapping in place.
-    [NSNotificationCenter.defaultCenter postNotificationName:UIScreenCapturedDidChangeNotification object:nil];
-    CHECK((speech.starts == 1), @"but a screen capture never does");
+    // And a mapping left by an earlier build is dropped rather than resurrected. A user who
+    // pressed a button to map it did choose something, but what they chose cannot be told
+    // apart from a thumb on the screen, so it goes - loudly, so the log explains it.
+    [defaults setObject:@{@"element": @"Share", @"pattern": @0} forKey:@"AKInputTrigger.pad"];
+    NSUInteger dropped = [AKTrigger migrateStoredTriggersInDefaults:defaults];
+    CHECK((dropped == 1), @"a stored system mapping is removed, got %lu", (unsigned long)dropped);
+    CHECK(([defaults dictionaryForKey:@"AKInputTrigger.pad"] == nil), @"and is gone from the database");
+    CHECK(([settings triggerForDevice:@"pad"] == nil), @"so nothing is left to fire");
 
-    [dictation cancel];
     settings.enabled = NO;
-    for (NSString *key in defaults.dictionaryRepresentation.allKeys)
-        if ([key hasPrefix:@"AKInputTrigger."]) [defaults removeObjectForKey:key];
+    dictation.transcriptHandler = nil;
 }
 
 static void TestDictation(void) {
@@ -426,15 +455,31 @@ static void TestDictation(void) {
     [speech say:@"hello world again" final:YES];
     CHECK((heard.count == 1), @"exactly once, even if the recogniser says so twice");
 
-    // If the last words never come, what was heard is delivered, once, after the wait.
+    // If the last words never come, nothing is delivered and the user is told. What is in
+    // hand is a partial result; the product promises a final transcript, and half a sentence
+    // in the game's chat box - sent, if auto-submit is on - is worse than none.
     [heard removeAllObjects];
+    problem = nil;
+    NSUInteger restoresBefore = audio.restores;
     [dictation begin];
     [speech say:@"half a sentence" final:NO];
     [dictation end];
     Pump(0.6);
-    CHECK((heard.count == 1 && [heard.firstObject isEqualToString:@"half a sentence"]),
-          @"a recogniser that never finishes is timed out, got %@", heard);
-    CHECK((dictation.state == AKDictationStateIdle), @"and the session still ends");
+    CHECK((heard.count == 0), @"a recogniser that never finishes must not have a partial delivered, got %@", heard);
+    CHECK((problem.length > 0), @"and the user is told why nothing happened");
+    CHECK((dictation.state == AKDictationStateIdle), @"and the session ends");
+    CHECK((audio.restores > restoresBefore), @"with the audio session given back");
+
+    // Something else taking the audio ends the session rather than leaving the microphone
+    // open behind a session we no longer own.
+    [heard removeAllObjects];
+    [dictation begin];
+    [speech say:@"interrupted" final:NO];
+    [NSNotificationCenter.defaultCenter postNotificationName:AVAudioSessionInterruptionNotification
+                                                      object:nil
+                                                    userInfo:@{AVAudioSessionInterruptionTypeKey: @(AVAudioSessionInterruptionTypeBegan)}];
+    CHECK((dictation.state == AKDictationStateIdle), @"an interruption ends the session");
+    CHECK((heard.count == 0), @"and delivers nothing");
 
     // Repeated triggers while it is already listening are the same press.
     [heard removeAllObjects];
@@ -573,6 +618,186 @@ static void TestConfigCorpus(void) {
     CHECK((roundTrip == nil), @"and nothing in it is refused, got %@", roundTrip);
 }
 
+// The two pages, and what they do to dictation when they come and go.
+//
+// The audit's finding here: the test screen replaces AKDictation's handlers globally, so
+// every path that takes the screen away has to put them back - and a transcript that
+// arrives after it is gone must not land in the game's chat box.
+static void TestVoiceScreens(UIWindow *window) {
+    UIViewController *host = [UIViewController new];
+    UINavigationController *navigation = [[UINavigationController alloc] initWithRootViewController:host];
+    window.rootViewController = navigation;
+    [window makeKeyAndVisible];
+    [window layoutIfNeeded];
+
+    AKDictation *dictation = AKDictation.shared;
+    FakeSpeech *speech = [FakeSpeech new];
+    FakeAudio *audio = [FakeAudio new];
+    dictation.speech = speech;
+    dictation.audio = audio;
+    AKVoiceSettings.shared.enabled = NO;
+    AKVoiceSettings.shared.mode = AKVoiceModeHold;
+
+    // --- the settings page
+    AKVoiceViewController *settings = [AKVoiceViewController new];
+    [navigation pushViewController:settings animated:NO];
+    Pump(0.2);
+    UISwitch *enabled = (id)Find(settings.view, @"voice.enabled");
+    CHECK((enabled != nil), @"the settings page has the switch that turns voice on");
+    CHECK((enabled.on == AKVoiceSettings.shared.enabled), @"and it shows the setting");
+    UILabel *mapping = (id)Find(settings.view, @"voice.mapping");
+    CHECK((mapping.text.length > 0), @"and it says what is mapped, got nothing");
+    CHECK((Find(settings.view, @"voice.map") != nil), @"and it has the Map button");
+    // Leaving the page must not leave the mapper armed.
+    [AKInputRouter.shared beginLearning];
+    [navigation popViewControllerAnimated:NO];
+    Pump(0.2);
+    CHECK((!AKInputRouter.shared.learning), @"leaving the settings page disarms the mapper");
+
+    // --- the test screen
+    AKVoiceTestViewController *page = [AKVoiceTestViewController new];
+    [navigation pushViewController:page animated:NO];
+    Pump(0.2);
+    CHECK((dictation.transcriptHandler != nil), @"the test screen claims the words while it is up");
+    CHECK((dictation.listeningChanged != nil && dictation.stateChanged != nil && dictation.problemHandler != nil),
+          @"and the state, the microphone changes and the problems");
+
+    // A result that arrives after the screen has gone must not be typed into the game.
+    // This is the hazard the audit named: the recogniser can call back once more after
+    // the screen has taken its handlers away, and the words would land in the game's
+    // chat box on the way out.
+    FakeGameTextView *target = [FakeGameTextView new];
+    [AKDictation setGameTextTarget:target];
+    [dictation begin];
+    Pump(0.1);
+    CHECK((dictation.state == AKDictationStateListening), @"the test screen can start a session");
+    void (^inFlight)(NSString *, BOOL, NSError *) = speech.handler;
+    CHECK((inFlight != nil), @"and the recogniser has somewhere to report");
+    [navigation popViewControllerAnimated:NO];
+    Pump(0.2);
+    CHECK((dictation.transcriptHandler == nil && dictation.listeningChanged == nil &&
+           dictation.stateChanged == nil && dictation.problemHandler == nil),
+          @"and lets go of every handler when it goes away");
+    CHECK((dictation.state == AKDictationStateIdle), @"and stops the microphone on the way out");
+    if (inFlight) inFlight(@"too late", YES, nil);
+    CHECK((target.inserts == 0), @"so a result in flight when the screen left is dropped");
+    CHECK((dictation.state == AKDictationStateIdle), @"and the session stays over");
+
+    // With voice off, the screen says so rather than looking ready.
+    AKVoiceSettings.shared.enabled = NO;
+    [navigation pushViewController:page animated:NO];
+    Pump(0.2);
+    UILabel *button = (id)Find(page.view, @"voice.test.button");
+    CHECK(([button.text containsString:@"switched off"]), @"the test screen says when voice is off, got %@", button.text);
+    [navigation popViewControllerAnimated:NO];
+    Pump(0.2);
+
+    [AKDictation setGameTextTarget:nil];
+    dictation.transcriptHandler = nil;
+    dictation.listeningChanged = nil;
+    dictation.stateChanged = nil;
+    dictation.problemHandler = nil;
+}
+
+// The parts of the file's life that only happen when something is wrong: a file that was
+// cut off halfway, a write that cannot happen, and the previous good copy.
+static void TestConfigRecovery(void) {
+    TKWolkaraConfig *config = TKWolkaraConfig.shared;
+    NSFileManager *files = NSFileManager.defaultManager;
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    NSString *directory = config.path.stringByDeletingLastPathComponent;
+
+    // A good file, copied aside, then cut off halfway: the previous copy is used and the
+    // refused file is kept rather than overwritten by the next save.
+    [defaults setObject:@"us" forKey:@"WoWRegion"];
+    [config save];
+    [files removeItemAtPath:config.backupPath error:NULL];
+    [files copyItemAtPath:config.path toPath:config.backupPath error:NULL];
+    [defaults removeObjectForKey:@"WoWRegion"];
+    [@"{\"version\": 1, \"settings\": {\"WoWRegion\": \"e" writeToFile:config.path
+                                                            atomically:YES
+                                                              encoding:NSUTF8StringEncoding
+                                                                 error:NULL];
+    [config reloadFromFile];
+    CHECK(([files fileExistsAtPath:config.rejectedPath]), @"a file that cannot be read is kept, not lost");
+    CHECK(([[defaults stringForKey:@"WoWRegion"] isEqualToString:@"us"]),
+          @"and the previous good copy is used, got %@", [defaults stringForKey:@"WoWRegion"]);
+
+    // A partial file with no copy to fall back on: nothing is applied and nothing is lost.
+    [files removeItemAtPath:config.backupPath error:NULL];
+    [defaults setObject:@"eu" forKey:@"WoWRegion"];
+    [@"{\"version\": 1" writeToFile:config.path atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+    [config reloadFromFile];
+    CHECK(([[defaults stringForKey:@"WoWRegion"] isEqualToString:@"eu"]),
+          @"a file that cannot be read changes nothing");
+    CHECK((config.lastImportProblem.length > 0), @"and it says what was wrong with it");
+
+    // A file with one bad value and one good one keeps the good one and reports the bad.
+    [config save];
+    [files removeItemAtPath:config.backupPath error:NULL];
+    NSDictionary *mixed = @{@"version": @1, @"settings": @{@"WoWRegion": @"kr", @"AKVoiceMode": @77}};
+    [[NSJSONSerialization dataWithJSONObject:mixed options:0 error:NULL] writeToFile:config.path atomically:YES];
+    [config reloadFromFile];
+    CHECK(([[defaults stringForKey:@"WoWRegion"] isEqualToString:@"kr"]), @"a valid value beside an invalid one is applied");
+    CHECK((config.lastImportProblem.length > 0), @"and the invalid one is reported");
+
+    // A write that cannot happen leaves the file it could not replace intact.
+    [config save];
+    NSData *before = [NSData dataWithContentsOfFile:config.path];
+    [files setAttributes:@{NSFilePosixPermissions: @(0500)} ofItemAtPath:directory error:NULL];
+    [defaults setObject:@"tw" forKey:@"WoWRegion"];
+    [config save];
+    NSData *after = [NSData dataWithContentsOfFile:config.path];
+    [files setAttributes:@{NSFilePosixPermissions: @(0755)} ofItemAtPath:directory error:NULL];
+    CHECK((before.length > 0 && [before isEqualToData:after]),
+          @"a write that fails must leave the previous file whole");
+
+    // And the file is healthy again once it can be written.
+    [config save];
+    CHECK(([NSData dataWithContentsOfFile:config.path].length > 0), @"and it writes again when it can");
+    [config reloadFromFile];
+    CHECK((config.lastImportProblem == nil), @"with nothing left to complain about, got %@", config.lastImportProblem);
+    [defaults removeObjectForKey:@"WoWRegion"];
+}
+
+// A malformed file beside an unusable copy, which is the case the remediation review
+// named: both are reachable from the user-editable Documents boundary, and the first
+// version copied the copy over the file and read it again - round and round until the stack
+// ran out. Reaching the end of this function without a crash is most of the test.
+static void TestConfigRecursion(void) {
+    TKWolkaraConfig *config = TKWolkaraConfig.shared;
+    NSFileManager *files = NSFileManager.defaultManager;
+    NSDictionary *good = @{@"version": @1, @"settings": @{@"WoWRegion": @"eu"}};
+
+    // A primary that is cut off halfway, and a copy that is cut off the same way.
+    [@"{\"version\": 1, \"settings\": {\"WoWRegion\": \"e" writeToFile:config.path
+                                                             atomically:YES
+                                                               encoding:NSUTF8StringEncoding
+                                                                  error:NULL];
+    [files removeItemAtPath:config.backupPath error:NULL];
+    [@"{\"version\": 1, \"settings\": {\"WoWRegion\": \"e" writeToFile:config.backupPath
+                                                             atomically:YES
+                                                               encoding:NSUTF8StringEncoding
+                                                                  error:NULL];
+    [config reloadFromFile];
+    CHECK((config.lastImportProblem.length > 0), @"a bad file beside a bad copy is reported");
+    CHECK(([NSData dataWithContentsOfFile:config.path].length > 0), @"and it leaves a file on disk");
+
+    // A copy that is valid JSON and still not a config file.
+    [files removeItemAtPath:config.backupPath error:NULL];
+    [@"[1, 2, 3]" writeToFile:config.backupPath atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+    [config reloadFromFile];
+    CHECK((config.lastImportProblem.length > 0), @"a copy that is JSON but not our JSON is refused too");
+
+    // And the file the app writes is still one it can read.
+    [files removeItemAtPath:config.backupPath error:NULL];
+    [config save];
+    CHECK(([NSData dataWithContentsOfFile:config.path].length > 0), @"the app writes its own file again");
+    [config reloadFromFile];
+    CHECK((config.lastImportProblem == nil), @"and reading it is clean, got %@", config.lastImportProblem);
+    (void)good;
+}
+
 #pragma mark - Running them
 
 @interface TestDelegate : UIResponder <UIWindowSceneDelegate>
@@ -599,7 +824,10 @@ static void TestConfigCorpus(void) {
     TestScreenshotIsolation();
     TestDictation();
     TestTypingIntoTheGame();
+    TestVoiceScreens(self.window);
     TestConfigCorpus();
+    TestConfigRecovery();
+    TestConfigRecursion();
 
     if (failures == 0) {
         printf("VOICE PASS: %lu checks\n", (unsigned long)checks);
