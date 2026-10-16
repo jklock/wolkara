@@ -9,11 +9,18 @@
 
 #import "Dictation.h"
 
+#import "../App/WolkaraLog.h"
+
+// Two channels on purpose. AKLog is the platform's own line, which is what a
+// console run shows and what a guest run lands in native-guest.log; WKLog is the
+// layer's file, which is what is still there afterwards. A dictation failure that
+// only ever reached stderr was invisible from the Mac unless the app happened to
+// have been launched with a console attached.
 #if __has_include("AKSupport.h")
 #import "AKSupport.h"
-#define AKDLog(...) AKLog(__VA_ARGS__)
+#define AKDLog(...) do { AKLog(__VA_ARGS__); WKLog("voice", __VA_ARGS__); } while (0)
 #else
-#define AKDLog(...) NSLog(@"[ak] %@", [NSString stringWithFormat:__VA_ARGS__])
+#define AKDLog(...) do { NSLog(@"[ak] %@", [NSString stringWithFormat:__VA_ARGS__]); WKLog("voice", __VA_ARGS__); } while (0)
 #endif
 
 #import <AVFAudio/AVFAudio.h>

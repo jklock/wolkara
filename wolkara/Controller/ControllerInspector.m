@@ -13,11 +13,17 @@
 
 #import "ControllerInspector.h"
 
+#import "../App/WolkaraLog.h"
+
+// Both channels: the platform's line, which is what a console run and a guest run
+// show, and the layer's file, which is what is left afterwards. What the pad
+// actually reports is the whole subject of this file, so it belongs in the file that
+// is still readable a minute later.
 #if __has_include("AKSupport.h")
 #import "AKSupport.h"
-#define AKCILog(...) AKLog(__VA_ARGS__)
+#define AKCILog(...) do { AKLog(__VA_ARGS__); WKLog("input", __VA_ARGS__); } while (0)
 #else
-#define AKCILog(...) NSLog(@"[ak] %@", [NSString stringWithFormat:__VA_ARGS__])
+#define AKCILog(...) do { NSLog(@"[ak] %@", [NSString stringWithFormat:__VA_ARGS__]); WKLog("input", __VA_ARGS__); } while (0)
 #endif
 
 #import <GameController/GameController.h>
@@ -107,9 +113,19 @@ static double const AKCIAxisBucket = 2.0;
     (void)notification;
     _currentDevice = GCController.controllers.firstObject.vendorName ?: @"System";
     _currentSourceName = @"system";
-    AKCILog(@"inspector: screen capture changed, captured=%d", UIScreen.mainScreen.isCaptured);
-    [self reportLine:[NSString stringWithFormat:@"Share held (screen capture %@)", UIScreen.mainScreen.isCaptured ? @"on" : @"off"]
-              element:@"Share" value:(UIScreen.mainScreen.isCaptured ? 1 : 0) pressed:UIScreen.mainScreen.isCaptured];
+    BOOL captured = UIScreen.mainScreen.isCaptured;
+    AKCILog(@"inspector: screen capture changed, captured=%d", captured);
+    // Recorded, never reported as input.
+    //
+    // This used to go through reportLine: as "Share held", on the reasoning that
+    // iPadOS spends the pad's Share hold on screen recording, so seeing a capture
+    // start meant Share was held. That is only true when the pad started it, and
+    // this notification cannot tell us who did. Measured on 2026-10-16: with the
+    // iPad being captured from a Mac, `isCaptured` was already 1, the change fired
+    // about a tenth of a second after every launch, and the launcher started
+    // dictating by itself - six times in one log, with nobody touching anything.
+    // The device's own log is what showed it, which is why the line is kept.
+    [self recordLine:[NSString stringWithFormat:@"Share held (screen capture %@)", captured ? @"on" : @"off"]];
 }
 
 - (void)padsChanged:(NSNotification *)notification {
@@ -334,8 +350,15 @@ static double const AKCIAxisBucket = 2.0;
 }
 
 - (void)reportLine:(NSString *)line element:(NSString *)element value:(double)value pressed:(BOOL)pressed {
-    AKCILog(@"input: %@", line);
+    [self recordLine:line];
     if (self.onInput) self.onInput(element, value, pressed);
+}
+
+// The panel's own history and the log, without pretending to be an input. Some of
+// what the inspector sees is a fact about the system rather than a button, and a
+// fact must not start dictation.
+- (void)recordLine:(NSString *)line {
+    AKCILog(@"input: %@", line);
 
     dispatch_async(dispatch_get_main_queue(), ^{
         [self->_history addObject:line];

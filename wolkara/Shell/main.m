@@ -18,6 +18,7 @@
 #import "SignedFileProbe.h"
 #import "StartupActivity.h"
 #import "WolkaraConfig.h"
+#import "WolkaraLog.h"
 #import "../Cloud/SteamCloudCoordinator.h"
 #include "HostDiagnostics.h"
 #include <errno.h>
@@ -203,6 +204,9 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     // The user's choices, read back from the config file before anything asks for
     // one: the edition, the language, the mapped button and the dictionary are all
     // restored here rather than re-entered after an update. See WolkaraConfig.h.
+    NSDictionary *saved=[NSFileManager.defaultManager attributesOfItemAtPath:TKWolkaraConfig.shared.path error:NULL];
+    WKLog("config", @"%@ is %@", TKWolkaraConfig.shared.path,
+          saved ? [NSString stringWithFormat:@"%llu bytes", saved.fileSize] : @"not there yet");
     [TKWolkaraConfig.shared load];
     NSArray<NSString *> *arguments=NSProcessInfo.processInfo.arguments;
     // Wolkara: report what the controller has and what it does, so pad input is
@@ -216,23 +220,23 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     // the user chose, learned by pressing it once. See docs/INPUT_TRIGGERS.md.
     AKInputRouter.shared.onTrigger = ^(AKTrigger *trigger, AKInputEvent *event) {
         (void)event;
-        fprintf(stderr,"[host] input trigger: %s\n", [trigger summary].UTF8String);
+        WKLog("voice", @"input trigger: %@", [trigger summary]);
         [AKDictation.shared toggle];
     };
     AKInputRouter.shared.onTriggerBegan = ^(AKTrigger *trigger, AKInputEvent *event) {
         (void)event;
-        fprintf(stderr,"[host] input trigger began: %s\n", [trigger summary].UTF8String);
+        WKLog("voice", @"input trigger began: %@", [trigger summary]);
         [AKDictation.shared begin];
     };
     AKInputRouter.shared.onTriggerEnded = ^(AKTrigger *trigger, AKInputEvent *event) {
         (void)event;
-        fprintf(stderr,"[host] input trigger ended: %s\n", [trigger summary].UTF8String);
+        WKLog("voice", @"input trigger ended: %@", [trigger summary]);
         [AKDictation.shared end];
     };
     [AKInputRouter.shared begin];
     if([arguments containsObject:@"--inspect-controller"]) {
         [AKControllerInspector.shared showPanel:YES];
-        fprintf(stderr,"[host] controller inspector panel on\n");
+        WKLog("host", @"controller inspector panel on");
     }
     // Normal Wolkara launches use the route included in this build. Development
     // arguments retain the original explicit mode selection.
@@ -243,7 +247,7 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
             [NSBundle.mainBundle objectForInfoDictionaryKey:TKExecutionModePreselectionKey],&source);
     else { self.executionMode=TKExecutionModeNone;source=saveProblem; }
     self.executionModeSource=source;
-    fprintf(stderr,"[host] execution mode=%s source=%s\n",ModeIdentifier(self.executionMode),source.UTF8String);
+    WKLog("host", @"execution mode=%s source=%@", ModeIdentifier(self.executionMode), source ?: @"none");
     // Any Local signing launch makes the container folder, so a fresh install
     // can receive containers (tools/install.sh launches once if needed).
     if (self.executionMode==TKExecutionModeLocalSigning) PrepareLocalSigningFolder();
@@ -284,10 +288,14 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
         self.navigation=[[UINavigationController alloc] initWithRootViewController:self.wowController];
         self.window.rootViewController=self.navigation;
         [self.window makeKeyAndVisible];
+        WKLog("ui", @"home: the launcher is up (mode=%s source=%@)",
+              ModeIdentifier(self.executionMode), self.executionModeSource ?: @"none");
         // The public home has one startup route and no execution-mode chooser.
         return;
     }
     self.window.rootViewController = [self statusController];
+    WKLog("ui", @"not a plain launch: the status screen, not the home page (arguments=%@)",
+          [arguments componentsJoinedByString:@" "]);
     // Development runs can prepare for minutes before a guest starts; Auto-Lock must not end them.
     UIApplication.sharedApplication.idleTimerDisabled=YES;
     self.status.text = @"Preparing original guest executable…";
@@ -1226,5 +1234,10 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
 @end
 
 int main(int argc, char *argv[]) {
+    // Before anything else, including before the first line that could go wrong:
+    // from here on, an uncaught exception or a fatal signal leaves its reason in
+    // Documents/wolkara.log as well as in the system crash report. See
+    // WolkaraLog.h for why stderr alone was not enough.
+    WKLogStart();
     @autoreleasepool { return UIApplicationMain(argc, argv, nil, NSStringFromClass(AKHostAppDelegate.class)); }
 }

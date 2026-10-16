@@ -47,6 +47,10 @@ typedef NS_ENUM(NSInteger, AKInputSource) {
 
 // The device whose input should be remembered when learning finishes.
 - (void)beginLearning;
+// Disarm, without adopting anything. Learning takes the first event that arrives, so
+// a mapper left armed quietly rewrites the user's mapping when they press anything
+// at all later on - which is what a timed-out mapping used to do.
+- (void)cancelLearning;
 @property (nonatomic, readonly) BOOL learning;
 // Called after a learn press with the trigger that was adopted.
 @property (nonatomic, copy, nullable) void (^onLearned)(AKTrigger *trigger, NSString *device);

@@ -3,6 +3,8 @@
 #import "AddonManager.h"
 #import "../Voice/VoiceViewController.h"
 #import "../Voice/VoiceTestViewController.h"
+#import "../App/WolkaraLog.h"
+#import "../App/WolkaraTheme.h"
 #import "Installation.h"
 #import "Updater.h"
 #import "../App/LaunchProgressView.h"
@@ -35,6 +37,9 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     NSDate *_checkedAt;
     NSUInteger _generation;
     BOOL _busy, _updating, _updateError, _starting;
+    // The game files are read once, when the launcher first appears. Not on every
+    // appearance: leaving a popup used to send us straight back to the network.
+    BOOL _checkedThisLaunch;
     NSString *_startupFailure;
     UILabel *_updatesLabel;
     NSString *_updatePhase;
@@ -235,11 +240,24 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     _columns.axis=horizontal?UILayoutConstraintAxisHorizontal:UILayoutConstraintAxisVertical;
     _columns.alignment=horizontal?UIStackViewAlignmentTop:UIStackViewAlignmentFill;
 }
-- (void)viewDidAppear:(BOOL)animated { [super viewDidAppear:animated]; if (!_busy && !_sessionUsed && !_starting) [self refresh]; }
+- (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+    // Once per launch, and not again. This used to run on every appearance, so
+    // closing the add-on or the voice popup sent the launcher back for a full
+    // manifest check and the home page sat busy again - every single time, for a
+    // page the user had only looked at. The refresh button and Try again still ask
+    // for a check on purpose, and that is now the only way to get a second one.
+    if (_checkedThisLaunch || _busy || _sessionUsed || _starting) return;
+    _checkedThisLaunch=YES;
+    WKLog("ui", @"home: first appearance, checking the game files");
+    [self refresh];
+}
 - (void)viewDidDisappear:(BOOL)animated { [super viewDidDisappear:animated]; [self cancel]; }
 - (void)foreground:(NSNotification *)note {
     (void)note;
-    if (self.isViewLoaded && self.view.window && self.navigationController.topViewController==self && !_busy && !_sessionUsed && !_starting) [self refresh];
+    // Deliberately no check here. Coming back to the app is not a reason to re-read
+    // every manifest, and the check above has already happened for this launch.
+    WKLog("ui", @"home: back in front");
 }
 - (void)background:(NSNotification *)note { (void)note; [self cancel]; }
 - (void)cancel { [_client cancel]; _client=nil; _generation++; _busy=NO; }
@@ -252,7 +270,12 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     [NSUserDefaults.standardUserDefaults setObject:product[@"id"] forKey:@"WoWProduct"];
     [self refresh];
 }
-- (void)refresh { [self checkForUpdatesAndLaunch:NO]; }
+- (void)refresh {
+    // Asked for on purpose: the refresh button, Try again, or a changed edition.
+    // The check that happens by itself runs once per launch; see -viewDidAppear:.
+    WKLog("wow", @"a check was asked for");
+    [self checkForUpdatesAndLaunch:NO];
+}
 - (void)checkForUpdatesAndLaunch:(BOOL)launch { [self checkForUpdatesAndLaunch:launch install:NO]; }
 - (void)checkForUpdatesAndLaunch:(BOOL)launch install:(BOOL)install {
     if (_starting || _sessionUsed) return;
@@ -266,6 +289,7 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     [self cancel]; _plan=nil; _installation=nil; _error=nil; _checkedAt=nil; _startupFailure=nil;
     _updating=NO; _updateError=NO; _updatePhase=nil; _updateDone=0; _updateTotal=0;
     _client=[TKWoWClient new]; _busy=YES; [self render];
+    WKLog("wow", @"checking %@ %@/%@ install=%d launch=%d", _product[@"id"], _region, _locale, install, launch);
     TKWoWClient *client=_client; NSUInteger generation=_generation;
     NSDictionary *product=_product; NSString *region=_region, *locale=_locale;
     static dispatch_queue_t queue; static dispatch_once_t once;
@@ -321,6 +345,7 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
             if (generation!=self->_generation) return;
             self->_plan=plan; self->_installation=installation; self->_error=error;
             self->_checkedAt=plan?NSDate.date:nil; self->_busy=NO; self->_updating=NO; self->_updateError=updateAttempted && error; [self render];
+            WKLog("wow", @"checked: state=%ld error=%@", (long)installation.state, error.localizedDescription ?: @"none");
             // Returning from the background or changing edition invalidates this request.
             if (launch && !error && !client.cancelled && installation.state==TKWoWInstallationReady && installation.app && !self->_sessionUsed &&
                 self.view.window && self.navigationController.topViewController==self && self.startApp) self.startApp(installation.app);
@@ -466,6 +491,19 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
         _startupLabel.text=@"This build cannot start the game. See Diagnostics and logs."; break;
     }
 }
+// The launcher's own pages open over it rather than being pushed away to. The
+// columns behind stay where they are, closing one puts the user back on the page
+// they left instead of animating them through a stack, and nothing about the home
+// page has to be rebuilt for having visited a setting - which is also why the
+// game files are not re-read when one closes. See -viewDidAppear:.
+- (void)presentPage:(UIViewController *)page {
+    UINavigationController *frame=[[UINavigationController alloc] initWithRootViewController:page];
+    frame.modalPresentationStyle=UIModalPresentationPageSheet;
+    frame.overrideUserInterfaceStyle=UIUserInterfaceStyleDark;
+    frame.navigationBar.tintColor=WKGold();
+    WKLog("ui", @"opening %@ over the home page", NSStringFromClass(page.class));
+    [self presentViewController:frame animated:YES completion:nil];
+}
 - (void)presentSheet:(UIAlertController *)sheet anchor:(UIView *)anchor {
     [sheet addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
     if (anchor) { sheet.popoverPresentationController.sourceView=anchor; sheet.popoverPresentationController.sourceRect=anchor.bounds; }
@@ -524,13 +562,13 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
 // Everything about dictation lives on its own screen: the button, the mode, and
 // what happens to the words afterwards.
 - (void)manageVoice {
-    [self.navigationController pushViewController:[AKVoiceViewController new] animated:YES];
+    [self presentPage:[AKVoiceViewController new]];
 }
 
 // The same settings, exercised: a box the transcript lands in, driven by the
 // button the user mapped, so it can be tried without starting the game.
 - (void)testVoice {
-    [self.navigationController pushViewController:[AKVoiceTestViewController new] animated:YES];
+    [self presentPage:[AKVoiceTestViewController new]];
 }
 
 // The game's add-on folder, in the file browser. The picker is the documented way
@@ -576,7 +614,7 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     NSString *addons=[self addOnsDirectoryWithError:&error];
     if (!addons) { [self presentAddonsUnavailable:error]; return; }
     TKWoWAddonManagerViewController *manager=[[TKWoWAddonManagerViewController alloc] initWithAddOnsDirectory:addons edition:_product[@"name"]];
-    [self.navigationController pushViewController:manager animated:YES];
+    [self presentPage:manager];
 }
 - (UILabel *)startupStatusLabel { [self loadViewIfNeeded]; return _detailLabel; }
 - (void)beginStartup {

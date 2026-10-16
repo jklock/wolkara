@@ -202,3 +202,96 @@ re-entering them; the CurseForge key stays in the keychain and is deliberately n
   for `copy`; a directory given to `--source` copies *nothing at all* and reports success, which reads
   exactly like "no error file"; and crash reports live in the `systemCrashLogs` domain, not in the
   app's container.
+
+## 2026-10-16, later: one palette, popups, one check per launch, and a log that survives
+
+Four things were wrong from the user's seat: the voice screens did not look like the add-on screen
+they sit beside, they were pages you navigated *away* to, closing a page made the launcher re-read
+every manifest, and there was no way to find out why anything had broken.
+
+### The log, first, because it found the rest
+
+`wolkara/Shell/WolkaraLog.{h,m}` appends to `Documents/wolkara.log` (capped at a megabyte, one
+rotation) from the first line of `main`, mirrors every line to `stderr` so a console run reads as it
+always did, and writes uncaught exceptions - name, reason, user info and 40 stack frames - plus a
+marker line for SIGABRT/SIGSEGV/SIGBUS/SIGILL/SIGFPE/SIGTRAP. The signal handlers write a literal with
+`write(2)` and re-raise, so the system crash report is still produced; they add a line rather than
+replacing anything.
+
+Why it was needed: the host's lines went to `stderr`, which exists only when a console is attached,
+and the platform only redirects `stderr` into `native-guest.log` once a guest starts. Everything the
+launcher said while opening, and everything it said while dying, was gone before anyone looked. An
+hour went into finding an Auto Layout exception that the log now hands over in one line.
+
+`wolkara/tools/pilot.sh log [lines] [pattern]` fetches and prints it, and `view` shows the tail. The
+input layer (`ControllerInspector`, `InputRouter`, `ControllerWindow`) and dictation now write to both
+channels, which is what made the next finding visible.
+
+### The Share button was being pressed by nothing
+
+`ControllerInspector` treated `UIScreenCapturedDidChangeNotification` as "Share held", on the reasoning
+that iPadOS spends the pad's Share hold on screen recording. That is only true when the pad started
+the recording, and the notification cannot say who did. With the iPad being captured from a Mac - the
+normal state while working on it - `isCaptured` is already 1, the change fires about a tenth of a
+second after every launch, and the launcher **started dictating by itself**: six times in one log,
+nobody touching anything. Measured, fixed, and confirmed by counting: zero starts after the fix.
+
+The capture change is now recorded in the inspector's history and the log and reported to nobody. The
+screenshot notification stays a Share press: it is a discrete gesture the user made, it is how the pad's
+Share button is reachable at all, and the tooling's own screenshots do not fire it (checked).
+
+Rule that follows: a fact about the system is not a button press. `recordLine:` exists for the first,
+`reportLine:element:value:pressed:` for the second.
+
+### One palette, and pages that come up over the launcher
+
+`wolkara/Shell/WolkaraTheme.{h,m}` is the one place the ink, the gold, the panel and the card are
+written down, with the Add-on Manager's values because that is the screen the rest is expected to
+match. The voice screens were built out of `UIColor.systemBackgroundColor` and `labelColor`; they are
+now cards on the same navy with the same gold, the same uppercase headings and the same gold Done
+button.
+
+The add-on manager, the voice settings and the voice test are now **presented** - each inside its own
+navigation controller at `UIModalPresentationPageSheet` - instead of pushed. `WKDismissPage` closes one
+either way, and it sends the dismissal to the *presented* navigation controller rather than reading the
+presenter back: measured in the fixture, `presentingViewController` came back nil for the voice page,
+the call fell through to a pop that the root cannot do, and the sheet simply stayed open.
+
+The add-on table's background was `clearColor`, which is fine when a pushed page covers the window and
+wrong in a sheet, where it exposes the presentation container: as a popup it had a white body under a
+navy navigation bar. It draws `WKInk()` itself now.
+
+### The check runs once per launch
+
+`-viewDidAppear:` called `-refresh` on *every* appearance, so closing a popup sent the launcher back to
+the network for a full manifest check and the home page sat busy again - every time, for a page the
+user had only looked at. `-foreground:` did the same on every return to the app. Both are now gated by
+`_checkedThisLaunch`; the refresh button, Try again and a changed edition still ask on purpose, and
+those are the only way to get a second check.
+
+Trade-off, stated plainly: an app left open for hours will no longer notice a new update until it is
+relaunched. If that matters, a time-based recheck is the change to make - not a per-appearance one.
+
+### The launcher UI fixture had been failing to link
+
+`test_wow_launcher_ui.sh` compiles the prepared sources directly, and it listed neither the voice pages
+the launcher opens nor, later, the theme and the log. It had been failing at the link since the voice
+pages were added. It now compiles them, and it captures `addons-popup.png`, `voice-settings.png` and
+`voice-test.png` so the pages can be looked at rather than assumed. Three things it taught us:
+
+- A sheet cannot be measured or dismissed while it is still arriving. The fixture used to hit-test and
+  close ~0.4 s after presenting, and the result looked exactly like a page that cannot be closed.
+- The search field *is* hit-testable in the popup (`UISearchBarTextField`), so the presentation change
+  did not break the thing that check was written for.
+- It bundled `LICENSE`/`NOTICE.md` from `build/platform`, i.e. upstream's, while asserting our
+  attribution. It bundles the repository's now.
+
+### Open: the app does not ship its notices
+
+Nothing in `platform/project.yml` refers to `LICENSE` or `NOTICE.md`, and they sit outside every source
+path the app target lists, so the packaged app's About page shows the introduction and no licenses. The
+fixture checks the About page's *composition* - it reads whatever the bundle holds - so a green fixture
+is not evidence that the app carries them. Fixing it means getting the two files into the app's
+resources without hand-editing `platform/`: a patch or an overlay entry, which is a decision rather
+than a chore.
+

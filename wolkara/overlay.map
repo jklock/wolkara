@@ -20,6 +20,10 @@ wolkara/Shell/Info.plist launcher/Info.plist replace
 wolkara/Shell/Integrated-Info.plist authorization/App/Integrated-Info.plist replace
 wolkara/Shell/WolkaraConfig.h launcher/App/WolkaraConfig.h add
 wolkara/Shell/WolkaraConfig.m launcher/App/WolkaraConfig.m add
+wolkara/Shell/WolkaraLog.h launcher/App/WolkaraLog.h add
+wolkara/Shell/WolkaraLog.m launcher/App/WolkaraLog.m add
+wolkara/Shell/WolkaraTheme.h launcher/App/WolkaraTheme.h add
+wolkara/Shell/WolkaraTheme.m launcher/App/WolkaraTheme.m add
 wolkara/Shell/artwork/dark.svg artwork/wolkara/dark.svg add
 wolkara/Shell/artwork/default.svg artwork/wolkara/default.svg add
 wolkara/Shell/artwork/tinted.svg artwork/wolkara/tinted.svg add

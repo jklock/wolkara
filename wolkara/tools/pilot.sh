@@ -16,6 +16,7 @@
 #   wolkara/tools/pilot.sh wait [--timeout s] block until it is up, or until it fails
 #   wolkara/tools/pilot.sh view              screenshot, log, whether it crashed or asserted
 #   wolkara/tools/pilot.sh crash             read the newest crash report out loud
+#   wolkara/tools/pilot.sh log [lines] [pat] the app's own log, from Documents
 #   wolkara/tools/pilot.sh cycle             state, install, launch, wait, view
 #
 # Every command that launches records the newest error file and the newest crash report
@@ -51,6 +52,7 @@ CRASH_BASELINE=/tmp/pilot-crash-baseline.txt
 STARTS_BASELINE=/tmp/pilot-starts-baseline.txt
 LAUNCH_MODE=/tmp/pilot-mode.txt
 GUEST_LOG=/tmp/pilot-guest.log
+APP_LOG=/tmp/pilot-app.log
 STAGED="Documents/.tolkara-updates"
 # ---------------------------------------------------------------------------
 # What the device is doing. One python helper, because the answers come from
@@ -435,9 +437,42 @@ cmd_view() {
     fi
     step "what the app last said"
     tail -8 "$GUEST_LOG" 2>/dev/null | cut -c1-150 | sed 's/^/  /'
+    step "the app's own log"
+    rm -f "$APP_LOG"
+    xcrun devicectl device copy from --device "$DEVICE" --domain-type appDataContainer \
+        --domain-identifier "$BUNDLE" --source "Documents/wolkara.log" \
+        --destination "$APP_LOG" >/dev/null 2>&1 || true
+    if [ -s "$APP_LOG" ]; then
+        tail -12 "$APP_LOG" | cut -c1-170 | sed 's/^/  /'
+        grep -q "\[fatal\]" "$APP_LOG" && say "IT SAYS SOMETHING FATAL: pilot.sh log"
+    else
+        say "no Documents/wolkara.log yet"
+    fi
     step "state"
     say "app running:    $(state_value app_running)"
     say "guest log says: $(state_value guest_start) (written $(state_value guest_log_age)s ago)"
+}
+
+# The app's own log. It exists because stderr does not survive: the host's lines
+# only reached a console that is not attached, and the platform only redirects them
+# into native-guest.log once a guest starts. Anything the launcher says while it is
+# opening, and anything it says while it is dying, is in this file.
+cmd_log() {
+    local lines=${1:-60}
+    local pattern=${2:-.}
+    rm -f "$APP_LOG"
+    xcrun devicectl device copy from --device "$DEVICE" --domain-type appDataContainer \
+        --domain-identifier "$BUNDLE" --source "Documents/wolkara.log" \
+        --destination "$APP_LOG" >/dev/null 2>&1 || true
+    [ -s "$APP_LOG" ] || die "no log on the device yet: $BUNDLE has not written Documents/wolkara.log"
+    local total; total=$(wc -l < "$APP_LOG" | tr -d ' ')
+    say "Documents/wolkara.log, $total lines; the last $lines matching /$pattern/"
+    grep -E "$pattern" "$APP_LOG" | tail -"$lines" | cut -c1-200 | sed 's/^/  /'
+    if grep -q "\[fatal\]" "$APP_LOG"; then
+        step "it says something fatal"
+        grep -n "\[fatal\]" "$APP_LOG" | tail -4 | cut -c1-200 | sed 's/^/  /'
+        say "the full report, with the stack, is in the same file"
+    fi
 }
 
 # A crash before the app writes its own Errors/ file leaves the system report as the
@@ -488,6 +523,7 @@ case "${1:-state}" in
     wait)    cmd_wait "${2:-}" "${3:-}" ;;
     view)    cmd_view ;;
     crash)   cmd_crash ;;
+    log)     cmd_log "${2:-}" "${3:-}" ;;
     cycle)
         cmd_install "${2:-}"
         cmd_launch
