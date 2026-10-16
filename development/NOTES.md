@@ -438,6 +438,65 @@ Already fixed by the time the review was written: the concurrency boundary, whic
 lists as P2. Every input report is delivered on the main queue - GameController does not
 promise a thread - and the router asserts it.
 
+## 2026-10-16, last: running the platform's own suites, and the device matrix
+
+The audit's exit criteria are not satisfied by our own tests passing. It asks for the
+*platform's* suites, and for the physical-iPad matrix to pass repeatedly. Running them found
+three more real defects in the layer, none of which our own tests could have seen.
+
+**The overlay had quietly lost ten methods of the touch-controls view.** The platform's
+simulator suite failed on `-[AKTouchControlsView isSecureTextEntry]: unrecognized selector`.
+The overlay replaces that file wholesale, and the replacement had been written from memory:
+it kept the drawing and the tracking that were being worked on and dropped whatever the
+platform had that had not come up. `isSecureTextEntry` and the text traits
+(`autocapitalizationType`, `autocorrectionType`, `spellCheckingType`, `smartQuotesType`,
+`smartDashesType`, `smartInsertDeleteType`, `keyboardType`, `returnKeyType`) are back, and so
+is `pointInside:withEvent:`, which is the one that hurt the most in use: without it the
+overlay swallowed taps in the gaps between its buttons, so the toolbar looked dead in the
+places a thumb lands. This is what "the platform's suite" is for. Our fixture never asked,
+because it only ever tapped inside the buttons.
+
+**The platform test asserted the platform's default for on-screen controls.** The layer
+turns the on-screen controls on for every device, which is a deliberate product decision, and
+the platform's own test checks it is off by default. That is a genuine divergence, so it is a
+patch (`0014`) that rewrites the expectation and adds the assertion that matters -
+`!plainHost.multipleTouchEnabled`, since multi-touch follows the trackpad.
+
+**A duplicate add-on import deleted the installed one.** Found by writing the coverage the
+audit asked for rather than by any failure in use: the import tracked every folder it
+touched, including ones that already existed, and its cleanup removed them on the way out.
+Importing the same add-on twice lost the first copy. It now tracks only the folders it
+created, and the suite imports twice on purpose.
+
+**One platform failure is not ours, and proving that took a pristine worktree.**
+`tests.test_sign_guest_local` compares our ad-hoc signature to this macOS's `codesign`
+byte for byte, and fails - identically, with identical sizes - in a checkout of the platform
+at the same commit with no layer applied at all. It is on the known-failures list with that
+evidence next to it. The list is a document, which is how its one real entry came to be
+commented out: the parser matched nothing and the platform's own failure read as ours. It
+strips the comment mark now, and the manifest names the entry rather than counting it.
+
+**The matrix was reading the client's own work as our failure.** `device_matrix.sh` reported
+ten failures, then one, then none, with no code change between - which is the worst kind of
+result, because it means the outcome depended on the device's mood rather than on the layer.
+Two causes, both in the tooling:
+
+- `pilot.sh` refuses to stop or install while the client is writing to its own store, which is
+  correct and is the guard from the 2026-10-15 note below. The client was staging a 135 MB
+  update of its own, so the guard fired, `stop_app` exited 2, and the matrix - which treated
+  any non-zero exit as a failure and `exit 1`ed - aborted a step and reported it as broken
+  behaviour. The guard's own message says "try again when it stops", so the matrix now does
+  that, up to five minutes, and prints how long it waited. It is a wait, not a retry of
+  something that failed.
+- Step 3 asserted a fixed `WoWRegion=us` while step 2 left `eu` behind, so a second run saw
+  "no choice was changed" and failed the log check. Both now flip to the opposite of whatever
+  is on the device, and the push is verified by fetching the file back and comparing it.
+
+The lesson worth keeping: a check whose answer depends on what a previous run left on the
+device is not a check, and a guard that exists to protect the user's data must be waited out
+rather than overridden. `--force` was available the whole time and would have turned every
+one of these into a pass while quietly writing over a half-finished update.
+
 ### Still open, and known
 
 - The app still ships no `LICENSE`/`NOTICE.md` (above), so the About page lists no licenses.
