@@ -7,13 +7,20 @@ work on any controller.
 ## The shape
 
 1. **A section in the launcher** called **Voice Manager**, with two rows:
-   **Key / Button Configuration** and **Test Voice**.
+   **Key / Button Configuration** and **Test Voice**. Both open as popups over the
+   home page rather than pushing the user away from it, with a Done button.
 2. The first lets the user **map the button or key**, and set the options below.
 3. **Test Voice** is where the button is tried out before the game is opened: a
    box that receives the transcript, exactly as the game would, and nothing is
    typed into the game from there.
 4. In the game, **that button starts transcription**. Nothing of ours appears.
 5. The transcript is typed into the game, and optionally sent.
+
+Both pages are drawn from `wolkara/Shell/WolkaraTheme.{h,m}`, which is the one
+place the launcher's ink and gold are written down - the Add-on Manager's values,
+because that is the screen the rest is expected to match. Building them from
+`UIColor.system*` is what made them the one part of the launcher that did not look
+like the launcher.
 
 ## Handy is the baseline
 

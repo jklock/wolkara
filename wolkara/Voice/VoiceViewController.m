@@ -1,10 +1,13 @@
-// Wolkara: the Voice screen, in full.
+// Wolkara: the Voice settings screen, in full.
 //
-// Laid out as rows rather than a table, matching how the rest of the launcher is
-// built. The mapping row is the interesting one: it does not offer a list of
-// supported controllers — it asks the user to press the button, and whichever
-// event arrives becomes the trigger. That is what makes it work for hardware we
-// have never seen.
+// Laid out as cards, matching how the rest of the launcher is built, and drawn from
+// WolkaraTheme so it is the same navy and the same gold as the Add-on Manager it
+// sits beside. It used to be built out of system colours, which made it the one
+// page in the launcher that did not look like the launcher.
+//
+// The mapping row is the interesting one: it does not offer a list of supported
+// controllers — it asks the user to press the button, and whichever event arrives
+// becomes the trigger. That is what makes it work for hardware we have never seen.
 
 #import "VoiceViewController.h"
 
@@ -13,6 +16,8 @@
 #import "VoiceSettings.h"
 #import "Trigger.h"
 #import "../Input/InputRouter.h"
+#import "../App/WolkaraLog.h"
+#import "../App/WolkaraTheme.h"
 
 @interface AKVoiceViewController ()
 @property (nonatomic, strong) UILabel *mappingValue;
@@ -28,64 +33,68 @@
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = @"Key / Button Configuration";
-    self.view.backgroundColor = UIColor.systemBackgroundColor;
+    self.title = @"Key / Button Configuration".uppercaseString;
+    self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+    self.view.backgroundColor = WKInk();
+    self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeNever;
+    self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"Done"
+        style:UIBarButtonItemStyleDone target:self action:@selector(done)];
+    self.navigationItem.leftBarButtonItem.tintColor = WKGold();
+
+    UIScrollView *scroll = [UIScrollView new];
+    scroll.accessibilityIdentifier = @"voice.settings.scroll";
+    scroll.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.view addSubview:scroll];
 
     UIStackView *rows = [[UIStackView alloc] init];
     rows.axis = UILayoutConstraintAxisVertical;
-    rows.spacing = 14;
+    rows.spacing = 26;
     rows.translatesAutoresizingMaskIntoConstraints = NO;
-    [self.view addSubview:rows];
+    [scroll addSubview:rows];
 
-    UILabel *intro = [self label:@"Anything you press can start dictation: a button on a controller, a key, a mouse button. The game keeps its own use of that button."];
-    [rows addArrangedSubview:intro];
+    [rows addArrangedSubview:WKNote(@"Anything you press can start dictation: a button on a controller, a key, a mouse button. The game keeps its own use of that button.")];
 
     // --- Which button -------------------------------------------------------
-    [rows addArrangedSubview:[self heading:@"Button"]];
-    self.mappingValue = [self label:@"Not set"];
-    self.mappingValue.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
-    [rows addArrangedSubview:self.mappingValue];
-    self.mapButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    [self.mapButton setTitle:@"Map a button…" forState:UIControlStateNormal];
-    [self.mapButton addTarget:self action:@selector(beginMapping) forControlEvents:UIControlEventTouchUpInside];
-    [rows addArrangedSubview:self.mapButton];
-    self.mappingHint = [self label:@"Tap Map, then press the button you want to use."];
-    [rows addArrangedSubview:self.mappingHint];
+    [rows addArrangedSubview:WKHeading(@"Button")];
+    self.mappingValue = WKLabel(16, UIFontWeightSemibold, UIColor.whiteColor);
+    self.mappingValue.accessibilityIdentifier = @"voice.mapping";
+    self.mapButton = [self filledButton:@"voice.map" title:@"Map a button…" action:@selector(beginMapping)];
+    self.mappingHint = WKNote(@"Tap Map, then press the button you want to use.");
+    [rows addArrangedSubview:[self card:@[self.mappingValue, self.mapButton, self.mappingHint]]];
 
     // --- How it behaves -----------------------------------------------------
-    [rows addArrangedSubview:[self heading:@"Mode"]];
+    [rows addArrangedSubview:WKHeading(@"Mode")];
     self.modeControl = [[UISegmentedControl alloc] initWithItems:@[@"Hold to talk", @"Press to start and stop"]];
+    self.modeControl.accessibilityIdentifier = @"voice.mode";
     self.modeControl.selectedSegmentIndex = AKVoiceSettings.shared.mode == AKVoiceModeHold ? 0 : 1;
+    self.modeControl.selectedSegmentTintColor = WKGold();
+    [self.modeControl setTitleTextAttributes:@{NSForegroundColorAttributeName: WKOnGold()} forState:UIControlStateSelected];
+    [self.modeControl setTitleTextAttributes:@{NSForegroundColorAttributeName: WKMuted()} forState:UIControlStateNormal];
     [self.modeControl addTarget:self action:@selector(modeChanged) forControlEvents:UIControlEventValueChanged];
-    [rows addArrangedSubview:self.modeControl];
-    [rows addArrangedSubview:[self label:@"Hold to talk needs a button whose press and release both reach us. A button Apple keeps for itself, like Share, can only press to start and stop."]];
+    [rows addArrangedSubview:[self card:@[self.modeControl,
+        WKNote(@"Hold to talk needs a button whose press and release both reach us. A button Apple keeps for itself, like Share, can only press to start and stop.")]]];
 
     // --- What happens to the words ------------------------------------------
-    [rows addArrangedSubview:[self heading:@"After transcribing"]];
-    [rows addArrangedSubview:[self switchRow:@"Send it straight away"
-                                 isAutoSubmit:YES
-                                      action:@selector(autoSubmitChanged)]];
-    [rows addArrangedSubview:[self switchRow:@"Add a space after the text"
-                                 isAutoSubmit:NO
-                                      action:@selector(trailingSpaceChanged)]];
+    [rows addArrangedSubview:WKHeading(@"After transcribing")];
+    [rows addArrangedSubview:[self card:@[
+        [self switchRow:@"Send it straight away" isAutoSubmit:YES action:@selector(autoSubmitChanged)],
+        [self switchRow:@"Add a space after the text" isAutoSubmit:NO action:@selector(trailingSpaceChanged)]
+    ]]];
 
     // --- Dictionary ---------------------------------------------------------
-    [rows addArrangedSubview:[self heading:@"Words to expect"]];
-    self.dictionaryField = [[UITextField alloc] init];
-    self.dictionaryField.borderStyle = UITextBorderStyleRoundedRect;
-    self.dictionaryField.placeholder = @"Names, places, game terms — separated by commas";
-    self.dictionaryField.text = [AKVoiceSettings.shared.customWords componentsJoinedByString:@", "];
-    self.dictionaryField.autocapitalizationType = UITextAutocapitalizationTypeNone;
-    self.dictionaryField.autocorrectionType = UITextAutocorrectionTypeNo;
-    [self.dictionaryField addTarget:self action:@selector(dictionaryChanged) forControlEvents:UIControlEventEditingDidEnd];
-    [rows addArrangedSubview:self.dictionaryField];
-    [rows addArrangedSubview:[self label:@"These bias the recogniser, so a name comes out spelled the way you mean it."]];
+    [rows addArrangedSubview:WKHeading(@"Words to expect")];
+    [rows addArrangedSubview:[self card:@[self.dictionaryField, WKNote(@"These bias the recogniser, so a name comes out spelled the way you mean it.")]]];
 
-    UILayoutGuide *safe = self.view.safeAreaLayoutGuide;
     [NSLayoutConstraint activateConstraints:@[
-        [rows.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor constant:20],
-        [rows.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-20],
-        [rows.topAnchor constraintEqualToAnchor:safe.topAnchor constant:20],
+        [scroll.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor],
+        [scroll.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor],
+        [scroll.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
+        [scroll.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
+        [rows.topAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.topAnchor constant:20],
+        [rows.bottomAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.bottomAnchor constant:-28],
+        [rows.leadingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.leadingAnchor constant:20],
+        [rows.trailingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.trailingAnchor constant:-20],
+        [rows.widthAnchor constraintEqualToAnchor:scroll.frameLayoutGuide.widthAnchor constant:-40],
     ]];
 
     // The switch rows are built by the helper, which keeps them next to the
@@ -97,12 +106,29 @@
 
     __weak AKVoiceViewController *weakSelf = self;
     AKInputRouter.shared.onLearned = ^(AKTrigger *trigger, NSString *device) {
-        (void)trigger;
         [AKVoiceSettings.shared setLearnedElement:trigger.element forDevice:device];
+        WKLog("voice", @"mapped %@ for %@", trigger.element, device);
         [weakSelf refreshMapping];
         weakSelf.mappingHint.text = @"Saved. It applies whenever that controller is connected.";
     };
 }
+
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    // The popup is built once and reused, so the current mapping is re-read here
+    // rather than going stale behind it.
+    [self refreshMapping];
+}
+
+- (void)viewWillDisappear:(BOOL)animated {
+    [super viewWillDisappear:animated];
+    // Leaving the page must not leave the mapper armed: the next press anywhere
+    // would otherwise be taken as the mapping and saved.
+    [AKInputRouter.shared cancelLearning];
+    AKInputRouter.shared.onLearned = nil;
+}
+
+- (void)done { WKDismissPage(self); }
 
 #pragma mark - The mapping row
 
@@ -112,6 +138,7 @@
 }
 
 - (void)beginMapping {
+    WKLog("voice", @"waiting for a button to map");
     self.mappingHint.text = @"Press the button you want to use now…";
     self.mapButton.enabled = NO;
     [AKInputRouter.shared beginLearning];
@@ -120,6 +147,11 @@
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(20 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         if (!AKInputRouter.shared.learning) return;
+        // Disarm, do not just re-enable the button. This used to say "nothing
+        // arrived" and then keep listening, so the next unrelated press was saved
+        // as the mapping without a word.
+        [AKInputRouter.shared cancelLearning];
+        WKLog("voice", @"nothing arrived to map after 20s; no longer listening");
         self.mappingHint.text = @"Nothing arrived. Tap Map and try again.";
         self.mapButton.enabled = YES;
     });
@@ -138,6 +170,7 @@
 
 - (void)modeChanged {
     AKVoiceSettings.shared.mode = self.modeControl.selectedSegmentIndex == 0 ? AKVoiceModeHold : AKVoiceModeToggle;
+    WKLog("voice", @"mode is now %@", self.modeControl.selectedSegmentIndex == 0 ? @"hold" : @"toggle");
 }
 - (void)autoSubmitChanged { AKVoiceSettings.shared.autoSubmit = self.autoSubmitSwitch.on; }
 - (void)trailingSpaceChanged { AKVoiceSettings.shared.trailingSpace = self.trailingSpaceSwitch.on; }
@@ -153,29 +186,74 @@
 
 #pragma mark - Small pieces
 
-- (UILabel *)label:(NSString *)text {
-    UILabel *label = [[UILabel alloc] init];
-    label.text = text;
-    label.numberOfLines = 0;
-    label.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
-    label.textColor = UIColor.secondaryLabelColor;
-    return label;
+// The dictionary field is built here rather than in -viewDidLoad because the card
+// helper needs it ready, and because a rounded-rect field would draw its own
+// background over the panel's.
+- (UITextField *)dictionaryField {
+    if (_dictionaryField) return _dictionaryField;
+    _dictionaryField = [[UITextField alloc] init];
+    _dictionaryField.accessibilityIdentifier = @"voice.words";
+    _dictionaryField.borderStyle = UITextBorderStyleNone;
+    _dictionaryField.backgroundColor = WKPanel();
+    _dictionaryField.layer.cornerRadius = 10;
+    _dictionaryField.layer.masksToBounds = YES;
+    _dictionaryField.textColor = UIColor.whiteColor;
+    _dictionaryField.tintColor = WKGold();
+    _dictionaryField.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
+    _dictionaryField.adjustsFontForContentSizeCategory = YES;
+    _dictionaryField.attributedPlaceholder = [[NSAttributedString alloc]
+        initWithString:@"Names, places, game terms — separated by commas"
+        attributes:@{NSForegroundColorAttributeName: WKMuted()}];
+    // Losing the border costs the field its own inset, so put one back.
+    _dictionaryField.leftView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 12, 1)];
+    _dictionaryField.leftViewMode = UITextFieldViewModeAlways;
+    _dictionaryField.text = [AKVoiceSettings.shared.customWords componentsJoinedByString:@", "];
+    _dictionaryField.autocapitalizationType = UITextAutocapitalizationTypeNone;
+    _dictionaryField.autocorrectionType = UITextAutocorrectionTypeNo;
+    [_dictionaryField addTarget:self action:@selector(dictionaryChanged) forControlEvents:UIControlEventEditingDidEnd];
+    return _dictionaryField;
 }
 
-- (UILabel *)heading:(NSString *)text {
-    UILabel *label = [self label:text];
-    label.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1];
-    label.text = text.uppercaseString;
-    return label;
+// A group of rows on the launcher's panel colour. The padding lives here so every
+// card is the same shape without each caller repeating four constraints.
+- (UIView *)card:(NSArray<UIView *> *)rows {
+    UIView *panel = WKCard();
+    UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:rows];
+    stack.axis = UILayoutConstraintAxisVertical;
+    stack.spacing = 12;
+    stack.translatesAutoresizingMaskIntoConstraints = NO;
+    [panel addSubview:stack];
+    [NSLayoutConstraint activateConstraints:@[
+        [stack.topAnchor constraintEqualToAnchor:panel.topAnchor constant:16],
+        [stack.bottomAnchor constraintEqualToAnchor:panel.bottomAnchor constant:-16],
+        [stack.leadingAnchor constraintEqualToAnchor:panel.leadingAnchor constant:16],
+        [stack.trailingAnchor constraintEqualToAnchor:panel.trailingAnchor constant:-16],
+    ]];
+    return panel;
+}
+
+- (UIButton *)filledButton:(NSString *)identifier title:(NSString *)title action:(SEL)action {
+    UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
+    button.accessibilityIdentifier = identifier;
+    UIButtonConfiguration *configuration = UIButtonConfiguration.filledButtonConfiguration;
+    configuration.title = title;
+    configuration.cornerStyle = UIButtonConfigurationCornerStyleMedium;
+    configuration.baseBackgroundColor = WKGold();
+    configuration.baseForegroundColor = WKOnGold();
+    configuration.contentInsets = NSDirectionalEdgeInsetsMake(14, 12, 14, 12);
+    button.configuration = configuration;
+    [button addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];
+    return button;
 }
 
 // Builds a row and, as a side effect, stores its switch, so the settings can be
 // read and written without hunting through the view tree.
 - (UIView *)switchRow:(NSString *)title isAutoSubmit:(BOOL)isAutoSubmit action:(SEL)action {
-    UILabel *label = [self label:title];
-    label.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
-    label.textColor = UIColor.labelColor;
+    UILabel *label = WKLabel(16, UIFontWeightRegular, UIColor.whiteColor);
+    label.text = title;
+    [label setContentHuggingPriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
     UISwitch *toggle = [[UISwitch alloc] init];
+    toggle.onTintColor = WKGold();
     [toggle addTarget:self action:action forControlEvents:UIControlEventValueChanged];
     if (isAutoSubmit) self.autoSubmitSwitch = toggle;
     else self.trailingSpaceSwitch = toggle;
