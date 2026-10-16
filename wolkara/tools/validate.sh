@@ -66,11 +66,16 @@ MESSAGE
 fi
 
 mkdir -p "$(dirname "$out")"
+# One pilot session for the whole run. The pilot keeps its work files per run, and a run is
+# this script - not each of the commands below. Without this, `pilot.sh cycle` recorded a
+# baseline in one directory and `pilot.sh log` looked in another, so the log step could not
+# tell a fresh launch from a stale log.
+export PILOT_SESSION=${PILOT_SESSION:-$(mktemp -d -t pilot-validation)}
 log=$(mktemp)
 # Written to a temporary file and moved into place at the end, so a run that is
 # interrupted leaves no half-manifest that reads like evidence.
 record=$(mktemp)
-trap 'rm -f "$log" "$record" "$details"' EXIT
+trap 'rm -f "$log" "$record" "$details"; rm -rf "$PILOT_SESSION"' EXIT
 
 # What the iPad is, in words that can be committed. `devicectl`'s own summary carries
 # the model identifier and the OS version, and the device's UDID as well - which is the
@@ -167,6 +172,9 @@ if [ "$device" = 1 ]; then
     # worse than recording nothing: it is evidence for a commit that never ran.
     if run_step "install and launch on the iPad" wolkara/tools/pilot.sh cycle; then
         run_step "the app's own log, from the launch above" wolkara/tools/pilot.sh log 40 || failures=$((failures+1))
+        # The parts of the device matrix a Mac can drive by itself. What needs a person is
+        # listed inside the step's own output rather than left unsaid.
+        run_step "the device matrix, so far as a script can go" wolkara/tools/device_matrix.sh || failures=$((failures+1))
     else
         failures=$((failures+1))
         step_names+=("the app's own log, from the launch above")
