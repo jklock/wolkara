@@ -229,7 +229,7 @@ at once" - the same sentence is written to the log when a mapping is saved, and
 no ownership, no pattern that makes a shared button safe. The second half of the
 finding is answered too: the page offers two modes and no double/long/chord
 choice, and both the docs and the fixture say so rather than leaving the trigger
-model's four patterns to be mistaken for four options. The fixture asserts the
+model's five patterns to be mistaken for five options. The fixture asserts the
 warning is on the page and that the mode control has two segments, so neither can
 disappear silently.
 
