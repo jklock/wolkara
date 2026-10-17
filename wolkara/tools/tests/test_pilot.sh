@@ -177,6 +177,36 @@ run_pilot "$work/sessions/clean" stop --dry-run
 grep -q "would ask pid 1234" "$work/out.txt"
 check $? "a dry run should name the process it would stop"
 
+# An install owes the operator the state it found. A game session that was live goes back into
+# the game, not onto the launcher; an app that was merely up goes back up; and nothing is started
+# when nothing was running. On 2026-10-17 an install left the launcher up while a session was
+# being tested and said nothing about it - the same fault as a false PASS, because the device was
+# changed and the tool did not mention it.
+export WOLKARA_FAKE_PROCESSES=""
+mkdir -p "$work/sessions/found"
+printf '1234\n' > "$work/sessions/found/was-running"
+printf '1\n' > "$work/sessions/found/was-live"
+run_pilot "$work/sessions/found" restore
+check $? "restore must start the app again when the session recorded one running"
+grep -q "in the game" "$work/out.txt"
+check $? "and must put a live game back into the game rather than onto the launcher"
+
+mkdir -p "$work/sessions/stopped"
+printf '\n' > "$work/sessions/stopped/was-running"
+printf '0\n' > "$work/sessions/stopped/was-live"
+run_pilot "$work/sessions/stopped" restore
+check $? "restore must succeed when nothing was running"
+grep -q "left stopped" "$work/out.txt"
+check $? "and must leave it stopped rather than starting something nobody asked for"
+
+mkdir -p "$work/sessions/norecord"
+run_pilot "$work/sessions/norecord" restore
+check $? "restore must not fail when the session holds no record"
+grep -q "no record of anything running" "$work/out.txt"
+check $? "and must say it has no record rather than guessing"
+
+export WOLKARA_FAKE_PROCESSES="  1234   /private/var/containers/Bundle/Application/AAA/Tolkara.app/Tolkara"
+
 # Each run keeps its own work files.
 run_pilot "$work/sessions/one" state
 run_pilot "$work/sessions/two" state
