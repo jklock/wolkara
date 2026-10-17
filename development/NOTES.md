@@ -750,3 +750,34 @@ Three things were learned making it work, and the first two were found *by* it:
 What is still not machine-checked, and honestly cannot be from a Mac: a real voice producing a
 real transcript, what iPadOS reports for a particular pad's buttons (the router is proven with
 synthetic presses; the pad itself needs the pad), and the game. The matrix prints those.
+
+## 2026-10-17 - one rule for the tools: no verdict without evidence
+
+`pilot.sh wait` printed "CRASHED after 2s" for an app that was running. The cause was not the
+comparison but the composition: work files live in `$PILOT_SESSION`, which is one run's directory
+unless a caller shares one, so `launch` and `wait` run as separate commands compared against
+nothing - and an empty baseline read as "everything here is new". A report a day old was the
+newest thing on the device, so it was called this launch's crash.
+
+Fixed in the one place that guessed. `wait` now needs either a baseline this session recorded or
+a report younger than the time it has been waiting - the age rule, which catches a real crash
+even with no baseline - and otherwise says it cannot judge, and what to do instead. `view` always
+said that; it was the model. The rule is written into the tool's own header.
+
+Two things about getting it right, both of which cost a round trip:
+
+- The first attempt keyed the guard on the wrong signal (a file `launch` writes), and the pilot's
+own suite - 25 checks, which deliberately test that each run keeps its own work files - went
+  red. The suite was right. Reverted, then done properly.
+- The *fixture* was part of the problem: the case named "a crash report that appears while
+  waiting" dated its report a day earlier, so it encoded the false alarm it was meant to catch.
+  It now carries the baseline a launch would have written, and a second case covers the
+  no-baseline path that used to lie: "an old crash report with no baseline is not a crash", and
+  "it must say that is why". 27 checks now.
+
+Audited the rest of `wolkara/tools/` for the same class - state that must outlive a command
+living in a per-invocation directory, or a verdict read from a file that may not be there.
+`validate.sh` and `device_matrix.sh` share one `PILOT_SESSION` across their steps; `install.sh`
+and `check_layers.sh` use temp paths only as scratch; `prepare.sh` fails loudly on an unknown
+pin; `state` and `view` warn loudly when the device could not be inspected, and the acting
+commands refuse. `wait` was the only one that guessed.

@@ -26,6 +26,16 @@
 # first, so "did it fail?" is answered by comparing, never by a file name written down
 # in this script. Either kind of new file is a failure; a growing log is not success.
 #
+# One rule about verdicts, learned the hard way on 2026-10-17. A command here only says that
+# something is new, or wrong, or fine, when it has the evidence for it. Work files live in
+# $PILOT_SESSION, which is one run's directory unless a caller shares one - validate.sh and
+# device_matrix.sh do, so their steps are one run - so a command that compares against a baseline
+# says "cannot be judged" when this session recorded none, instead of treating everything already
+# on the device as new. It also asks whether a crash report or an error file is *younger than the
+# time it has been waiting*, which is evidence in itself and needs no baseline. A verdict that
+# reads like success and a verdict that reads like failure are both worthless as guesses:
+# "CRASHED" over a running app costs the same trust as "PASS" over a blind run.
+#
 # Both places have to be watched. A crash after the client is up leaves a file in its own
 # Errors/ folder, but one before it writes anything - an exception in -viewDidLoad, say -
 # aborts the process and touches nothing there. On 2026-10-16 that read as a clean launch
@@ -395,6 +405,24 @@ cmd_wait() {
     local crash_baseline; crash_baseline=$(cat "$CRASH_BASELINE" 2>/dev/null || echo none)
     local starts_baseline; starts_baseline=$(cat "$STARTS_BASELINE" 2>/dev/null || echo 0)
     local mode; mode=$(cat "$LAUNCH_MODE" 2>/dev/null || echo launcher)
+    # Whether *this* session recorded anything to compare against. The session directory is per
+    # invocation unless PILOT_SESSION is shared - deliberately, so one run cannot read another's
+    # work - so `pilot.sh wait` run on its own has no baseline, and without one *everything*
+    # already on the device looks new. That is how `wait`, on a device whose newest crash report
+    # was a day old, printed CRASHED for an app that was running. `view` has always said it could
+    # not judge; `wait` now does too, and the age rule below is what still catches a real crash.
+    local launched=1
+    if [ ! -f "$CRASH_BASELINE" ] && [ ! -f "$BASELINE" ] && [ ! -f "$STARTS_BASELINE" ]; then
+        launched=0
+    fi
+    # Said before the wait rather than afterwards: an operator who is told up front that the two
+    # halves were run as two commands can fix it now, instead of reading a caveat under a verdict
+    # they have already believed.
+    if [ "$launched" = "0" ]; then
+        say "note: this session recorded no baseline, so a crash report or an error file already"
+        say "      on the device cannot be told from one this launch made. Run 'pilot.sh cycle',"
+        say "      or set PILOT_SESSION to a directory you keep, to launch and wait as one run."
+    fi
     if [ "$mode" = "game" ]; then
         say "waiting up to ${timeout}s for the guest to start, or for the client to fail"
     else
@@ -413,29 +441,47 @@ cmd_wait() {
             printf '!'
             continue
         fi
-        # A crash is the faster and more final answer, so it is asked for first: the
-        # process is already gone by the time one appears.
+        # A crash is the faster and more final answer, so it is asked for first: the process is
+        # already gone by the time one appears. New means *new*: the baseline this session
+        # recorded changed, or the report is younger than the time this command has been waiting.
+        # The second test is what makes this honest without a baseline - and what stops a report
+        # written yesterday from being read as this launch's crash, which is exactly what
+        # happened on 2026-10-17 and printed CRASHED over a healthy app.
         local crash; crash=$(state_value crash_newest)
-        if [ "$crash" != "$crash_baseline" ]; then
+        local crash_age; crash_age=$(state_value crash_newest_age)
+        local fresh=0
+        if [ "$crash" != "none" ] && [ "$launched" = "1" ] && [ "$crash" != "$crash_baseline" ]; then fresh=1; fi
+        if [ "$crash_age" != "none" ] && [ "$crash_age" -lt "$waited" ] 2>/dev/null; then fresh=1; fi
+        if [ "$fresh" = "1" ]; then
             printf '\n'
             say "CRASHED after ${waited}s: $crash"
             say "the app died before writing anything of its own - run: pilot.sh crash"
             return 1
         fi
         local newest; newest=$(state_value newest_error)
-        if [ "$newest" != "$baseline" ]; then
+        local newest_age; newest_age=$(state_value newest_error_age)
+        local asserted=0
+        if [ "$newest" != "none" ] && [ "$launched" = "1" ] && [ "$newest" != "$baseline" ]; then asserted=1; fi
+        if [ "$newest_age" != "none" ] && [ "$newest_age" -lt "$waited" ] 2>/dev/null; then asserted=1; fi
+        if [ "$asserted" = "1" ]; then
             printf '\n'
             say "ASSERTED after ${waited}s: $newest"
             return 1
         fi
-        if [ "$(state_value guest_starts)" -gt "$starts_baseline" ] 2>/dev/null; then
+        if [ "$launched" = "1" ] && [ "$(state_value guest_starts)" -gt "$starts_baseline" ] 2>/dev/null; then
             printf '\n'
             say "the guest started after ${waited}s (no new error file, no new crash report)"
             return 0
         fi
         if [ "$mode" = "launcher" ] && [ "$(state_value app_running)" = "1" ] && [ "$waited" -ge "$settle" ]; then
             printf '\n'
-            say "the launcher is up after ${waited}s (no new error file, no new crash report)"
+            if [ "$launched" = "1" ]; then
+                say "the launcher is up after ${waited}s (no new error file, no new crash report)"
+            else
+                say "the launcher is up after ${waited}s. This session recorded no baseline, so"
+                say "whether an error file or a crash report is new cannot be judged from here;"
+                say "use 'pilot.sh cycle', or share PILOT_SESSION, to launch and wait as one run."
+            fi
             return 0
         fi
         if [ "$(state_value app_running)" = "0" ] && [ "$mode" = "launcher" ]; then
