@@ -6,6 +6,22 @@
 #import "TouchHaptics.h"
 #import <objc/message.h>
 
+// Null until the app's shell says which keys are the user's; null means "nothing is owned",
+// which is the behaviour without the feature and what a fixture that links only the adapter
+// gets.
+BOOL (*AKTouchKeyIsTakenForVoice)(unsigned short usage) = NULL;
+
+NSNotificationName const AKTouchOwnedKeyUsagesDidChangeNotification = @"AKTouchOwnedKeyUsagesDidChange";
+NSString *const AKTouchOwnedKeyUsagesKey = @"usages";
+
+// The usages the user has taken, kept here because this file is where the answer is needed:
+// the adapter asks about a key it is about to post to the guest.
+static NSSet<NSNumber *> *AKTouchOwnedKeyUsages = nil;
+
+static BOOL AKTouchUsageIsTaken(unsigned short usage) {
+    return [AKTouchOwnedKeyUsages containsObject:@(usage)];
+}
+
 // Posted when the game's own text view exists, with that view as the object. Dictation
 // types into it and nowhere else; the alternative - searching every window in every
 // scene for something that answers a private selector - is not a thing to do while a
@@ -246,6 +262,27 @@ static BOOL hardwareKeyboardAttached(void) {
     AKTouchHaptics *_haptics;
     AKTouchGamepad *_gamepad;
     BOOL _tookOwnPlace;
+}
+
+// This dylib is loaded by name, so nothing here can be called by the shell at link time. The
+// one channel is the notification that says which keys the user has taken, where it is
+// received - and the pointer is set here, because until it arrives nothing is owned and every
+// key goes to the game.
++ (void)load {
+    [NSNotificationCenter.defaultCenter addObserverForName:AKTouchOwnedKeyUsagesDidChangeNotification
+                                                    object:nil
+                                                     queue:NSOperationQueue.mainQueue
+                                                usingBlock:^(NSNotification *note) {
+        id usages = note.userInfo[AKTouchOwnedKeyUsagesKey];
+        if ([usages isKindOfClass:NSSet.class]) AKTouchOwnedKeyUsages = [usages copy];
+        else if ([usages isKindOfClass:NSArray.class]) AKTouchOwnedKeyUsages = [NSSet setWithArray:usages];
+        else AKTouchOwnedKeyUsages = nil;
+        // Null when nothing is taken, so the check at the adapter's door is one nil test in
+        // the common case rather than a set lookup per key.
+        AKTouchKeyIsTakenForVoice = AKTouchOwnedKeyUsages.count ? AKTouchUsageIsTaken : NULL;
+        AKLog(@"the user's keys: %lu taken (the game will not see those)",
+              (unsigned long)AKTouchOwnedKeyUsages.count);
+    }];
 }
 
 // The launcher's switch, and the platform's install path, ask this before the

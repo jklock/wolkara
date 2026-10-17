@@ -598,16 +598,42 @@ against the installed app. See "The app shipped the wrong notices" above.
 
 Closed the other way, and worth reading as an example: the audit's "any button is neither
 collision-free nor complete" finding offered two ways out - real input arbitration, or a
-product limited to explicitly mapped inputs *with a collision warning*. The second is what
-this is now, because the first is a large change and the second is the honest description of
-the feature that already exists: the router listens to input and the game still receives it.
-So `docs/VOICE.md` says so in a section titled "What this cannot do, said plainly", the
-mapping page carries the same sentence where the mapping is made, the log line says it when
-one is saved, and the fixture asserts the sentence is still there and that the mode control
-has two segments rather than the trigger model's five patterns. Nothing here is described as
-safe that is not safe, and the thing that is not built is named as not built rather than
-implied. The remaining item on this list is the page *layout* test, which is a smaller
-version of the same gap: the pages' behaviour is asserted, their arrangement is looked at by
-a person.
+product limited to explicitly mapped inputs *with a collision warning*. The warning came
+first, and then the ownership, because the first version of this note said ownership was "a
+large change" and that was not true. It is about sixty lines.
+
+**Keep the game from seeing it**, on the voice page, does what "collision-free" means for the
+inputs where it can be done. With it on, a keyboard key the user has mapped for dictation is
+never posted to the guest - press or release, so the game is not left holding a key down -
+and the trigger still fires, because the router learns what was pressed from the adapter's own
+observation rather than from the guest's event queue. One physical press, seen once, forwarded
+nowhere.
+
+Two things had to be right for it to be honest rather than merely present:
+
+- **What cannot be taken is named where the switch is.** A *controller* button cannot be:
+  iPadOS reports a pad's buttons as gamepad elements, the guest receives them as key events,
+  and there is no API connecting the two - so a pad mapping cannot be matched where a key
+  would be swallowed, and choosing a button the game does not use stays the answer for a pad.
+  A system signal never could be taken; there is nothing to swallow, and the layer releases
+  the system gesture instead.
+- **It had to fit the boundary, not go around it.** The adapter is compiled into a signed
+  dylib that the app never links against, which is why the toolbar is already asked for by
+  notification. The first attempt had `main.m` assign a function pointer that the adapter
+  defines, and it failed to link - `_AKTouchKeyIsTakenForVoice` undefined - which is the
+  boundary saying so. The shell now *publishes* the set of usages the user has taken and the
+  adapter swallows those keys; the notification name is a string on the app's side for the
+  same reason the existing one is.
+
+Tested where each half can be: the decision in the voice fixture (184 checks, up from 173),
+and the swallowing end to end in the touch fixture, which fakes a `UIKey`/`UIPress` - they
+cannot be constructed - drives the adapter's own key path, and watches what the guest's view
+receives. The fixture also proves the honest negatives: a key the user has not taken still
+arrives, publishing an empty set gives the key straight back, and with nothing published at
+all every key goes through, which is what a build that never fills this in does.
+
+Remaining on this list, unchanged: the voice page *layout* is asserted behaviourally rather
+than looked at, and the other patterns the trigger model can store are still not offered by
+the page.
 
 

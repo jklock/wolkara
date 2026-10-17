@@ -219,19 +219,32 @@ Required fix: either limit the product to explicitly mapped inputs with a
 collision warning, or implement real input arbitration/ownership. Do not
 describe patterns as universally safe until they are.
 
-**Resolved by the first branch, 2026-10-16.** Arbitration is not implemented and
-is still not started; instead the product is limited to explicitly mapped inputs
-and says what that means. The page that makes the mapping now carries the warning
-in those terms - "The button you map still reaches the game. Nothing here takes it
-away from the game, so choosing one the game already uses makes it do both things
-at once" - the same sentence is written to the log when a mapping is saved, and
-`docs/VOICE.md` has a section stating what the feature cannot do: no arbitration,
-no ownership, no pattern that makes a shared button safe. The second half of the
-finding is answered too: the page offers two modes and no double/long/chord
-choice, and both the docs and the fixture say so rather than leaving the trigger
-model's five patterns to be mistaken for five options. The fixture asserts the
-warning is on the page and that the mode control has two segments, so neither can
-disappear silently.
+**Resolved by both branches, 2026-10-16.** The warning is still there and is still the
+default - a mapping listens to a button and does not take it from the game - and there is now
+real ownership for the inputs where ownership is possible. The page carries **Keep the game
+from seeing it**: on, and a keyboard key the user has taken for dictation is never posted to
+the guest at all, press or release, while the trigger still fires. The limit is named where
+the switch is, in `docs/VOICE.md` and here: a **controller** button cannot be taken, because
+iPadOS reports a pad's buttons as gamepad elements while the guest receives them as key
+events with no API to connect the two, so for a pad the warning still stands. A system signal
+never could be taken: there is nothing to swallow, and the layer releases the system gesture
+instead.
+
+How it is built matters as much as that it is. The adapter is compiled into a signed dylib
+that the app never links, so the app cannot call into it and it cannot call the app: the
+shell **publishes** the set of usages the user has taken (by notification, named by string on
+the app's side, the same arrangement the toolbar already used) and the adapter swallows those
+keys at the one place it posts guest key events. The first attempt assigned a function pointer
+from `main.m` and did not link - which is a fair illustration of why the boundary is a
+notification in the first place.
+
+The second half of the finding is answered too: the page offers two modes and no
+double/long/chord choice, and both the docs and the fixture say so rather than leaving the
+trigger model's five patterns to be mistaken for five options. The fixture asserts the warning
+is on the page, that the switch is there, and that the mode control has two segments, so none
+of it can disappear silently. The two halves are tested where each can be: the decision in the
+voice fixture (184 checks), and the swallowing end to end in the touch fixture, which drives
+the adapter's own key path with a faked press and watches what the guest's view receives.
 
 ### Mapping timeout leaves the mapper armed
 

@@ -14,6 +14,7 @@
 
 #import "../Controller/ControllerInspector.h"
 #import "../Voice/VoiceSettings.h"
+#import "InputElement.h"
 
 NSNotificationName const AKInputRouterLearningDidExpireNotification = @"AKInputRouterLearningDidExpire";
 
@@ -81,6 +82,26 @@ static AKInputSource AKInputSourceFromName(NSString *name) {
 }
 
 - (BOOL)learning { return _learning; }
+
+#pragma mark - Ownership
+
+- (BOOL)shouldTakeKeyWithUsage:(unsigned short)usage {
+    AKAssertInputQueue();
+    // The element the inspector reports the same physical key with, so a mapping made by
+    // pressing the key is the mapping this finds.
+    NSString *element = AKInputElementForKeyboardKey((NSInteger)usage);
+    BOOL owned = [AKVoiceSettings.shared ownsElement:element];
+    static unsigned short lastLogged;
+    if (owned) {
+        if (lastLogged != usage) {
+            lastLogged = usage;
+            AKIRLog(@"input: %@ is the user's; the game will not see it", element);
+        }
+    } else {
+        lastLogged = 0;
+    }
+    return owned;
+}
 
 #pragma mark - Start
 
