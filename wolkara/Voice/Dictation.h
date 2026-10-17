@@ -58,8 +58,11 @@ typedef NS_ENUM(NSInteger, AKDictationState) {
 @protocol AKDictationAudio <NSObject>
 /// Take the session for recording, remembering how to put it back.
 - (BOOL)beginRecording:(NSError **)error;
-/// Put back the category, mode, options and active state that were there before.
-- (void)restore;
+/// Put back the category, mode, options and active state that were there before. Returns NO
+/// when it could not be done, and fills in why. Leaving the session on a recording category
+/// holds the microphone, which the user can see on the iPad, so the caller retries rather than
+/// assuming this worked.
+- (BOOL)restore:(NSError **)error;
 @end
 
 #pragma mark - Dictation
