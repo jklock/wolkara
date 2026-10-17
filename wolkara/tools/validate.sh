@@ -207,6 +207,13 @@ run_step "install does the right thing per execution mode" wolkara/tools/tests/t
 run_step "pilot.sh fails closed and keeps its own session" wolkara/tools/tests/test_pilot.sh || failures=$((failures+1))
 run_step "launcher pages (simulator fixture)" wolkara/tools/test_wow_launcher_ui.sh || failures=$((failures+1))
 run_step "input, voice and config rules (simulator fixture)" wolkara/tools/test_voice.sh || failures=$((failures+1))
+# The two touch fixtures are ours and nothing ran them: not this script, and not either
+# platform suite. That is how a fixture asserting whole-field replacement sat failing for a
+# day while every recorded run said PASS - the assertions were about behaviour the adapter
+# had stopped having, and no step asked. They are bounded (a 30 s watchdog in self-test
+# mode), so they belong here.
+run_step "on-screen controls and the game text field (simulator fixture)" wolkara/tools/test_touch_controls_ui.sh --self-test || failures=$((failures+1))
+run_step "the on-screen gamepad (simulator fixture)" wolkara/tools/test_touch_gamepad_ui.sh --self-test || failures=$((failures+1))
 run_step "the app builds for the device" wolkara/tools/install.sh --build-only || failures=$((failures+1))
 if [ "$full" = 1 ]; then
     # The platform's suites, with its known failures told apart from ours. A failure the

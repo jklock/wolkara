@@ -191,6 +191,21 @@ Validation for this follow-up on Xcode 27.0 / iOS 27.0:
 - `tools/test_touch_controls_ui.sh --self-test --guest-poll-loop`: passed.
 - `tools/test_emulation.sh`: passed, including the signing test that failed
   under the previous Xcode installation; no signing code was changed here.
+
+  **Read the paths in these records as of the day they were written.** Everything
+  below names `tools/…` because that is where the scripts lived before the layer
+  split: the layer's scripts are at `wolkara/tools/` now, and the platform's own
+  are at `build/platform/tools/` after `wolkara/tools/prepare.sh`. The results are
+  left as they were recorded rather than rewritten to match today's paths.
+
+  **On the signing test:** this record says it passed here and
+  `docs/WOW_LAUNCHER.md` says it no longer reproduced; the later section below
+  says it fails again. Both were written honestly on the day, and what holds now
+  is the later one - it fails, identically, in a checkout of the platform with no
+  layer applied, and it is listed with that evidence in
+  `wolkara/tools/known_platform_failures.txt`. `wolkara/tools/validate.sh` reports
+  the suite as PASS with one known platform failure and prints the entry, so the
+  fact stays visible instead of depending on which record you happen to read.
 - Signed arm64 `iphoneos` Debug build and strict code-signature verification:
   passed.
 - Manual taps on the simulator's software keyboard produced the complete
