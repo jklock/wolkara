@@ -713,4 +713,6 @@ other path that can end a session - a timeout, an interruption, going to the bac
 covered, and the state the session is left in is now read back off the iPad.
 
 Proof: `test_addon_archive.sh` 58 checks (from 49), `test_voice.sh` 252 (from 244), the
-device matrix at 22 checks, and the record under `development/validation/`.
+device matrix at 21 checks, and the record under `development/validation/`. The 21 is one more
+than before and the record says so; the count in this note is the one the script printed, not
+the one this paragraph was written with.
