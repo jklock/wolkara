@@ -306,12 +306,15 @@ measurement, not an iPhone memory budget or a guarantee for larger builds.
 
 ## Reproduce
 
-From the repository root (Xcode and XcodeGen required):
+From the repository root (Xcode and XcodeGen required). The layer commands prepare
+the build tree; the remaining platform commands run inside that generated tree:
 
 ```sh
-bash tools/test_wow_launcher.sh
-bash tools/test_wow_launcher_ui.sh
-bash tools/test_emulation.sh
+bash wolkara/tools/test_wow_launcher.sh
+bash wolkara/tools/test_wow_launcher_ui.sh
+bash wolkara/tools/test_emulation.sh
+wolkara/tools/prepare.sh
+cd build/platform
 # Focused fixup regression, also runnable after the unrelated signer failure:
 xcrun clang -std=c11 -D_DARWIN_C_SOURCE -Wall -Wextra -Werror -O1 -g \
   -fsanitize=address,undefined -fno-omit-frame-pointer -Iruntime \

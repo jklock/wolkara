@@ -24,6 +24,12 @@ final class TKAddonArchive: NSObject {
 
     @objc(extractArchiveAtURL:toDirectoryURL:error:)
     static func extract(archiveURL: URL, to directoryURL: URL, error output: NSErrorPointer) -> Bool {
+        let manager = FileManager.default
+        // The extractor owns only a new staging directory. Never remove or write
+        // through an existing directory (which could contain files or symlinks).
+        guard !manager.fileExists(atPath: directoryURL.path) else {
+            return failure("The extraction destination already exists.", output)
+        }
         let archive: Archive
         do { archive = try Archive(url: archiveURL, accessMode: .read) }
         catch { return failure("The selected file is not a supported ZIP archive.", output) }
@@ -37,12 +43,15 @@ final class TKAddonArchive: NSObject {
             guard compressed <= compressedLimit, expanded <= expandedLimit, paths.insert(entry.path.precomposedStringWithCanonicalMapping.lowercased()).inserted else { return failure("The ZIP archive exceeds limits or contains colliding paths.", output) }
             entries.append(entry)
         }
-        let manager = FileManager.default
         do {
             try manager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
             for entry in entries {
                 let destination = directoryURL.appendingPathComponent(entry.path)
-                _ = try archive.extract(entry, to: destination)
+                let checksum = try archive.extract(entry, to: destination)
+                guard checksum == entry.checksum else {
+                    throw NSError(domain: "Wolkara.AddOns", code: 2,
+                                  userInfo: [NSLocalizedDescriptionKey: "The ZIP archive failed its integrity check."])
+                }
             }
             return true
         } catch let caught {

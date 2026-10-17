@@ -27,6 +27,7 @@ wolkara/Shell/WolkaraTheme.m launcher/App/WolkaraTheme.m add
 wolkara/Shell/artwork/dark.svg artwork/wolkara/dark.svg add
 wolkara/Shell/artwork/default.svg artwork/wolkara/default.svg add
 wolkara/Shell/artwork/tinted.svg artwork/wolkara/tinted.svg add
+wolkara/Shell/artwork/wolkara-icon-source.png artwork/wolkara/wolkara-icon-source.png add
 wolkara/Shell/artwork/wolkara-logo.png artwork/wolkara/wolkara-logo.png add
 wolkara/Shell/main.m launcher/App/main.m replace
 wolkara/Shell/tests/test_execution_mode.m tests/test_execution_mode.m replace
@@ -55,6 +56,9 @@ wolkara/WoW/Updater.h launcher/WoW/Updater.h add
 wolkara/WoW/Updater.m launcher/WoW/Updater.m add
 wolkara/WoW/WoWViewController.h launcher/WoW/WoWViewController.h add
 wolkara/WoW/WoWViewController.m launcher/WoW/WoWViewController.m add
+wolkara/WoW/tests/test_addon_archive.swift tests/test_addon_archive.swift add
+wolkara/WoW/tests/test_addon_import.m tests/test_addon_import.m add
+wolkara/WoW/tests/test_curseforge.m tests/test_curseforge.m add
 wolkara/WoW/tests/test_wow_client.m tests/test_wow_client.m add
 wolkara/WoW/tests/test_wow_installation.m tests/test_wow_installation.m add
 wolkara/WoW/tests/test_wow_launcher_app.m tests/test_wow_launcher_app.m add

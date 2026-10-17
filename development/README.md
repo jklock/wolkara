@@ -15,8 +15,8 @@ each other. These are the ones that hold now, and each can be checked in one com
 | Thing | Now | Check it with |
 | --- | --- | --- |
 | Platform pin | `00a8501` | `wolkara/tools/check_layers.sh` |
-| Our patches | 14 | `ls wolkara/patches/*.patch \| wc -l` |
-| Overlay entries | 91 (9 replace, 82 add) | `wolkara/tools/overlay_map.sh` |
+| Our patches | 15 | `ls wolkara/patches/*.patch \| wc -l` |
+| Overlay entries | 95 (9 replace, 86 add) | `wolkara/tools/overlay_map.sh` |
 | Layer files carried | every file under `wolkara/` | `check_layers.sh` |
 | Gate | 11 checks | `wolkara/tools/check_layers.sh` |
 
@@ -65,7 +65,7 @@ its internals are Wolkara.
 | 1 | `platform/` vendored + the gate | **done** |
 | 2 | Every delta classified layer / replace / patch / drop | **partial** - classification done and measured; seven patches now carry the platform-side changes and six paths need nothing, so what remains is the branding-delta deletions and the three Phase 3 files |
 | 3 | The modules, the overlay, the wrappers | **done** - by overlay onto the prepared tree rather than a layer project; `PLAN.md` says why |
-| 4 | Parity on the Mac suites and on Dadpad | **partial** - the suites, the compile checks and the project generation pass; the one check left is installing and running the app on the device since the split |
+| 4 | Parity on the Mac suites and on Dadpad | **partial** - post-split installs and scripted device checks are recorded in `validation/`; physical microphone/controller and in-game checks remain separate |
 | 5 | Ingest upstream through the ritual | **partial** - the pin is already current upstream; arrivals partly verified |
 | 6 | Clean base from the audit | **done** - every audit item is fixed or decided; see `AUDIT.md` |
 | 7 | Upstream contribution pipeline | **partial** - 7 patches ready, none submitted |

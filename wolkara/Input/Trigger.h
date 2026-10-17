@@ -18,16 +18,10 @@ NS_ASSUME_NONNULL_BEGIN
 typedef NS_ENUM(NSInteger, AKTriggerPattern) {
     // One press and release.
     AKTriggerPatternPress = 0,
-    // Two presses inside the double window.
-    AKTriggerPatternDouble,
-    // Held past the hold threshold.
-    AKTriggerPatternLong,
-    // Two elements held together.
-    AKTriggerPatternChord,
     // Push to talk: fires on press and again on release, so dictation can start on
     // the first and finish on the second. It needs a button whose press and release
     // we both receive, so it cannot be used on one iOS keeps for itself.
-    AKTriggerPatternPushToTalk,
+    AKTriggerPatternPushToTalk = 4, // Preserve the stored value from older builds.
 };
 
 // Matches any element name at all. Useful while learning; never stored.
@@ -36,21 +30,13 @@ extern NSString *const AKTriggerAnyElement;
 @interface AKTrigger : NSObject <NSCopying>
 
 @property (nonatomic, copy) NSString *element;
-// The partner element for a chord, and ignored otherwise.
-@property (nonatomic, copy, nullable) NSString *chordElement;
 @property (nonatomic) AKTriggerPattern pattern;
-// How long "long" means, and how close together a double must be. Both in seconds.
-@property (nonatomic) NSTimeInterval holdInterval;
-@property (nonatomic) NSTimeInterval doubleInterval;
 
 // Readable text for the log and the settings screen, built from the element's
 // display name rather than from the id.
 - (NSString *)summary;
-// "press", "hold to talk", "double press", "long press", "chord". Only press and
-// push-to-talk are offered by the launcher; the rest are reachable by a stored
-// mapping and are covered by tests, but nothing in the UI pretends they are safe.
+// "press" or "hold to talk". The mode owns this choice.
 - (NSString *)patternName;
-- (BOOL)patternIsOfferedInTheLauncher;
 // Whether this trigger watches the given element id. Exact, "any", or a family:
 // a trigger on "controller.button." covers every button.
 - (BOOL)watchesElement:(NSString *)element;
