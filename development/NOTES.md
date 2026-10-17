@@ -564,6 +564,28 @@ the next person will read it. `test_touch_controls_ui.sh --self-test` passes aga
 cancellation and fixed toolbar". Both touch fixtures are now steps in `validate.sh`, because
 a fixture that nothing runs is a fixture that lies.
 
+**And then the same question found two more.** "Which suites does nothing run?" is worth
+asking of every suite once, so: `test_emulation.sh` ends with a loop over
+`wolkara/tools/test_*.sh`, and that loop had never executed in any recorded run. The platform
+suite exits 1 on its one known failure - deliberately listed as the platform's - and `set -e`
+stopped our script on that status, before the loop. The records say so once you look: the
+"platform emulation suite" step contains the platform's eighty tests and its known failure,
+and not one layer-suite banner. The `VOICE PASS` I had been reading in that step belongs to
+the voice step, four rows above it.
+
+Two of the layer's suites were therefore run by nothing at all: `test_wow_launcher.sh` (CASC
+verification, repair, checkpoint/resume, malformed records) and `test_local_service_retry.sh`,
+which is the only test of a patch we carry. Both pass when run by hand; nobody had asked.
+
+Two bugs behind one line: the platform suite's status was the gate for running ours, and the
+loop's glob included the script itself, so the first iteration would have re-prepared the tree
+and run the platform's suite again, for ever. The `set -e` bug had been hiding that - the loop
+could not run, so the recursion could not happen. Fixing one without the other would have
+turned a silent gap into a hang. Now the platform's status is carried rather than obeyed, a
+*layer* suite failing still fails the run, the loop skips itself, and every suite the layer
+owns has its own row in `validate.sh`, so coverage never again depends on a wrapper's loop
+being reached. Fifteen rows, from eleven at the start of this work.
+
 ### Still open, and known
 
 - Voice has no test for the *pages* beyond the fixture's screenshots; the rules are covered, the
@@ -582,7 +604,7 @@ the feature that already exists: the router listens to input and the game still 
 So `docs/VOICE.md` says so in a section titled "What this cannot do, said plainly", the
 mapping page carries the same sentence where the mapping is made, the log line says it when
 one is saved, and the fixture asserts the sentence is still there and that the mode control
-has two segments rather than the trigger model's four patterns. Nothing here is described as
+has two segments rather than the trigger model's five patterns. Nothing here is described as
 safe that is not safe, and the thing that is not built is named as not built rather than
 implied. The remaining item on this list is the page *layout* test, which is a smaller
 version of the same gap: the pages' behaviour is asserted, their arrangement is looked at by

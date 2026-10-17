@@ -120,8 +120,9 @@ away, so a half-heard utterance cannot land in the game's chat box on the way ou
   the first and stops on the second.
 - **Toggle**: each press alternates.
 
-Both are the same trigger with a different pattern, which is why the router
-carries a `hold` pattern alongside press, double, long and chord.
+Both are the same trigger with a different pattern, which is why the trigger
+model carries five patterns - `press`, `double`, `long`, `chord` and
+`push-to-talk` - while this page offers the two that the two modes need.
 
 ## What this cannot do, said plainly
 
@@ -139,8 +140,8 @@ system signal cannot be mapped at all and why hold-to-talk needs a button whose
 press *and* release both reach us.
 
 **The launcher offers two patterns: hold to talk, and press to start and stop.**
-The trigger model stores and validates press, double, long and chord, and
-migrations keep old mappings readable, but the page offers no double-tap, long
-press or chord choice — so do not read the model's four patterns as four options
-the user has. Implementing arbitration or offering the other patterns is not
-started; see `development/NOTES.md`.
+The trigger model stores and validates five - `press`, `double`, `long`, `chord`
+and `push-to-talk` - and migrations keep old mappings readable, but the page
+offers no double-tap, long press or chord choice, so do not read the model's five
+patterns as five options the user has. Implementing arbitration or offering the
+other patterns is not started; see `development/NOTES.md`.

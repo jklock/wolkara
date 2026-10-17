@@ -759,9 +759,9 @@ static void TestVoiceScreens(UIWindow *window) {
     UILabel *collision = (id)Find(settings.view, @"voice.mapping.collision");
     CHECK((collision != nil), @"and it says the mapped button still reaches the game");
     CHECK(([collision.text containsString:@"still reaches the game"]), @"in those words, got: %@", collision.text);
-    // And it does not offer patterns it cannot honour: two modes, not four patterns.
+    // And it does not offer patterns it cannot honour: two modes, not the model's five.
     UISegmentedControl *mode = (id)Find(settings.view, @"voice.mode");
-    CHECK((mode.numberOfSegments == 2), @"and offers two modes, not the model's four patterns");
+    CHECK((mode.numberOfSegments == 2), @"and offers two modes, not the model's five patterns");
     // Leaving the page must not leave the mapper armed.
     [AKInputRouter.shared beginLearning];
     [navigation popViewControllerAnimated:NO];
