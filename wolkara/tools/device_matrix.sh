@@ -3,15 +3,19 @@
 #
 # The audit's exit criteria ask for a device matrix that passes repeatedly without new
 # crashes, game error files, data loss, or orphaned input/audio state. Some of that needs a
-# person - speaking into the iPad, pressing a button on a pad, tapping Home - and those are
-# listed as deferred at the end of this script rather than pretended. What is here is what a
+# person - speaking into the iPad, pressing a button on a pad - and those are listed as
+# deferred at the end of this script rather than pretended. Backgrounding used to be on that
+# list and is not any more: launching another app puts ours away, and the app's own log then
+# says whether anything was left running, listening or recording. What is here is what a
 # script can honestly check:
 #
 #   1. the device can be inspected at all (otherwise nothing below means anything)
 #   2. a fresh install, and the user's file surviving it
 #   3. a config file the user edited being *imported*
 #   4. a config file that is malformed being refused, kept, and survived
-#   5. no new crash report and no new game error file for the launches above
+#   5. the notices the installed app carries in its own bundle
+#   6. being put away and brought back, with nothing left listening or recording
+#   7. no new crash report and no new game error file for the launches above
 #
 #   wolkara/tools/device_matrix.sh
 set -uo pipefail
@@ -213,7 +217,7 @@ grep -o "notices: [^)]*)" "$work/log-notices.log" | tail -1 | sed 's/^/  /'
 grep -q "Wolkara-LICENSE" "$work/log-notices.log" && rc=0 || rc=1
 check "$rc" "ours under our own names, not mixed in with upstream's"
 
-step "5. it is put away and brought back, and left nothing running"
+step "6. it is put away and brought back, and left nothing running"
 # This used to be deferred as "needs a person tapping Home". It does not: launching another
 # app backgrounds ours, and launching ours again brings it back - both through devicectl. What
 # is being checked is the app's own log, because nothing on this Mac can see which app is in
@@ -226,9 +230,14 @@ wolkara/tools/pilot.sh leave > "$work/leave.log" 2>&1 || {
     exit 1
 }
 sed 's/^/  /' "$work/leave.log" | tail -2
-wolkara/tools/pilot.sh log 4 "background|resigning|microphone" > "$work/log-away.log" 2>&1
-grep -qE "in the background: dictation=[0-9]+ listening=0 learning=0" "$work/log-away.log" && rc=0 || rc=1
-check "$rc" "it says so in its own log, with nothing listening and nothing armed"
+# The pilot prints "in the background (still running)" and nothing asserted it. A build that
+# had lost UIBackgroundModes would leave the app gone, and every check below would still pass,
+# because they all read a log it wrote before it died.
+grep -q "in the background (still running)" "$work/leave.log" && rc=0 || rc=1
+check "$rc" "and it is still running while it is away"
+wolkara/tools/pilot.sh log 6 "background|resigning|microphone" > "$work/log-away.log" 2>&1
+grep -qE "in the background: dictation=[0-9]+ listening=0 learning=0 audio=[^ ]+ mic=0" "$work/log-away.log" && rc=0 || rc=1
+check "$rc" "it says so in its own log: nothing listening, nothing armed, no recording session"
 grep -oE "(in the background|resigning active): [^\"]*" "$work/log-away.log" | tail -1 | sed 's/^/  /'
 # A mapping half-made when the app went away must not survive it: otherwise the next press
 # after coming back silently becomes the user's mapping.
@@ -237,12 +246,12 @@ wolkara/tools/pilot.sh return > "$work/return.log" 2>&1 || {
     exit 1
 }
 sed 's/^/  /' "$work/return.log" | tail -1
-wolkara/tools/pilot.sh log 4 "foreground:" > "$work/log-back.log" 2>&1
-grep -qE "foreground: dictation=0 listening=0 learning=0" "$work/log-back.log" && rc=0 || rc=1
-check "$rc" "and it came back with everything idle"
+wolkara/tools/pilot.sh log 6 "foreground:" > "$work/log-back.log" 2>&1
+grep -qE "foreground: dictation=0 listening=0 learning=0 audio=[^ ]+ mic=0" "$work/log-back.log" && rc=0 || rc=1
+check "$rc" "and it came back idle, with its audio session handed back and nothing recording"
 grep -oE "foreground: [^\"]*" "$work/log-back.log" | tail -1 | sed 's/^/  /'
 
-step "6. nothing crashed and the client did not assert"
+step "7. nothing crashed and the client did not assert"
 wolkara/tools/pilot.sh view > "$work/view.log" 2>&1
 grep -q "no new crash report" "$work/view.log" && rc=0 || rc=1
 check "$rc" "no new crash report for any launch above"
@@ -253,11 +262,12 @@ cat <<'DEFERRED'
 
 == deferred, and why
 
-  audio before/after         needs someone to speak into the iPad, so the microphone is
-                             really opened and the session really handed back by a real
-                             recogniser. What is checked without one is that the session is
-                             closed on every path that can end it - a timeout, an
-                             interruption, and now going to the background.
+  a real transcript          needs someone to speak into the iPad, because only a voice
+                             makes the recogniser produce words. What is checked without one,
+                             on this device, is the state the session is left in - `mic=0`
+                             above, after being put away - and that a session is closed on
+                             every path that can end one: a timeout, an interruption, and
+                             going to the background.
   a controller button        mapping is arm-then-press: it needs a hand on a pad. What is
                              checked without one is that nothing fires while nothing is
                              mapped, and that no system signal can be mapped at all.

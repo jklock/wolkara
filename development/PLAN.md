@@ -43,7 +43,7 @@ land in the same effort.
 | `wolkara/WoW/` | us | Client, CASC, Updater, Installation, Manifest, UpdateLock, WoWViewController, Addon*, with its tests, tools and profiles | no |
 | `wolkara/Touch/` | us | toolbar, trackpad, gamepad, layout, haptics, drafts and dictation, Fonts | no |
 | `wolkara/Bridge/` | us | thin adapters from platform APIs to layer features | no |
-| `wolkara/patches/` | us | minimal brand-free patches, each an upstream candidate | yes (14 as of 2026-10-16) |
+| `wolkara/patches/` | us | minimal brand-free patches, each an upstream candidate | yes (15 as of 2026-10-17) |
 | `wolkara/Tools/`, `wolkara/Tests/` | us | wrapper scripts and per-feature tests | no |
 | `wolkara/project.yml` | us | the XcodeGen project for `Wolkara` + `WolkaraDiagnostics` | no |
 | root | shared | README, AGENTS.md, `local.env` contract, `docs/`, `development/` | yes |
@@ -66,7 +66,7 @@ land in the same effort.
 6. Add `wolkara/tools/check_layers.sh`. **done** (`6de44fd`, hardened in `e33f3f4`) -
    platform pristine, no Wolkara strings under `platform/`, every patch applies and is
    verified to have really changed the tree. **partial** - source coverage and the
-   cross-module reach-in check are still `TODO` because they need `wolkara/project.yml`
+   cross-module reach-in check both exist in `check_layers.sh`, which needed no `wolkara/project.yml`
    (Phase 3, step 11).
 
 ## Phase 2 - Classify every delta: layer / replace / patch / drop / platform-owned
@@ -120,7 +120,7 @@ them, which is exactly what an ingest wants.
     and anything that differed without being on a list was reported and left alone. The
     unused `AppIcon.appiconset` went with them. The root now holds `platform/`, `wolkara/`,
     `development/`, `docs/`, `profiles/`, `.github/` and the root documents - nothing else.
-    `overlay.map` carries all 61 layer files (9 replace, 52 add).
+    `overlay.map` carries all 95 layer files (9 replace, 86 add).
 13. Wrapper tooling. **done** - `wolkara/tools/{env,generate,install,run,package_ipa,test_emulation,test_translation_sim}.sh`.
     Each reads the root's ignored `local.env`, prepares the tree, then runs the platform's
     own script against it, so the build logic stays upstream's and `local.env` keys are
@@ -187,7 +187,7 @@ carried. `VALIDATION.md` checks this phase, and every other one, against the des
 
 ## Phase 6 - Clean base
 
-See `AUDIT.md` for the findings. Steps 21-25 are all **todo**: test-harness defaults and
+See `AUDIT.md` for the findings. Steps 21-25 are all **done** or **decided**: test-harness defaults and
 watchdogs, dead weight, layer naming, docs truth, and style.
 
 ## Phase 7 - Contribution pipeline
@@ -204,7 +204,7 @@ watchdogs, dead weight, layer naming, docs truth, and style.
 ## Verification
 
 1. `check_layers.sh` green: platform pristine, patches apply, coverage complete, no
-   cross-module reach-in. *(complete except the two checks blocked on step 11)*
+   cross-module reach-in. *(both reach-in checks exist in `check_layers.sh` now)*
 2. Platform suites in the prepared tree: `tools/test_emulation.sh`,
    `tools/test_translation_sim.sh`, and all three `tests/test_bc_textures` runs.
 3. Layer suites through `wolkara/tools/*`, matching the Phase 0 baseline exactly.
