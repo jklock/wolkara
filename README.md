@@ -1,14 +1,20 @@
-# Wolkara
+# Wolkara Forever
 
-**World of Warcraft on iPhone and iPad, built on [Tolkara](https://github.com/tolkara/tolkara).**
+**World of Warcraft Forever on iPhone and iPad, built on [Tolkara](https://github.com/tolkara/tolkara).**
 
-Wolkara is an independent, experimental fork focused on the WoW experience:
+Wolkara Forever is the name the app displays and the name this fork goes by now. The repository
+and the internal target keep the older names where changing them would break a build or an
+install - the bundle ID above all, so that an update replaces the app in place and the device
+keeps its data.
+
+Wolkara Forever is an independent, experimental fork focused on the WoW experience:
 choose an edition, download its macOS client on the device, keep it updated,
 and play with touch controls or a physical controller. The game runs locally
 through Tolkara's compatibility layer; it is not streamed from a Mac.
 
 Tolkara's runtime and macOS API translation are the foundation of this project.
-Wolkara adds the WoW launcher, downloader/updater and mobile input interface.
+Wolkara Forever adds the WoW launcher, the downloader and updater, the add-on
+manager and the mobile input layer.
 The upstream history, MIT license and [third-party notices](NOTICE.md) are retained.
 This project is not affiliated with or endorsed by Blizzard Entertainment.
 
@@ -31,17 +37,43 @@ A successful build alone does not prove that a signing profile permits startup.
 
 ## Features
 
-- A single WoW home screen with edition, region and language selection.
-- On-device installation and automatic update checks; required updates finish
-  before Play becomes available.
-- Resumable downloads, checksum verification and reuse of verified unchanged
-  game data. Updates preserve settings and addons.
+- A single home screen for the WoW client: edition, region and language.
+- On-device installation and automatic update checks; a required update finishes
+  before Play becomes available. Downloads resume, are checksum-verified, and
+  verified unchanged game data is reused rather than fetched again. Updates keep
+  the user's settings and add-ons.
+- An add-on manager: import an archive from the Files app or from CurseForge,
+  with duplicate, disable, restore, pin and remove handled by the app, and a
+  manifest that records what it installed, so it never removes a folder it did
+  not create.
 - An iOS keyboard with dictation and an editable draft that replaces the focused
-  game field, plus a touch trackpad with two-finger scrolling.
-- Physical controller support and an on-screen controller when none is connected.
+  game field, plus a touch trackpad with two-finger scrolling. A mapped button
+  starts and stops dictation, in either Hold to talk or Press to start and stop,
+  and - for a keyboard key - the game can be kept from seeing it at all.
+- Physical controller support and an on-screen controller when none is connected,
+  with an inspector that reports what a pad has and what it does.
 - Movable touch controls, opacity and size settings, an alignment grid and haptics.
+- The licences the app is obliged to ship, composed into About and reported in
+  the app's own log.
+- Three execution modes for how the original executable reaches memory, each chosen
+  by the user: the iPad's developer service, an external JIT enabler, or Local
+  signing. See [Advanced Tolkara build and execution modes](docs/BUILDING.md).
 
 ## What has been tested
+
+The short version of how to read the rest of this section: every claim here has a script behind
+it, and the script's own output is what is quoted. `wolkara/tools/validate.sh` runs the whole
+set - the layer gate, the unit and fixture suites, the device build, the install and launch on
+the iPad, and the device matrix - and writes one record per commit under
+`development/validation/`, naming the commit it tested and whether the tree was clean.
+
+The device matrix is 23 checks and includes the app's own self-tests, which the app runs on
+itself when launched with `--selftest=<name>`: `input` drives the real input router, settings
+store and published key set with synthetic presses, and `voice` opens a real dictation session
+with the real recogniser - on-device only - and checks that the session is handed back. Those
+exist because a script cannot press a pad button or speak; a person is only needed for a real
+voice, a real pad and the game itself. Development and testing automation is welcome here: the
+ban in the policy below is on automating *the game*, not on testing this app.
 
 The developer reports **60 FPS at graphics quality 4 on an iPhone 16 Pro Max**
 playing WoW Forever (Classic beta). This is a gameplay report, not a benchmark
