@@ -120,16 +120,15 @@ away, so a half-heard utterance cannot land in the game's chat box on the way ou
   the first and stops on the second.
 - **Toggle**: each press alternates.
 
-Both are the same trigger with a different pattern, which is why the trigger
-model carries five patterns - `press`, `double`, `long`, `chord` and
-`push-to-talk` - while this page offers the two that the two modes need.
+These are the two supported patterns. The mode owns the mapping behavior.
+Repeated down samples are ignored until release.
 
 ## What this cannot do, said plainly
 
 **By default a mapping listens to a button; it does not take the button away from the
 game.** The router observes input and the game observes it too, so a button the game already
 uses does both things at once — and a pattern does not change that: hold-to-talk is still a
-press the game receives, and a chord is still those keys.
+press the game receives.
 
 **Keep the game from seeing it**, the switch on the same page, is the one thing that does take
 a button away — and only for what can be taken:
@@ -153,8 +152,7 @@ the game genuinely does not see the key. Apple-reserved buttons cannot be fully 
 which is why hold-to-talk needs a button whose press *and* release both reach us.
 
 **The launcher offers two patterns: hold to talk, and press to start and stop.**
-The trigger model stores and validates five - `press`, `double`, `long`, `chord`
-and `push-to-talk` - and migrations keep old mappings readable, but the page
-offers no double-tap, long press or chord choice, so do not read the model's five
-patterns as five options the user has. Offering the other patterns is not
-started; see `development/NOTES.md`.
+This is the accepted product scope as of 2026-10-17. Double, long and chord
+execution has been removed. Stored mappings using those retired patterns are
+rejected and removed on startup; the user must explicitly map a supported input
+again. Existing Hold and Toggle mappings retain their stored numeric values.

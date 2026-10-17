@@ -381,72 +381,42 @@ static void TestLearning(void) {
         if ([key hasPrefix:@"AKInputTrigger."]) [defaults removeObjectForKey:key];
 }
 
-// Every pattern the router can match. The launcher offers press and push-to-talk; the
-// others are reachable by a stored mapping, and "all trigger patterns" is on the audit's
-// verification list, so they are driven here rather than assumed.
+// Unsupported legacy patterns fail closed; the two supported modes still fire once
+// per physical edge, even when a controller repeats its down sample.
 static void TestTriggerPatterns(void) {
     NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
-    for (NSString *key in defaults.dictionaryRepresentation.allKeys)
-        if ([key hasPrefix:@"AKInputTrigger."]) [defaults removeObjectForKey:key];
+    for (NSNumber *pattern in @[@1, @2, @3, @0.5, @4.5]) {
+        NSDictionary *stored = @{@"element": @"controller.button.a", @"pattern": pattern};
+        CHECK(([AKTrigger triggerFromStored:stored] == nil), @"unsupported pattern %@ refused", pattern);
+        [defaults setObject:stored forKey:@"AKInputTrigger.retired"];
+        [AKTrigger migrateStoredTriggersInDefaults:defaults];
+        CHECK(([defaults objectForKey:@"AKInputTrigger.retired"] == nil), @"retired mapping removed; user must remap");
+    }
     AKVoiceSettings *settings = AKVoiceSettings.shared;
     settings.enabled = YES;
-
     AKInputRouter *router = AKInputRouter.shared;
-    __block NSUInteger fired = 0;
-    router.onTrigger = ^(AKTrigger *trigger, AKInputEvent *event) {
-        (void)trigger; (void)event;
-        fired++;
-    };
+    __block NSUInteger fired = 0, began = 0, ended = 0;
+    router.onTrigger = ^(AKTrigger *t, AKInputEvent *e) { (void)t; (void)e; fired++; };
+    router.onTriggerBegan = ^(AKTrigger *t, AKInputEvent *e) { (void)t; (void)e; began++; };
+    router.onTriggerEnded = ^(AKTrigger *t, AKInputEvent *e) { (void)t; (void)e; ended++; };
+    for (NSNumber *mode in @[@(AKVoiceModeToggle), @(AKVoiceModeHold)]) {
+        settings.mode = mode.integerValue;
+        [settings setLearnedElement:@"controller.button.a" forDevice:@"patterns"];
+        for (NSNumber *pressed in @[@YES, @YES, @NO, @NO])
+            [router reportElement:@"controller.button.a" value:pressed.doubleValue pressed:pressed.boolValue
+                           device:@"patterns" source:AKInputSourceController];
+    }
+    CHECK((fired == 1 && began == 1 && ended == 1), @"one toggle and one hold pair despite repeated samples");
+    router.onTrigger = nil;
     router.onTriggerBegan = nil;
     router.onTriggerEnded = nil;
-
-    AKTrigger *doubleTap = [AKTrigger new];
-    doubleTap.element = @"controller.button.a";
-    doubleTap.pattern = AKTriggerPatternDouble;
-    doubleTap.doubleInterval = 0.35;
-    [settings setTrigger:doubleTap forDevice:@"patterns"];
-
-    // One press is not a double, and two inside the window are.
-    [router reportElement:@"controller.button.a" value:1 pressed:YES device:@"patterns" source:AKInputSourceController];
-    [router reportElement:@"controller.button.a" value:0 pressed:NO device:@"patterns" source:AKInputSourceController];
-    CHECK((fired == 0), @"one press must not fire a double, got %lu", (unsigned long)fired);
-    [router reportElement:@"controller.button.a" value:1 pressed:YES device:@"patterns" source:AKInputSourceController];
-    [router reportElement:@"controller.button.a" value:0 pressed:NO device:@"patterns" source:AKInputSourceController];
-    CHECK((fired == 1), @"two presses in the window must fire once, got %lu", (unsigned long)fired);
-
-    // Long: a tap the game owns is untouched, a held press is not.
-    fired = 0;
-    AKTrigger *longPress = [AKTrigger new];
-    longPress.element = @"controller.button.b";
-    longPress.pattern = AKTriggerPatternLong;
-    longPress.holdInterval = 0.15;
-    [settings setTrigger:longPress forDevice:@"patterns"];
-    [router reportElement:@"controller.button.b" value:1 pressed:YES device:@"patterns" source:AKInputSourceController];
-    [router reportElement:@"controller.button.b" value:0 pressed:NO device:@"patterns" source:AKInputSourceController];
-    Pump(0.4);
-    CHECK((fired == 0), @"a quick tap must not fire a long press, got %lu", (unsigned long)fired);
-    [router reportElement:@"controller.button.b" value:1 pressed:YES device:@"patterns" source:AKInputSourceController];
-    Pump(0.4);
-    CHECK((fired == 1), @"a held press must fire once, got %lu", (unsigned long)fired);
-    [router reportElement:@"controller.button.b" value:0 pressed:NO device:@"patterns" source:AKInputSourceController];
-
-    // Chord: the partner has to be down first.
-    fired = 0;
-    AKTrigger *chord = [AKTrigger new];
-    chord.element = @"controller.button.x";
-    chord.chordElement = @"controller.button.y";
-    chord.pattern = AKTriggerPatternChord;
-    [settings setTrigger:chord forDevice:@"patterns"];
-    [router reportElement:@"controller.button.x" value:1 pressed:YES device:@"patterns" source:AKInputSourceController];
-    CHECK((fired == 0), @"one half of a chord must not fire");
-    [router reportElement:@"controller.button.x" value:0 pressed:NO device:@"patterns" source:AKInputSourceController];
-    [router reportElement:@"controller.button.y" value:1 pressed:YES device:@"patterns" source:AKInputSourceController];
-    [router reportElement:@"controller.button.x" value:1 pressed:YES device:@"patterns" source:AKInputSourceController];
-    CHECK((fired == 1), @"both halves together must fire once, got %lu", (unsigned long)fired);
-
-    router.onTrigger = nil;
-    for (NSString *key in defaults.dictionaryRepresentation.allKeys)
-        if ([key hasPrefix:@"AKInputTrigger."]) [defaults removeObjectForKey:key];
+    [settings clearMappingForDevice:@"patterns"];
+    [defaults setObject:@{@"element": @"controller.button.a", @"pattern": @0} forKey:@"AKInputTrigger.imported"];
+    settings.mode = AKVoiceModeHold;
+    // Model an import arriving after mode selection.
+    [defaults setObject:@{@"element": @"controller.button.a", @"pattern": @0} forKey:@"AKInputTrigger.imported"];
+    CHECK(([settings triggerForDevice:@"imported"].pattern == AKTriggerPatternPushToTalk), @"mode wins over imported stale pattern");
+    [settings clearMappingForDevice:@"imported"];
 }
 
 // The audio session, through the real bridge rather than a fake. The remediation review

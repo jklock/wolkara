@@ -637,3 +637,35 @@ than looked at, and the other patterns the trigger model can store are still not
 the page.
 
 
+
+## 2026-10-17 — finishing the handoff
+
+The user chose the corrected-logo icon, Hold/Toggle only, and the controller collision
+warning. The root logo stays tracked. `development/ICON.md` records the committed icon
+source and reproducible generator; all device-size previews were visually reviewed.
+
+Real ZIP coverage did not need a person or an external add-on. The fixture builds the
+same pinned ZIPFoundation and the production Swift extractor, then drives the real
+Objective-C import bridge and store. It caught discarded CRC results: corrupt bytes
+were accepted. CRC mismatches now fail and clean up; an existing destination is refused
+rather than risking removal of caller data. An outer import cleanup also covers errors
+before acquiring the store lock. The suite checks 49 assertions plus the import lifecycle.
+
+CurseForge transport can be faked without faking the client's parser. Nineteen checks
+caught unchecked response and file-entry shapes. Live credentials and service availability
+are still a distinct verification boundary.
+
+The known signer failure also stopped the platform suite before container, fixup, TLS,
+keyboard, drawing, crypto and cloud tests. Patch 0015 retains that failure but runs the
+rest. Validation requires the completion marker and exit 1 to classify it as known;
+six classifier cases reject incomplete runs, mixed failures and crashes. Layer suites
+have their own rows, so validation runs the platform emulation script directly instead
+of repeating all layer suites through its wrapper.
+
+Retired double/long/chord mappings fail closed and must be remapped. Hold and Toggle
+keep their stored values. Mode selection wins over stale imported patterns, and repeated
+pressed samples cannot toggle twice. The final focused voice run passed 244 checks.
+
+The current candidate's full/device results belong in the generated record under
+`development/validation/`. Microphone speech, physical controller delivery and live game
+chat still require observations on that installed candidate; passing fakes is not proof.
