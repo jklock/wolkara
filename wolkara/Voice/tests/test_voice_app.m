@@ -752,6 +752,16 @@ static void TestVoiceScreens(UIWindow *window) {
     UILabel *mapping = (id)Find(settings.view, @"voice.mapping");
     CHECK((mapping.text.length > 0), @"and it says what is mapped, got nothing");
     CHECK((Find(settings.view, @"voice.map") != nil), @"and it has the Map button");
+    // The audit's finding: the router observes input and the game observes it too, so a
+    // mapped button keeps doing its game action. The product is limited to explicitly
+    // mapped inputs and says so where the mapping is made; if that sentence ever goes
+    // away, the limit is no longer stated anywhere the user will see it.
+    UILabel *collision = (id)Find(settings.view, @"voice.mapping.collision");
+    CHECK((collision != nil), @"and it says the mapped button still reaches the game");
+    CHECK(([collision.text containsString:@"still reaches the game"]), @"in those words, got: %@", collision.text);
+    // And it does not offer patterns it cannot honour: two modes, not four patterns.
+    UISegmentedControl *mode = (id)Find(settings.view, @"voice.mode");
+    CHECK((mode.numberOfSegments == 2), @"and offers two modes, not the model's four patterns");
     // Leaving the page must not leave the mapper armed.
     [AKInputRouter.shared beginLearning];
     [navigation popViewControllerAnimated:NO];

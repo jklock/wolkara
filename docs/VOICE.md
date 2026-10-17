@@ -122,3 +122,25 @@ away, so a half-heard utterance cannot land in the game's chat box on the way ou
 
 Both are the same trigger with a different pattern, which is why the router
 carries a `hold` pattern alongside press, double, long and chord.
+
+## What this cannot do, said plainly
+
+**A mapping listens to a button; it does not take the button away from the
+game.** The router observes input and the game observes it too, so a button the
+game already uses does both things at once — and a pattern does not change that:
+hold-to-talk is still a press the game receives, and a chord is still those keys.
+Nothing here arbitrates, owns or swallows input, and no pattern should be read as
+a way to make a button safe to share. The page says this where the mapping is
+made, and so does the log line written when one is saved.
+
+What follows from that, for anyone choosing a button: pick one the game does not
+already use. Apple-reserved buttons cannot be fully ours either, which is why a
+system signal cannot be mapped at all and why hold-to-talk needs a button whose
+press *and* release both reach us.
+
+**The launcher offers two patterns: hold to talk, and press to start and stop.**
+The trigger model stores and validates press, double, long and chord, and
+migrations keep old mappings readable, but the page offers no double-tap, long
+press or chord choice — so do not read the model's four patterns as four options
+the user has. Implementing arbitration or offering the other patterns is not
+started; see `development/NOTES.md`.

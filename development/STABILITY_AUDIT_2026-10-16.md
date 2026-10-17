@@ -219,6 +219,20 @@ Required fix: either limit the product to explicitly mapped inputs with a
 collision warning, or implement real input arbitration/ownership. Do not
 describe patterns as universally safe until they are.
 
+**Resolved by the first branch, 2026-10-16.** Arbitration is not implemented and
+is still not started; instead the product is limited to explicitly mapped inputs
+and says what that means. The page that makes the mapping now carries the warning
+in those terms - "The button you map still reaches the game. Nothing here takes it
+away from the game, so choosing one the game already uses makes it do both things
+at once" - the same sentence is written to the log when a mapping is saved, and
+`docs/VOICE.md` has a section stating what the feature cannot do: no arbitration,
+no ownership, no pattern that makes a shared button safe. The second half of the
+finding is answered too: the page offers two modes and no double/long/chord
+choice, and both the docs and the fixture say so rather than leaving the trigger
+model's four patterns to be mistaken for four options. The fixture asserts the
+warning is on the page and that the mode control has two segments, so neither can
+disappear silently.
+
 ### Mapping timeout leaves the mapper armed
 
 After 20 seconds the UI says nothing arrived, but it never clears

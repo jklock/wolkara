@@ -80,7 +80,15 @@
     self.mapButton = [self filledButton:@"voice.map" title:@"Map a button…" action:@selector(beginMapping)];
     self.clearButton = [self borderedButton:@"voice.clear" title:@"Clear" action:@selector(clearMapping)];
     self.mappingHint = WKNote(@"Tap Map, then press the button you want to use.");
-    self.mappingCard = [self card:@[self.mappingValue, self.mapButton, self.clearButton, self.mappingHint]];
+    // The audit's finding, said where the mapping is made rather than in a document
+    // nobody reads: this feature listens to a button, it does not take the button away
+    // from the game. So a button the game already uses does both, and a pattern like
+    // hold-to-talk is not a way to keep the game from seeing the press. It carries an
+    // identifier because the voice fixture asserts the warning is still on the page: a
+    // warning that can disappear without a test is the same as no warning.
+    UILabel *collision = WKNote(@"The button you map still reaches the game. Nothing here takes it away from the game, so choosing one the game already uses makes it do both things at once.");
+    collision.accessibilityIdentifier = @"voice.mapping.collision";
+    self.mappingCard = [self card:@[self.mappingValue, self.mapButton, self.clearButton, self.mappingHint, collision]];
     [rows addArrangedSubview:self.mappingCard];
 
     // --- How it behaves -----------------------------------------------------
@@ -137,9 +145,13 @@
         // The element arrives as a canonical id, so what is stored is the same thing
         // that will be compared on the next press.
         [settings setLearnedElement:trigger.element forDevice:device];
-        WKLog("voice", @"mapped %@ for %@", trigger.element, device);
+        // Said in the log as well as on the page: this mapping does not take the button
+        // away from the game, so a button the game uses does both. Stated at the moment it
+        // is saved, which is when the user has just chosen it.
+        WKLog("voice", @"mapped %@ for %@ (the game still receives it; a shared button does both)",
+              trigger.element, device);
         [weakSelf refreshMapping];
-        weakSelf.mappingHint.text = @"Saved. It applies whenever that controller is connected.";
+        weakSelf.mappingHint.text = @"Saved. It applies whenever that controller is connected — and the game still receives that button.";
     };
     // The arming expires in the router, not here, but this is where the user is
     // looking when it does.
