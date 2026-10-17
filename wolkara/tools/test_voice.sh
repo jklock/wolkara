@@ -39,7 +39,7 @@ xcrun --sdk iphonesimulator clang -target arm64-apple-ios17.0-simulator -fobjc-a
     launcher/Controller/ControllerInspector.m launcher/App/WolkaraLog.m \
     launcher/App/WolkaraConfig.m tests/test_voice_app.m \
     -framework Foundation -framework UIKit -framework QuartzCore -framework GameController \
-    -framework AVFAudio -framework Speech -lz \
+    -framework AVFAudio -framework Speech -framework CoreGraphics -lz \
     -o "$APP/VoiceTests"
 cat > "$APP/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

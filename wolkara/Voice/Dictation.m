@@ -189,8 +189,27 @@ static NSTimeInterval const AKDefaultFinalizeTimeout = 3.0;
         // leaving the microphone open behind a session we no longer own.
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(sessionWasInterrupted:)
                                                    name:AVAudioSessionInterruptionNotification object:nil];
+        // And leaving the app does too. This matters here more than in most apps: the
+        // target declares `UIBackgroundModes: [audio]` so a running game keeps its sound,
+        // which means iOS does NOT take the session away when the user goes to the Home
+        // screen. Without this, a session left listening would hold the microphone and
+        // Apple's recogniser open in the background - the user would see the orange
+        // indicator with the game behind it, and nothing would ever type the words.
+        [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(appLeftTheForeground:)
+                                                   name:UIApplicationDidEnterBackgroundNotification object:nil];
     }
     return self;
+}
+
+- (void)appLeftTheForeground:(NSNotification *)note {
+    (void)note;
+    // Said before the state is changed, because the state is what a reader wants to know.
+    WKLog("voice", @"dictation: the app went to the background (state=%ld, listening=%d)",
+          (long)_state, (int)self.listening);
+    if (_state == AKDictationStateIdle) return;
+    [self cancel];
+    void (^problem)(NSString *) = self.problemHandler;
+    if (problem) problem(@"The app went to the background, so nothing was typed.");
 }
 
 - (void)sessionWasInterrupted:(NSNotification *)note {

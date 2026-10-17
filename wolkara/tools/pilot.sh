@@ -17,6 +17,8 @@
 #   wolkara/tools/pilot.sh view              screenshot, log, whether it crashed or asserted
 #   wolkara/tools/pilot.sh crash             read the newest crash report out loud
 #   wolkara/tools/pilot.sh log [lines] [pat] the app's own log, from Documents
+#   wolkara/tools/pilot.sh leave [bundle]    put the app in the background for real
+#   wolkara/tools/pilot.sh return            bring it back to the front
 #   wolkara/tools/pilot.sh cycle             state, install, launch, wait, view
 #
 # Every command that launches records the newest error file and the newest crash report
@@ -606,6 +608,30 @@ for thread in body.get("threads", []):
 PY
 }
 
+# Putting the app away and bringing it back, which is a real thing to test and used to be
+# something only a person could do by tapping Home. Launching another app is enough: iPadOS
+# backgrounds ours. What is being checked afterwards is the app's own log, because nothing on
+# this Mac can see which app is in front.
+cmd_leave() {
+    local other=${1:-com.apple.Preferences}
+    local pid; pid=$(app_pid)
+    [ -n "$pid" ] || die "the app is not running, so there is nothing to put away.
+       Launch it first (pilot.sh launch), then leave."
+    say "opening $other, which puts the app in the background"
+    xcrun devicectl device process launch --device "$DEVICE" "$other" >/dev/null 2>&1 \
+        || die "could not open $other; is the iPad unlocked?"
+    sleep 2
+    # Still running, and that is the point: this is backgrounding, not a stop.
+    say "the app is now $( [ -n "$(app_pid)" ] && echo 'in the background (still running)' || echo 'GONE, which is not what this does' )"
+}
+
+cmd_return() {
+    say "bringing the app back to the front"
+    xcrun devicectl device process launch --device "$DEVICE" "$BUNDLE" >/dev/null 2>&1 \
+        || die "could not bring $BUNDLE back; is the iPad unlocked?"
+    sleep 2
+}
+
 case "${1:-state}" in
     state)   cmd_state ;;
     stop)    cmd_stop "${2:-}" ;;
@@ -616,6 +642,8 @@ case "${1:-state}" in
     view)    cmd_view ;;
     crash)   cmd_crash ;;
     log)     cmd_log "${2:-}" "${3:-}" ;;
+    leave)   cmd_leave "${2:-}" ;;
+    return)  cmd_return ;;  # `return` is a shell keyword; the case label is a plain word here
     cycle)
         cmd_install "${2:-}"
         cmd_launch
