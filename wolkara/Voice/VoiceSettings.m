@@ -150,7 +150,9 @@ static NSUInteger const AKVoiceWordLengthLimit = 64;
 // What is mapped, whether or not the feature is switched on: the settings screen has
 // to be able to show the user what they chose while it is off.
 - (nullable AKTrigger *)storedTriggerForDevice:(nullable NSString *)device {
-    return [AKTrigger savedTriggerForDevice:device defaults:NSUserDefaults.standardUserDefaults];
+    AKTrigger *trigger = [AKTrigger savedTriggerForDevice:device defaults:NSUserDefaults.standardUserDefaults];
+    if (trigger) trigger.pattern = self.mode == AKVoiceModeHold ? AKTriggerPatternPushToTalk : AKTriggerPatternPress;
+    return trigger;
 }
 
 - (void)setLearnedElement:(NSString *)element forDevice:(nullable NSString *)device {
@@ -202,9 +204,8 @@ static NSUInteger const AKVoiceWordLengthLimit = 64;
         NSDictionary *stored = [defaults dictionaryForKey:key];
         AKTrigger *trigger = [AKTrigger triggerFromStored:stored];
         if (!trigger) continue;
-        // Only the two the launcher offers are rewritten: a long press or a chord that
-        // was set some other way is that, not a mode.
-        if (!trigger.patternIsOfferedInTheLauncher || trigger.pattern == wanted) continue;
+        // Every supported mapping follows the selected mode.
+        if (trigger.pattern == wanted) continue;
         trigger.pattern = wanted;
         [trigger saveForDevice:[key substringFromIndex:@"AKInputTrigger.".length] defaults:defaults];
     }

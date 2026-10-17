@@ -216,7 +216,7 @@ Validation for this follow-up on Xcode 27.0 / iOS 27.0:
   build metadata and original game executable hashes. Device typing/dictation
   validation is pending.
 
-For manual comparison, `tools/test_touch_controls_ui.sh
+For manual comparison, `wolkara/tools/test_touch_controls_ui.sh
 --native-keyboard-reference` opens an ordinary UIKit text view in the synthetic
 fixture, without the keyboard adapter.
 
@@ -339,7 +339,7 @@ previously reproduced on unchanged upstream `199da9e`; the full suite is not
 green. The commands after that failure were run separately and passed.
 
 To inspect or interact with the original fixture, run
-`bash tools/test_touch_controls_ui.sh` (set `SIMULATOR` to choose a device).
+`bash wolkara/tools/test_touch_controls_ui.sh` (set `SIMULATOR` to choose a device).
 It builds and launches only the test screen, never an imported application.
 `--show-keyboard` opens its keyboard for visual inspection; `--self-test`
 exits after the assertions. Synthetic tests are also registered in the
