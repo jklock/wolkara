@@ -527,6 +527,43 @@ device is not a check, and a guard that exists to protect the user's data must b
 rather than overridden. `--force` was available the whole time and would have turned every
 one of these into a pass while quietly writing over a half-finished update.
 
+**A button that had stopped doing what it says, and no step that asked.** The touch-controls
+fixture asserts that Replace replaces the whole game field and that an empty draft clears it.
+It had been failing, at one assertion, for a day - and nothing ran it: not `validate.sh`, not
+the emulation suite, not the translation suite. A green validation record meant nothing about
+this file, which is the same shape of gap as the notices: the evidence was being read from
+somewhere that could not have known.
+
+The assertion had no message, so the first thing was to make it say which of its three
+conditions moved. It said:
+
+    TOUCH_UI_INSERT_MISMATCH: guest text=Previous synthetic value insert.enabled=0 replacements=0
+
+Zero guest operations, the field untouched, and the button had gone from enabled to disabled -
+so the tap had been handled, and had done nothing to the game. The handler was in our patch
+`0009`:
+
+    // Nothing else: no select-all, no delete, no clipboard, no Return. A synthetic
+    // Command+A followed by a delete was the only thing the guest received differently on
+    // the dictation then Replace that ended with the app quitting, so it is gone.
+
+Select-all-then-delete had been removed as a suspected cause of the app quitting after
+"dictation then Replace". The real cause had already been diagnosed with its exception
+message: `-[AKKeyboardTextView insertDictationResult:]`, a selector `UITextView` does not
+implement, sent to `super` the instant a dictation landed - the note above, same day. Replace
+was blamed because it came next. With that fixed, removing select-all bought nothing and cost
+the contract: the button stayed enabled for an empty draft, its hint still said "Replaces the
+whole selected game field. An empty draft clears it.", `docs/TOUCH_INPUT.md` still specified
+the Command+A/Backspace/keys sequence, and `touchReplaceText:` typed at the caret instead. So
+Replace inserted text where the user expected the field to be replaced, or cleared - in a game
+chat box, which is the worst place to be quietly wrong about whether old text is still there.
+
+Restored, to the sequence the documentation specifies, with the reasoning written down where
+the next person will read it. `test_touch_controls_ui.sh --self-test` passes again:
+"whole-field replacement, empty clearing, duplicate suppression, draft editing, dictation,
+cancellation and fixed toolbar". Both touch fixtures are now steps in `validate.sh`, because
+a fixture that nothing runs is a fixture that lies.
+
 ### Still open, and known
 
 - Voice has no test for the *pages* beyond the fixture's screenshots; the rules are covered, the

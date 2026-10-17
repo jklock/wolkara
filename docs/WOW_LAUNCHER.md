@@ -364,6 +364,14 @@ Results with Xcode 27.0:
 - `tools/test_emulation.sh`: PASS in full. The older signing-test failure
   recorded above no longer reproduces with this toolchain; no signer changes
   were needed for this UI work.
+  **Corrected on 2026-10-16:** with Xcode 27.0 it does reproduce, identically and
+  with identical sizes, and it reproduces in a checkout of the platform at the
+  same commit with no layer applied at all - so it is the platform's, not the
+  layer's, and it is on the list in `wolkara/tools/known_platform_failures.txt`
+  with that evidence beside it. A validation run therefore reports the suite as
+  PASS with one known platform failure, which is not the same sentence as "PASS in
+  full" and must not be read as one. `docs/TOUCH_INPUT.md` recorded it correctly
+  at the time; this file did not.
 - `tools/generate.sh`: PASS; both `LICENSE` and `NOTICE.md` are app resources.
 - `xcodebuild -project Tolkara.xcodeproj -scheme Tolkara -configuration Debug
   -sdk iphoneos -destination generic/platform=iOS -derivedDataPath
