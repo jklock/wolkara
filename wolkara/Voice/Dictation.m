@@ -30,6 +30,24 @@ static NSTimeInterval const AKDefaultFinalizeTimeout = 3.0;
     SFSpeechRecognitionTask *_task;
     void (^_handler)(NSString *, BOOL, NSError *);
     BOOL _finished;
+    float _inputLevel;
+    NSUInteger _buffersReceived;
+    void (^_levelHandler)(float);
+}
+
+// The loudest sample in a buffer, 0 to 1. The tap is installed with the input's own float format,
+// so anything else is treated as silence rather than guessed at.
+static float AKSpeechPeak(AVAudioPCMBuffer *buffer) {
+    if (!buffer.floatChannelData || buffer.frameLength == 0) return 0;
+    float peak = 0;
+    for (AVAudioChannelCount channel = 0; channel < buffer.format.channelCount; channel++) {
+        const float *samples = buffer.floatChannelData[channel];
+        for (AVAudioFrameCount frame = 0; frame < buffer.frameLength; frame++) {
+            float value = samples[frame] < 0 ? -samples[frame] : samples[frame];
+            if (value > peak) peak = value;
+        }
+    }
+    return peak;
 }
 
 - (instancetype)init {
@@ -66,10 +84,22 @@ static NSTimeInterval const AKDefaultFinalizeTimeout = 3.0;
     _engine = [[AVAudioEngine alloc] init];
     AVAudioInputNode *input = _engine.inputNode;
     AVAudioFormat *format = [input outputFormatForBus:0];
+    _inputLevel = 0;
+    _buffersReceived = 0;
     [input installTapOnBus:0 bufferSize:1024 format:format
                      block:^(AVAudioPCMBuffer *buffer, AVAudioTime *when) {
         (void)when;
         [self->_request appendAudioPCMBuffer:buffer];
+        // What it is hearing, for the screen and for the log. Published on the main queue because
+        // a screen draws it; the peak is kept rather than the last sample so that a bar built from
+        // this does not flicker to zero between words. Counting buffers as well as measuring them
+        // is what tells a silent room apart from a microphone that is not delivering anything.
+        float level = AKSpeechPeak(buffer);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self->_buffersReceived++;
+            if (level > self->_inputLevel) self->_inputLevel = level;
+            if (self->_levelHandler) self->_levelHandler(self->_inputLevel);
+        });
     }];
 
     __weak AKSpeechSession *weakSelf = self;
@@ -101,6 +131,7 @@ static NSTimeInterval const AKDefaultFinalizeTimeout = 3.0;
 - (void)cancel {
     _finished = YES;
     _handler = nil;
+    _levelHandler = nil;
     if (_engine) {
         [_engine.inputNode removeTapOnBus:0];
         [_engine stop];
@@ -110,6 +141,10 @@ static NSTimeInterval const AKDefaultFinalizeTimeout = 3.0;
     _task = nil;
     _request = nil;
 }
+
+- (float)inputLevel { return _inputLevel; }
+- (NSUInteger)buffersReceived { return _buffersReceived; }
+- (void)setLevelHandler:(void (^)(float))handler { _levelHandler = [handler copy]; }
 
 @end
 
@@ -290,6 +325,32 @@ static __weak UIView *AKGameTextTarget = nil;
 
 - (void)startAudioForSession:(NSUInteger)session {
     if (_session != session || _abandoned) return;
+    // Whether the app may use the microphone at all, asked before anything is opened. On
+    // 2026-10-17 a reinstall left this app without the microphone grant, and dictation then said
+    // "Nothing was heard" - the recogniser listening to a silent stream, which is what iOS feeds
+    // an app it has not allowed to listen. That message sent the user looking for a fault that was
+    // not there; this is the fault, and it has a different answer.
+    AVAudioApplicationRecordPermission permission = [AVAudioApplication sharedInstance].recordPermission;
+    WKLog("voice", @"dictation: microphone permission=%ld", (long)permission);
+    if (permission == AVAudioApplicationRecordPermissionDenied) {
+        [self fail:@"Wolkara is not allowed to use the microphone. Turn it on in Settings, under Privacy & Security, Microphone, then try again."];
+        return;
+    }
+    if (permission == AVAudioApplicationRecordPermissionUndetermined) {
+        __weak AKDictation *weakSelf = self;
+        [AVAudioApplication requestRecordPermissionWithCompletionHandler:^(BOOL granted) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                AKDictation *self2 = weakSelf;
+                if (!self2 || self2->_session != session) return;
+                if (!granted) {
+                    [self2 fail:@"Wolkara is not allowed to use the microphone. Turn it on in Settings, under Privacy & Security, Microphone, then try again."];
+                    return;
+                }
+                [self2 startAudioForSession:session];
+            });
+        }];
+        return;
+    }
     // Refused before anything is opened, rather than started and failed: the audio
     // session is not ours to take if there is nothing to feed it to.
     if (!self.speech.isAvailable) {
@@ -425,6 +486,14 @@ static __weak UIView *AKGameTextTarget = nil;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{ [weakSelf giveTheSessionBack]; });
 }
+
+// What the microphone is hearing, straight from the session that owns the tap. A screen draws it
+// and the log records it, so whether audio is arriving is answered by a number rather than by the
+// absence of an error message.
+- (float)inputLevel { return self.speech.inputLevel; }
+- (NSUInteger)buffersReceived { return self.speech.buffersReceived; }
+- (void (^)(float))levelHandler { return self.speech.levelHandler; }
+- (void)setLevelHandler:(void (^)(float))handler { self.speech.levelHandler = handler; }
 
 - (void)fail:(NSString *)message {
     WKLog("voice", @"dictation: %@", message);
