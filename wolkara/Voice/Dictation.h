@@ -53,6 +53,13 @@ typedef NS_ENUM(NSInteger, AKDictationState) {
 - (void)finish;
 /// Abandon the session. No further handler calls.
 - (void)cancel;
+/// How much sound has arrived this session: the loudest sample seen, 0 to 1, and how many buffers
+/// the tap delivered. A recogniser that reports no speech and a level of zero are the same
+/// finding - the difference between an app that is not listening and a room that is quiet - and
+/// the buffer count is what proves audio is reaching the app when the room is silent.
+@property (nonatomic, readonly) float inputLevel;
+@property (nonatomic, readonly) NSUInteger buffersReceived;
+@property (nonatomic, copy, nullable) void (^levelHandler)(float level);
 @end
 
 @protocol AKDictationAudio <NSObject>
@@ -75,6 +82,11 @@ typedef NS_ENUM(NSInteger, AKDictationState) {
 /// The microphone is open. True while listening *and* while waiting for the last
 /// words, because the indicator above the iPad must not blink off in between.
 @property (nonatomic, readonly) BOOL listening;
+/// What the microphone has heard this session, and called while it changes so a screen can show
+/// that it is being heard as it happens. Nil when nothing is running.
+@property (nonatomic, readonly) float inputLevel;
+@property (nonatomic, readonly) NSUInteger buffersReceived;
+@property (nonatomic, copy, nullable) void (^levelHandler)(float level);
 
 - (void)toggle;
 - (void)begin;

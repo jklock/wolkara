@@ -247,7 +247,12 @@ static NSString *AKAudioStateDescription(void) {
     NSString *category = [session.category stringByReplacingOccurrencesOfString:@"AVAudioSessionCategory" withString:@""];
     BOOL recording = [session.category isEqualToString:AVAudioSessionCategoryRecord] ||
                      [session.category isEqualToString:AVAudioSessionCategoryPlayAndRecord];
-    return [NSString stringWithFormat:@"%@/%@ mic=%d", category, session.mode, (int)recording];
+    // The microphone permission is in this line because it is the one thing about the microphone
+    // that a reinstall can change, and nothing else on this Mac can see it: on 2026-10-17 a
+    // reinstall left the app without the grant, and dictation reported hearing nothing while the
+    // session looked perfectly healthy.
+    return [NSString stringWithFormat:@"%@/%@ mic=%d perm=%ld", category, session.mode, (int)recording,
+            (long)[AVAudioApplication sharedInstance].recordPermission];
 }
 
 - (void)sceneDidBecomeActive:(UIScene *)scene {

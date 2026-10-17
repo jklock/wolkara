@@ -317,12 +317,18 @@ static void AKSelfTestRunVoice(AKSelfTestRecorder *recorder) {
             // `listening` is the app's own record that it got as far as opening the microphone,
             // and this is the operating system's corroboration of it.
             [recorder check:AKSelfTestIsRecordingCategory(session.category) _:@"the microphone is opened for a session started for real"];
+            // The one that matters to somebody who is speaking: audio is arriving. A silent stream is
+            // what iOS hands an app it has not allowed to listen, and it looks exactly like a working
+            // session until the recogniser reports that it heard nothing.
+            [recorder check:(dictation.buffersReceived > 0) _:[NSString stringWithFormat:@"and the microphone is delivering audio (%lu buffer(s), loudest %.3f)",
+                (unsigned long)dictation.buffersReceived, dictation.inputLevel]];
             AKSelfTestOnMain(^{ [dictation cancel]; });
             AKSelfTestSleep(0.6);
             [recorder check:(dictation.state == AKDictationStateIdle) _:@"cancelling ends the session"];
             [recorder check:(!dictation.listening) _:@"and closes the microphone"];
             [recorder check:[session.category isEqualToString:categoryBefore] _:@"and puts the audio session back as it was"];
-            detail = @"speech=authorized on-device=1, session=record-then-restored";
+            detail = [NSString stringWithFormat:@"speech=authorized on-device=1, permission=%ld, buffers=%lu, session=record-then-restored",
+                  (long)[AVAudioApplication sharedInstance].recordPermission, (unsigned long)dictation.buffersReceived];
         } else {
             // It did not open. On a device where it does not, the app must either say why or be
             // visibly still waiting on the permission callback - doing neither, silently, is the
