@@ -16,6 +16,7 @@ python3 wolkara/tools/make_wolkara_icon.py
 This uses the committed source, the vendored SVG renderer, Chrome and `sips`.
 It writes to the layer's asset catalog, not a nonexistent root launcher directory.
 Default and dark share the dark artwork; tinted is monochrome. The output is opaque,
-1024 square, and Xcode generates device sizes. Every distinct device pixel size from
-upstream's icon size list has a preview in ignored `build/icon-previews/`.
+1024 square, and Xcode generates device sizes. Every distinct device pixel size below the
+1024 the asset is drawn at has a preview in ignored `build/icon-previews/`; the 1024 itself
+is the asset, not a preview of it.
 The generator never calls imagegen or modifies `platform/`.

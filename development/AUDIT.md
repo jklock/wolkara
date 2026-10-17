@@ -7,6 +7,11 @@ This is Phase 6 of `PLAN.md`.
 
 ## Test harness
 
+**Corrections, 2026-10-17:** the three UI scripts named below default to `iPad Pro 13-inch
+(M5)` now, not `iPhone 17 Pro`, and `test_translation_sim.sh` never set a simulator default
+of its own - it prepares the tree and `exec`s the platform's script. The rest of this
+section holds.
+
 - `tools/test_touch_controls_ui.sh:6`, `tools/test_touch_gamepad_ui.sh:6` and
   `tools/test_wow_launcher_ui.sh:5` default `SIMULATOR=iPhone 17 Pro`, which does not
   exist on this Mac and will fail unless `SIMULATOR` is set. The simulators installed
@@ -154,7 +159,7 @@ pre-split base - and asking which side actually changed.
 | Group | Count | Result |
 | --- | --- | --- |
 | The vendored platform | 513 files | byte-identical to `upstream/main` today (checked live on every gate run) |
-| Our patches | 9 at the time of the split (14 now) | each is a three-way merge of our change onto upstream's current file, and every one merged clean, so no upstream line was dropped |
+| Our patches | 9 at the time of the split (15 now) | each is a three-way merge of our change onto upstream's current file, and every one merged clean, so no upstream line was dropped |
 | Our replacements | 9 | decided one by one: 3 dropped (we had not changed them), 5 merged with theirs, 2 ours-only (branding plists) |
 | Our additions | 52 | upstream has no file at those paths; the overlay refuses an `add` that would collide with one it has |
 | Files deleted as superseded | 22 | 7 we had not changed; 9 covered by a patch; 3 tools whose only change was branding and the display name, now the layer's; 2 tests of ours dropped on purpose; **1 real gap** |
@@ -234,6 +239,11 @@ explicitly deferred before a stable release. Here is which, and why.
 
 ### Automated coverage
 
+**Corrections, 2026-10-17:** the archive-extractor and CurseForge entries below were closed
+the next day, not deferred - see "Current disposition" at the top of this file. Both are
+rows in `validate.sh` now (`test_addon_archive.sh`, `test_curseforge.sh`), and the real
+ZIPFoundation revision the app pins is built and linked by the first of them.
+
 - **The add-on store and the credential store: resolved.** `wolkara/WoW/tests/test_wow_launcher_app.m`
   now drives `TKWoWAddonsAtDirectory` (which folders count, the TOC's title and version, a
   folder with no TOC, a file that is not a folder, a hidden folder) and `TKAddonStore`
@@ -266,15 +276,18 @@ a line in the log rather than a run that never ends.
 ### Stale documentation and claims
 
 Resolved. `development/README.md` carries a "Current state" table with the counts that hold
-now (platform pin, 14 patches, 91 overlay entries, 11 gate checks) and the command that
+now (platform pin, 15 patches, 95 overlay entries, 11 gate checks) and the command that
 checks each one, and says that `wolkara/tools/validate.sh` is where release evidence comes
 from. `PLAN.md`, `VALIDATION.md` and this file had their stale counts corrected and the ones
 that are facts about the split are marked as of the split. `VALIDATION.md` points at the new
-mechanism rather than standing in for it.
+mechanism rather than standing in for it. The `overlay.map` line count is 123 lines; the
+`95` above is its entries, which is what the gate regenerates and compares.
 
-What is *not* resolved, and is recorded in `development/NOTES.md`: voice has no test of the
-page layout beyond the fixture's screenshots, and input arbitration - what "collision-free"
-would actually require - is not started.
+What was *not* resolved on 2026-10-16, and is now: the page layout the fixture asserts is
+structural (every identifier on screen, sized, named, not overlapping), so "no test of the
+layout beyond the screenshots" stopped being true; and input arbitration - what
+"collision-free" would require - was decided against, with keyboard ownership and a stated
+warning on the page instead. See `development/NOTES.md`.
 
 The licences are resolved, and finding out what was actually wrong took reading the bundle
 rather than the note. The app *did* ship two documents; they were **upstream's**, because

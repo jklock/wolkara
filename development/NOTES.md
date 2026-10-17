@@ -669,3 +669,48 @@ pressed samples cannot toggle twice. The final focused voice run passed 244 chec
 The current candidate's full/device results belong in the generated record under
 `development/validation/`. Microphone speech, physical controller delivery and live game
 chat still require observations on that installed candidate; passing fakes is not proof.
+
+## 2026-10-17 - the second pass: what reading found, and what the device now proves
+
+The handoff was picked up again and the audit's reading-level findings were worked rather
+than assumed. Each of these was a real defect, and each has a fixture that would fail if it
+came back:
+
+- **The extractor believed the archive.** The limits were checked against the sizes a ZIP
+declares in its own header, and the compressed stream is read to its end - so one entry
+declaring ten bytes and inflating to seventy megabytes passed every check. The bytes that
+actually come out are counted now, per entry and in total, and measured *before* anything is
+written. The fixture rewrites a central directory's uncompressed size to build exactly that
+archive; the suite refuses it, for that reason, and asserts nothing was written.
+- **A failed removal could lose a package.** The folders were moved aside and the ownership
+record written afterwards, so a failed write left the folders gone while the manifest still
+claimed them. The record is written first now: a failed write moves nothing, and a failed
+move leaves an ordinary folder the user still has. Asserted by making the add-on directory
+unwritable and checking the package is still present and still listed.
+- **Removal kept one copy per removal** in a directory nothing reads - storage that grew for
+ever and could never be used. One copy per package is kept now, and a copy that fails
+part-way is cleaned up (its destination is recorded before the copy, not after).
+- **The two halves of "Keep the game from seeing it" disagreed.** The router fires on an
+element by exact match, family or "any"; ownership compared strings exactly, so a mapping
+stored as `keyboard.key.` fired the trigger and still let every key it covers through to the
+game. Both ask one rule now, `+[AKTrigger element:covers:]`. The "any" sentinel is refused
+as a stored value, which its own header always said it should be.
+- **`-[AKInputRouter shouldTakeKeyWithUsage:]` was dead code** that described itself as the
+place the adapter asks - a call that cannot exist, because the adapter is compiled into a
+dylib this app never links. Deleted, and the header now names the mechanism that is real.
+
+Two things the device can prove that nothing proved before: that the app is **still running**
+after being put away (the pilot printed that line and no check read it - a build that lost
+`UIBackgroundModes` would have left the app gone with every check still passing), and what its
+audio session is left set to. The shell logs `audio=<category>/<mode>/<active> mic=<0|1>` on
+both transitions, and the matrix requires `mic=0` on both sides. The microphone is also closed
+*by the shell* before the shell says it has been: the old line claimed a close that had not
+happened yet, on a path - resigning active without entering the background - where it never
+happened at all.
+
+What that leaves is a real voice: someone speaking, so the recogniser produces words. Every
+other path that can end a session - a timeout, an interruption, going to the background - is
+covered, and the state the session is left in is now read back off the iPad.
+
+Proof: `test_addon_archive.sh` 58 checks (from 49), `test_voice.sh` 252 (from 244), the
+device matrix at 22 checks, and the record under `development/validation/`.
