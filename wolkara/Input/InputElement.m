@@ -2,7 +2,7 @@
 
 static NSString *const AKInputElementControllerPrefix = @"controller.button.";
 static NSString *const AKInputElementControllerAxisPrefix = @"controller.axis.";
-static NSString *const AKInputElementKeyboardPrefix = @"keyboard.key.";
+NSString *const AKInputElementKeyboardPrefix = @"keyboard.key.";
 static NSString *const AKInputElementMousePrefix = @"mouse.button.";
 static NSString *const AKInputElementTouchpadPrefix = @"touchpad.";
 static NSString *const AKInputElementDirectionPadPrefix = @"dpad.";

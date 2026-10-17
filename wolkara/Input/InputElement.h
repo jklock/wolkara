@@ -32,6 +32,9 @@ NSString *AKInputElementForControllerButton(NSString *buttonName);
 NSString *AKInputElementForControllerAxis(NSString *axisName);
 /// A keyboard key, by HID usage code.
 NSString *AKInputElementForKeyboardKey(NSInteger keyCode);
+// The prefix every keyboard element id is built from, so a caller that has an id can take it
+// apart - and so two modules cannot come to disagree about what the ids look like.
+extern NSString *const AKInputElementKeyboardPrefix;
 /// A mouse button: "left", "right" or "middle".
 NSString *AKInputElementForMouseButton(NSString *button);
 /// A touchpad event: phase is "down", "up" or "moved".

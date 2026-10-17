@@ -45,6 +45,13 @@ typedef NS_ENUM(NSInteger, AKInputSource) {
 @property (nonatomic, copy, nullable) void (^onTriggerBegan)(AKTrigger *trigger, AKInputEvent *event);
 @property (nonatomic, copy, nullable) void (^onTriggerEnded)(AKTrigger *trigger, AKInputEvent *event);
 
+// Whether the guest must be kept from seeing this keyboard key. The adapter asks at the
+// one place it posts key events to the guest, so a key the user has taken for dictation
+// reaches the microphone and not the game. `usage` is what the adapter has: a
+// UIKeyboardHIDUsage, which is the same number the inspector reports a keyboard key with.
+// Answered here, not in the adapter, because the decision is the user's settings.
+- (BOOL)shouldTakeKeyWithUsage:(unsigned short)usage;
+
 // The device whose input should be remembered when learning finishes.
 - (void)beginLearning;
 // Disarm, without adopting anything. Learning takes the first event that arrives, so
