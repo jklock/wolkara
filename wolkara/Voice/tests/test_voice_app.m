@@ -93,6 +93,9 @@ static UIView *Find(UIView *view, NSString *identifier) {
 @interface FakeAudio : NSObject <AKDictationAudio>
 @property (nonatomic) BOOL refuse;
 @property (nonatomic) BOOL recording;
+// How many put-backs should fail before one works, so the app's retry can be exercised: this
+// stands in for the InsufficientPriority failure a real session gave on an iPad.
+@property (nonatomic) NSUInteger restoreFailures;
 @property (nonatomic) NSUInteger begins, restores;
 @end
 
@@ -106,7 +109,16 @@ static UIView *Find(UIView *view, NSString *identifier) {
     self.recording = YES;
     return YES;
 }
-- (void)restore { self.restores++; self.recording = NO; }
+- (BOOL)restore:(NSError **)error {
+    self.restores++;
+    if (self.restoreFailures > 0) {
+        self.restoreFailures--;
+        if (error) *error = [NSError errorWithDomain:@"test" code:2 userInfo:@{NSLocalizedDescriptionKey: @"the session said no"}];
+        return NO;
+    }
+    self.recording = NO;
+    return YES;
+}
 @end
 
 // The game's own text view, as far as dictation is concerned.
@@ -444,6 +456,47 @@ static void TestTriggerPatterns(void) {
 // The audio session, through the real bridge rather than a fake. The remediation review
 // accepted a documented policy in place of exact restoration, and a policy still has to be
 // the one that happens: the category and mode it found are what is there afterwards.
+// The put-back can fail, and when it does the app must try again and then say so - never claim
+// a restore that did not happen. On an iPad on 2026-10-17 it claimed one while its session sat
+// on Record with the microphone held, a minute after dictation ended; the user sees that as a
+// microphone indicator that will not go away.
+static void TestAudioRestoreRetry(void) {
+    AKDictation *dictation = AKDictation.shared;
+    FakeAudio *audio = [FakeAudio new];
+    dictation.audio = audio;
+    dictation.speech = [FakeSpeech new];
+    dictation.transcriptHandler = nil;
+    NSMutableArray<NSString *> *problems = [NSMutableArray array];
+    dictation.problemHandler = ^(NSString *message) { [problems addObject:message]; };
+
+    // Two refusals and then success: the first attempt is immediate, the next two follow on
+    // their own, and the session ends up given back with nothing said to the user.
+    audio.restoreFailures = 2;
+    [dictation begin];
+    Pump(0.05);
+    CHECK((dictation.state == AKDictationStateListening), @"the session starts for the retry case");
+    [dictation cancel];
+    Pump(1.6);
+    CHECK((audio.restores == 3), @"a put-back that fails is tried again until it works, got %lu", (unsigned long)audio.restores);
+    CHECK((!audio.recording), @"and the session is actually given back");
+    CHECK((problems.count == 0), @"with nothing alarming said when it works out, got %@", problems);
+
+    // Never works: the app stops after its attempts and tells the user, because a microphone
+    // that is still on is something they can see and cannot explain.
+    audio.restoreFailures = 99;
+    [dictation begin];
+    Pump(0.05);
+    [dictation cancel];
+    Pump(3.0);
+    CHECK((audio.recording), @"a put-back that never works leaves the session taken");
+    CHECK((problems.count == 1), @"and the user is told once, got %@", problems);
+    CHECK(([problems.firstObject containsString:@"microphone"]), @"in words that name the microphone, got %@", problems.firstObject);
+
+    audio.restoreFailures = 0;
+    dictation.problemHandler = nil;
+    dictation.transcriptHandler = nil;
+}
+
 static void TestAudioSessionPolicy(void) {
     AKDictation *dictation = AKDictation.shared;
     AVAudioSession *session = AVAudioSession.sharedInstance;
@@ -1166,6 +1219,7 @@ static void TestConfigWriteFailure(void) {
     TestLearning();
     TestTriggerPatterns();
     TestAudioSessionPolicy();
+    TestAudioRestoreRetry();
     TestScreenshotIsolation();
     TestDictation();
     TestTypingIntoTheGame();

@@ -148,17 +148,24 @@ static NSTimeInterval const AKDefaultFinalizeTimeout = 3.0;
 // an audio policy, not a snapshot of everything. The policy is right for this app - a
 // foreground game host whose session is expected to be active - and it is what the header
 // and docs/VOICE.md say, rather than "the session is restored exactly".
-- (void)restore {
-    if (!_saved) return;
-    _saved = NO;
+- (BOOL)restore:(NSError **)error {
+    if (!_saved) return YES;
     AVAudioSession *session = AVAudioSession.sharedInstance;
-    NSError *error = nil;
-    if (![session setCategory:_category mode:_mode options:_options error:&error])
-        WKLog("voice", @"audio: could not restore the category: %@", error.localizedDescription);
-    if (![session setActive:YES error:&error])
-        WKLog("voice", @"audio: could not reactivate the session: %@", error.localizedDescription);
-    WKLog("voice", @"audio: put back %@/%@ (options %lu) and left the session active",
-          _category, _mode, (unsigned long)_options);
+    NSError *failure = nil;
+    BOOL category = [session setCategory:_category mode:_mode options:_options error:&failure];
+    BOOL active = category && [session setActive:YES error:&failure];
+    if (category && active) {
+        _saved = NO;
+        // Said only when it happened. The version before this printed the line even when both
+        // calls had failed, so the app's own log claimed the session had been given back while
+        // it sat on Record holding the microphone - measured on an iPad on 2026-10-17, a minute
+        // after dictation ended. `_saved` stays set on failure so the retry can try again.
+        WKLog("voice", @"audio: put back %@/%@ (options %lu) and left the session active",
+              _category, _mode, (unsigned long)_options);
+        return YES;
+    }
+    if (error) *error = failure;
+    return NO;
 }
 
 @end
@@ -172,6 +179,7 @@ static NSTimeInterval const AKDefaultFinalizeTimeout = 3.0;
     BOOL _delivered;
     BOOL _abandoned;
     NSUInteger _session;
+    NSUInteger _audioRestoreAttempt;
 }
 
 + (instancetype)shared {
@@ -344,7 +352,7 @@ static __weak UIView *AKGameTextTarget = nil;
     if (_state != AKDictationStateFinalizing) return;
     WKLog("voice", @"dictation: no final result within %.1fs; nothing will be typed", self.finalizeTimeout);
     [self.speech cancel];
-    [self.audio restore];
+    [self giveTheSessionBack];
     _abandoned = YES;
     _delivered = YES;   // nothing may be delivered for this session
     _session++;
@@ -358,7 +366,7 @@ static __weak UIView *AKGameTextTarget = nil;
     _delivered = YES;   // nothing may be delivered after a cancel
     _session++;
     [self.speech cancel];
-    [self.audio restore];
+    [self giveTheSessionBack];
     [_transcript setString:@""];
     [self setState:AKDictationStateIdle];
 }
@@ -388,15 +396,39 @@ static __weak UIView *AKGameTextTarget = nil;
     if (_delivered || _abandoned) return;
     _delivered = YES;
     if (transcript.length) [_transcript setString:transcript];
-    [self.audio restore];
+    [self giveTheSessionBack];
     [self.speech cancel];
     [self setState:AKDictationStateIdle];
     [self deliver];
 }
 
+// Giving the session back, with the retry the audio session needs.
+//
+// The put-back can fail transiently: a dictation session on an iPad on 2026-10-17 met
+// InsufficientPriority ('!pri', OSStatus 561017449) once, and once was enough for the app to
+// leave its session on Record - the microphone stays held and the indicator stays on, which is
+// exactly what the user sees and cannot account for. So it is tried again a few times, nothing
+// is claimed until it works, and if it never works the user is told rather than left with a
+// microphone that is still on.
+- (void)giveTheSessionBack {
+    NSError *error = nil;
+    if ([self.audio restore:&error]) { _audioRestoreAttempt = 0; return; }
+    WKLog("voice", @"audio: could not put the session back yet: %@", error.localizedDescription ?: @"no reason given");
+    if (_audioRestoreAttempt >= 4) {
+        WKLog("voice", @"audio: STILL not given back after 4 attempts; the microphone may be held");
+        if (self.problemHandler)
+            self.problemHandler(@"The microphone could not be handed back to the game. If the microphone indicator is still on, close Wolkara and open it again.");
+        return;
+    }
+    _audioRestoreAttempt++;
+    __weak AKDictation *weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{ [weakSelf giveTheSessionBack]; });
+}
+
 - (void)fail:(NSString *)message {
     WKLog("voice", @"dictation: %@", message);
-    [self.audio restore];
+    [self giveTheSessionBack];
     [self.speech cancel];
     _abandoned = YES;
     _session++;
