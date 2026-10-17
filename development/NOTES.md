@@ -574,4 +574,18 @@ Closed since this list was written: the notices the app carries. They were not m
 were the wrong ones - upstream's, under our name - and it is four documents now, checked
 against the installed app. See "The app shipped the wrong notices" above.
 
+Closed the other way, and worth reading as an example: the audit's "any button is neither
+collision-free nor complete" finding offered two ways out - real input arbitration, or a
+product limited to explicitly mapped inputs *with a collision warning*. The second is what
+this is now, because the first is a large change and the second is the honest description of
+the feature that already exists: the router listens to input and the game still receives it.
+So `docs/VOICE.md` says so in a section titled "What this cannot do, said plainly", the
+mapping page carries the same sentence where the mapping is made, the log line says it when
+one is saved, and the fixture asserts the sentence is still there and that the mode control
+has two segments rather than the trigger model's four patterns. Nothing here is described as
+safe that is not safe, and the thing that is not built is named as not built rather than
+implied. The remaining item on this list is the page *layout* test, which is a smaller
+version of the same gap: the pages' behaviour is asserted, their arrangement is looked at by
+a person.
+
 
