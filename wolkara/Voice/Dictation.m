@@ -83,7 +83,19 @@ static float AKSpeechPeak(AVAudioPCMBuffer *buffer) {
 
     _engine = [[AVAudioEngine alloc] init];
     AVAudioInputNode *input = _engine.inputNode;
+    // The input route is not ready the instant the session is made active, and a tap installed
+    // against a format read too early delivers nothing at all: the session looks healthy, the
+    // recogniser is handed a stream with nothing in it, and it reports that it heard no speech.
+    // That is what the user saw on an iPad on 2026-10-17 - zero buffers, with the microphone
+    // permission granted. Waited out, briefly, rather than guessed at, and the format is logged so
+    // the next run shows what it was.
     AVAudioFormat *format = [input outputFormatForBus:0];
+    for (NSUInteger attempt = 0; attempt < 20 && (format.sampleRate <= 0 || format.channelCount == 0); attempt++) {
+        [NSThread sleepForTimeInterval:0.025];
+        format = [input outputFormatForBus:0];
+    }
+    WKLog("voice", @"dictation: input format %.0fHz %u channel(s) after waiting",
+          format.sampleRate, (unsigned)format.channelCount);
     _inputLevel = 0;
     _buffersReceived = 0;
     [input installTapOnBus:0 bufferSize:1024 format:format
