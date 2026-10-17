@@ -70,6 +70,14 @@ static UIView *Find(UIView *view, NSString *identifier) {
 @property (nonatomic, copy) NSArray<NSString *> *words;
 @end
 
+// The fixture's stand-in for the audio tap: what it claims to have heard, and where the level
+// goes. The app must say whether audio is arriving, not merely that a session opened.
+@interface FakeSpeech ()
+@property (nonatomic) float level;
+@property (nonatomic) NSUInteger buffers;
+@property (nonatomic, copy, nullable) void (^onLevel)(float level);
+@end
+
 @implementation FakeSpeech
 - (instancetype)init { if ((self = [super init])) { _available = YES; _onDevice = YES; _authorized = YES; } return self; }
 - (BOOL)isAvailable { return self.available; }
@@ -83,6 +91,10 @@ static UIView *Find(UIView *view, NSString *identifier) {
 }
 - (void)finish { self.finishes++; }
 - (void)cancel { self.cancels++; self.handler = nil; }
+- (float)inputLevel { return self.level; }
+- (NSUInteger)buffersReceived { return self.buffers; }
+- (void (^)(float))levelHandler { return self.onLevel; }
+- (void)setLevelHandler:(void (^)(float))handler { self.onLevel = handler; }
 // What a recogniser would do next.
 - (void)say:(NSString *)text final:(BOOL)isFinal {
     void (^handler)(NSString *, BOOL, NSError *) = self.handler;
