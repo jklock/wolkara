@@ -69,8 +69,9 @@
 
     // --- On, or off ---------------------------------------------------------
     [rows addArrangedSubview:WKHeading(@"Voice")];
-    self.enabledSwitch = [self switchWithAction:@selector(enabledChanged)];
-    self.enabledSwitch.accessibilityIdentifier = @"voice.enabled";
+    self.enabledSwitch = [self switchWithAction:@selector(enabledChanged)
+                                         title:@"Use a button to talk"
+                                    identifier:@"voice.enabled"];
     self.enabledNote = WKNote(@"");
     [rows addArrangedSubview:[self card:@[[self switchRow:@"Use a button to talk"
                                                   control:self.enabledSwitch], self.enabledNote]]];
@@ -97,8 +98,9 @@
     // is what "collision-free" means for the inputs this can be done for. The note says
     // which those are, because a pad button cannot be taken - iPadOS gives us the pad's
     // buttons as gamepad elements and the guest's key events cannot be traced back to them.
-    self.takeButtonSwitch = [self switchWithAction:@selector(takeButtonChanged)];
-    self.takeButtonSwitch.accessibilityIdentifier = @"voice.takebutton";
+    self.takeButtonSwitch = [self switchWithAction:@selector(takeButtonChanged)
+                                            title:@"Keep the game from seeing it"
+                                       identifier:@"voice.takebutton"];
     self.takeButtonSwitch.on = AKVoiceSettings.shared.takeButtonFromGame;
     self.takeButtonCard = [self card:@[[self switchRow:@"Keep the game from seeing it"
                                               control:self.takeButtonSwitch],
@@ -120,8 +122,12 @@
 
     // --- What happens to the words ------------------------------------------
     [rows addArrangedSubview:WKHeading(@"After transcribing")];
-    self.autoSubmitSwitch = [self switchWithAction:@selector(autoSubmitChanged)];
-    self.trailingSpaceSwitch = [self switchWithAction:@selector(trailingSpaceChanged)];
+    self.autoSubmitSwitch = [self switchWithAction:@selector(autoSubmitChanged)
+                                           title:@"Send it straight away"
+                                      identifier:@"voice.autosubmit"];
+    self.trailingSpaceSwitch = [self switchWithAction:@selector(trailingSpaceChanged)
+                                               title:@"Add a space after the text"
+                                          identifier:@"voice.trailingspace"];
     self.afterCard = [self card:@[
         [self switchRow:@"Send it straight away" control:self.autoSubmitSwitch],
         [self switchRow:@"Add a space after the text" control:self.trailingSpaceSwitch]
@@ -335,6 +341,17 @@
         [stack.trailingAnchor constraintEqualToAnchor:panel.trailingAnchor constant:-16],
     ]];
     return panel;
+}
+
+- (UISwitch *)switchWithAction:(SEL)action title:(NSString *)title identifier:(NSString *)identifier {
+    UISwitch *toggle = [self switchWithAction:action];
+    // Both of these, on every switch, and not only the ones a test happens to look for. The
+    // row's text is a separate label, so without this a screen reader announces "switch, on"
+    // with no idea which switch it is - and nothing but a person would ever notice. The layout
+    // fixture failed on it the first time it looked: two switches had no name at all.
+    toggle.accessibilityIdentifier = identifier;
+    toggle.accessibilityLabel = title;
+    return toggle;
 }
 
 - (UISwitch *)switchWithAction:(SEL)action {

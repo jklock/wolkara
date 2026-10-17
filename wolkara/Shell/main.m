@@ -225,7 +225,40 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
 }
 
 - (void)sceneDidBecomeActive:(UIScene *)scene {
-    (void)scene; [self reserveExecutableMemory];
+    (void)scene;
+    // What state everything is in when the app is allowed to act again, so "nothing is left
+    // running" is a fact in the log rather than an assumption. The device matrix reads these
+    // lines back off the iPad after backgrounding it for real.
+    WKLog("host", @"foreground: dictation=%ld listening=%d learning=%d",
+          (long)AKDictation.shared.state, (int)AKDictation.shared.listening,
+          (int)AKInputRouter.shared.learning);
+    [self reserveExecutableMemory];
+}
+
+// Both of these can arrive, in either order, depending on why the app went away, so both are
+// handled rather than one being trusted to imply the other.
+- (void)sceneWillResignActive:(UIScene *)scene {
+    (void)scene;
+    [self leftTheForeground:@"resigning active"];
+}
+- (void)sceneDidEnterBackground:(UIScene *)scene {
+    (void)scene;
+    [self leftTheForeground:@"in the background"];
+}
+
+- (void)leftTheForeground:(NSString *)why {
+    // Dictation ends itself on the same notification; this is the app-level record of the
+    // transition, and it says whether anything was still running when it happened -
+    // including the case where the microphone was open, which is what the user would see as
+    // an indicator they cannot get rid of.
+    BOOL wasListening = AKDictation.shared.listening;
+    WKLog("host", @"%@: dictation=%ld listening=%d learning=%d",
+          why, (long)AKDictation.shared.state, (int)wasListening,
+          (int)AKInputRouter.shared.learning);
+    if (wasListening) WKLog("host", @"the microphone was open when the app went away; it is being closed");
+    // The router does this itself on the same notification. Doing it here as well costs
+    // nothing and means the shell does not depend on that observer existing.
+    [AKInputRouter.shared cancelLearning];
 }
 - (void)scene:(UIScene *)scene willConnectToSession:(UISceneSession *)s options:(UISceneConnectionOptions *)o {
     static BOOL started;
