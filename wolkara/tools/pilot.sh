@@ -19,6 +19,7 @@
 #   wolkara/tools/pilot.sh log [lines] [pat] the app's own log, from Documents
 #   wolkara/tools/pilot.sh leave [bundle]    put the app in the background for real
 #   wolkara/tools/pilot.sh return            bring it back to the front
+#   wolkara/tools/pilot.sh restore           start again whatever an install found running
 #   wolkara/tools/pilot.sh selftest <name>   run the app's own device self-test and read it
 #   wolkara/tools/pilot.sh cycle             state, install, launch, wait, view
 #
@@ -335,9 +336,14 @@ cmd_stop() {
 # ---------------------------------------------------------------------------
 cmd_install() {
     local force=${1:-}
+    local restore=1
+    # `cycle` launches its own way and wants the device left as the install left it; every other
+    # caller gets the state it found put back. See cmd_restore.
+    [ "${2:-}" = "--no-restore" ] && restore=0
     step "state before touching anything"; verdict
     step "stopping"
     require_safe_to_install "$force"
+    record_what_was_running
     stop_app "$force"
     step "building and installing"
     # No --replace-running: this script has already stopped what was running, so
@@ -351,6 +357,50 @@ cmd_install() {
     # launch that follows is an ordinary one from a clean slate.
     step "stopping what the install left running"
     stop_app "$force"
+    # And now what was found. An install that leaves the iPad on the launcher while a game was
+    # running on it has changed the device, not just the build - on 2026-10-17 an install run
+    # while a session was being tested did exactly that, and said nothing about it.
+    [ "$restore" = "1" ] && cmd_restore
+}
+
+# What was running, and whether a game session was live, recorded *before* a command takes the
+# app away. This is the only record of the state the operator found; nothing else in here knows
+# what the device looked like before it was touched.
+record_what_was_running() {
+    local pid; pid=$(app_pid)
+    printf '%s\n' "$pid" > "$SESSION/was-running"
+    printf '%s\n' "$(state_value session_live)" > "$SESSION/was-live"
+    if [ -n "$pid" ]; then
+        if [ "$(cat "$SESSION/was-live")" = "1" ]; then
+            say "noted: the app was running with a game session live, and that is what will be put back"
+        else
+            say "noted: the app was running, and that is what will be put back"
+        fi
+    else
+        say "noted: nothing was running, so nothing will be started afterwards"
+    fi
+}
+
+# Putting the device back the way it was found. A game session that was live goes back into the
+# game rather than onto the launcher, because that is where it was; an app that was merely up
+# goes back up; and nothing that was stopped for a reason is started again.
+cmd_restore() {
+    if [ ! -f "$SESSION/was-running" ]; then
+        say "no record of anything running in this session, so nothing is being started."
+        say "('pilot.sh install' writes one before it stops what it found.)"
+        return 0
+    fi
+    if [ -z "$(cat "$SESSION/was-running")" ]; then
+        say "nothing was running when this session started, so it is left stopped."
+        return 0
+    fi
+    if [ "$(cat "$SESSION/was-live" 2>/dev/null)" = "1" ]; then
+        say "a game session was live when this started: starting the app again in the game"
+        cmd_launch --game
+    else
+        say "the app was running when this started: starting it again"
+        cmd_launch
+    fi
 }
 
 record_baseline() {
@@ -750,8 +800,9 @@ case "${1:-state}" in
     leave)   cmd_leave "${2:-}" ;;
     return)  cmd_return ;;  # `return` is a shell keyword; the case label is a plain word here
     selftest) cmd_selftest "${2:-}" ;;
+    restore) cmd_restore ;;
     cycle)
-        cmd_install "${2:-}"
+        cmd_install "${2:-}" --no-restore
         cmd_launch
         cmd_wait --timeout "${3:-240}"
         cmd_view
