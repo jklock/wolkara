@@ -20,6 +20,12 @@ This is Phase 6 of `PLAN.md`.
 - `tests/test_touch_controls_app.m` and `tests/test_touch_gamepad_app.m` also block
   under `simctl launch --console` when run *without* `--self-test`: they only exit in
   self-test mode. Give the non-self-test path a watchdog so a headless run cannot hang.
+  **Resolved.** Both fixtures now bound themselves: without `--stay` they close after 60 s
+  (`TOUCH_UI_LIFETIME_REACHED` / `TOUCH_GAMEPAD_LIFETIME_REACHED`), and the self-test paths
+  keep their own 30 s watchdogs. What remains open by design is the *interactive* path: the
+  two wrapper scripts pass `--stay` when you did not ask for `--self-test`, on purpose, so a
+  person can look at the fixture - that is a terminal someone is watching, not a headless
+  run, and both scripts' comments say so.
 - `tools/test_launch_progress.sh` needs an already-booted simulator (its argument
   defaults to `booted`); document that or boot one itself.
 
@@ -59,6 +65,14 @@ versus 161 of wolkara/Wolkara in 43. The heaviest are `docs/WINDOWS.md` (31),
 - The add-on subsystem (`AddonManager`, `AddonStore`, `CurseForgeClient`,
   `AddonArchive`, `AddonCredentialStore`) has no automated test at all. Either add a
   Mac-level fixture test or soften what `COMPATIBILITY.md` claims about it.
+  **Resolved**, and it found a real bug: `test_wow_launcher_app.m` now covers TOC parsing,
+  store import (including a duplicate import, which used to delete the installed add-on), a
+  missing TOC, a minus-file, pin, disable, remove and the credentials contract.
+- The two touch fixtures had no step that ran them, so their assertions were not evidence
+  about anything. Both are steps in `validate.sh` now.
+  **Resolved**, and it found a second real bug: the touch-controls fixture had been failing
+  at one assertion for a day, because Replace had stopped replacing the game field. See
+  `development/NOTES.md`.
 
 ## Style
 
@@ -85,10 +99,27 @@ versus 161 of wolkara/Wolkara in 43. The heaviest are `docs/WINDOWS.md` (31),
 - The doc references that point at the pre-split `tools/` paths, for example
   `docs/TOUCH_INPUT.md:192` and `docs/WOW_LAUNCHER.md`; the layer's scripts live at
   `wolkara/tools/` and the platform's at `build/platform/tools/` after
-  `wolkara/tools/prepare.sh`.
-- The touch and gamepad fixtures still block under `simctl launch --console` without
-  `--self-test`, so a headless run of those two can hang.
+  `wolkara/tools/prepare.sh`. Both files now say so where the records begin, and the
+  records themselves are left as they were written: a validation log rewritten to match
+  today's paths is a log of a run that did not happen. What is *not* done is auditing the
+  remaining prose for the same thing.
 - Everything else in this file is unchanged and still open.
+
+### Answered rather than fixed
+
+- **The trailing whitespace in our patches.** Every hit is a line whose entire content is
+  one space - `' '`, checked against three of them - and in a unified diff that is how an
+  unchanged *blank* line is written. There are nine, in five patches, and they sit between
+  context lines (`...',` then `' int main(void) {'`). Removing the space would truncate the
+  context and stop the patch applying, which is the opposite of hygiene. The prose headers
+  of those patches have no trailing whitespace at all.
+- **The `TouchControls.m:284`/`:288` style items.** Those line numbers are from the layer
+  file as it was before the adapter moved behind patch `0009`; in the file that exists now
+  both lines are ordinary statements. The file does use single-line accessors
+  (`- (void)insertDraft { [_keyboardInput forwardCommittedText]; }`), consistently within
+  itself, and the two statements the audit saw on one line are gone.
+- **The two touch fixtures hanging**, above: they bound themselves now, and the paths that
+  do not are the ones a person is watching.
 
 ## Branch-wide audit against upstream (2026-10-15)
 
@@ -101,7 +132,7 @@ pre-split base - and asking which side actually changed.
 | Group | Count | Result |
 | --- | --- | --- |
 | The vendored platform | 513 files | byte-identical to `upstream/main` today (checked live on every gate run) |
-| Our patches | 9 at the time of the split (13 now) | each is a three-way merge of our change onto upstream's current file, and every one merged clean, so no upstream line was dropped |
+| Our patches | 9 at the time of the split (14 now) | each is a three-way merge of our change onto upstream's current file, and every one merged clean, so no upstream line was dropped |
 | Our replacements | 9 | decided one by one: 3 dropped (we had not changed them), 5 merged with theirs, 2 ours-only (branding plists) |
 | Our additions | 52 | upstream has no file at those paths; the overlay refuses an `add` that would collide with one it has |
 | Files deleted as superseded | 22 | 7 we had not changed; 9 covered by a patch; 3 tools whose only change was branding and the display name, now the layer's; 2 tests of ours dropped on purpose; **1 real gap** |

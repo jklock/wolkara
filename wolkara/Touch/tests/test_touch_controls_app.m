@@ -301,6 +301,15 @@ static void AKFixtureInputSource(void *context) {
                 assert(!input.text.length && insert.enabled);
                 [insert sendActionsForControlEvents:UIControlEventTouchUpInside];
                 AKDrainFixtureEvents();
+                // Which of the three went wrong, said out loud. A bare assert in a fixture
+                // whose only output is a console log tells the reader that something
+                // moved and nothing about what, which is half a report.
+                if (fixture.text.length || insert.enabled || fixture.replacements != 1) {
+                    fprintf(stderr, "TOUCH_UI_INSERT_MISMATCH: guest text=%s insert.enabled=%d replacements=%lu\n",
+                            fixture.text.UTF8String ?: "", (int)insert.enabled,
+                            (unsigned long)fixture.replacements);
+                    fflush(stderr);
+                }
                 assert(!fixture.text.length && !insert.enabled && fixture.replacements == 1);
                 [fixture.text setString:@"A different old value"];
                 fixture.selection = NSMakeRange(2, 3);
