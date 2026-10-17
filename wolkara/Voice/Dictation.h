@@ -57,9 +57,14 @@ typedef NS_ENUM(NSInteger, AKDictationState) {
 /// the tap delivered. A recogniser that reports no speech and a level of zero are the same
 /// finding - the difference between an app that is not listening and a room that is quiet - and
 /// the buffer count is what proves audio is reaching the app when the room is silent.
-@property (nonatomic, readonly) float inputLevel;
-@property (nonatomic, readonly) NSUInteger buffersReceived;
-@property (nonatomic, copy, nullable) void (^levelHandler)(float level);
+///
+/// Written as methods rather than as properties on purpose: a property declared in a protocol
+/// cannot be synthesised by an implementer that writes its own accessors, and this build treats
+/// that warning as an error.
+- (float)inputLevel;
+- (NSUInteger)buffersReceived;
+- (void (^)(float))levelHandler;
+- (void)setLevelHandler:(void (^)(float))handler;
 @end
 
 @protocol AKDictationAudio <NSObject>

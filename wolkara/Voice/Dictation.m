@@ -156,6 +156,7 @@ static float AKSpeechPeak(AVAudioPCMBuffer *buffer) {
 
 - (float)inputLevel { return _inputLevel; }
 - (NSUInteger)buffersReceived { return _buffersReceived; }
+- (void (^)(float))levelHandler { return _levelHandler; }
 - (void)setLevelHandler:(void (^)(float))handler { _levelHandler = [handler copy]; }
 
 @end
@@ -317,6 +318,7 @@ static __weak UIView *AKGameTextTarget = nil;
     }
     _abandoned = NO;
     _delivered = NO;
+    _audioRestoreAttempt = 0;
     [_transcript setString:@""];
     NSUInteger session = ++_session;
     [self setState:AKDictationStateAuthorizing];
@@ -337,6 +339,12 @@ static __weak UIView *AKGameTextTarget = nil;
 
 - (void)startAudioForSession:(NSUInteger)session {
     if (_session != session || _abandoned) return;
+    // What it is hearing, every half second, while it runs: the buffer count, the loudest sample,
+    // and the category the session is on. The category is in there because the audio session is
+    // shared with the app's own keep-alive and with whatever the game does, and a category that
+    // changes under a running dictation would stop the audio with no other sign of it - which is
+    // exactly the kind of fault that reads as "it heard nothing".
+    [self logWhatIsBeingHeard];
     // Whether the app may use the microphone at all, asked before anything is opened. On
     // 2026-10-17 a reinstall left this app without the microphone grant, and dictation then said
     // "Nothing was heard" - the recogniser listening to a silent stream, which is what iOS feeds
@@ -483,6 +491,22 @@ static __weak UIView *AKGameTextTarget = nil;
 // exactly what the user sees and cannot account for. So it is tried again a few times, nothing
 // is claimed until it works, and if it never works the user is told rather than left with a
 // microphone that is still on.
+// Every half second while a session is running, what it is hearing. Half a second because that is
+// long enough to see a change and short enough to see it happen while the user is still speaking.
+- (void)logWhatIsBeingHeard {
+    // Started when the session starts, which is while it is still authorizing: the first buffers
+    // arrive before the state changes to listening, and waiting for that state is how the first
+    // version of this logged nothing at all.
+    if (_state == AKDictationStateIdle) return;
+    AVAudioSession *session = AVAudioSession.sharedInstance;
+    WKLog("voice", @"dictation: heard %lu buffer(s), loudest %.3f, category=%@, activeInput=%d",
+          (unsigned long)self.buffersReceived, self.inputLevel, session.category,
+          (int)[session isInputAvailable]);
+    __weak AKDictation *weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{ [weakSelf logWhatIsBeingHeard]; });
+}
+
 - (void)giveTheSessionBack {
     NSError *error = nil;
     if ([self.audio restore:&error]) { _audioRestoreAttempt = 0; return; }
@@ -494,9 +518,19 @@ static __weak UIView *AKGameTextTarget = nil;
         return;
     }
     _audioRestoreAttempt++;
+    // The retry belongs to the session whose put-back failed, and to no other. A retry that fires
+    // after a newer session has started puts the audio session back underneath it: on 2026-10-17
+    // the category went to SoloAmbient microseconds into a new session, the tap delivered no
+    // buffers, and the recogniser reported that it heard nothing - which is what the user saw as
+    // the microphone being busted, and it was this.
+    NSUInteger generation = _session;
     __weak AKDictation *weakSelf = self;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{ [weakSelf giveTheSessionBack]; });
+                   dispatch_get_main_queue(), ^{
+        AKDictation *self2 = weakSelf;
+        if (!self2 || self2->_session != generation || self2->_state != AKDictationStateIdle) return;
+        [self2 giveTheSessionBack];
+    });
 }
 
 // What the microphone is hearing, straight from the session that owns the tap. A screen draws it
