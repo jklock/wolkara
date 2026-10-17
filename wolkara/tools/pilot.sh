@@ -395,12 +395,12 @@ cmd_restore() {
         return 0
     fi
     if [ "$(cat "$SESSION/was-live" 2>/dev/null)" = "1" ]; then
-        say "a game session was live when this started: starting the app again in the game"
-        cmd_launch --game
+        say "a game session was live when this started. The app is started again on its home"
+        say "screen, which is where an operation has to leave it; press Play to go back in."
     else
-        say "the app was running when this started: starting it again"
-        cmd_launch
+        say "the app was running when this started: starting it again, on its home screen"
     fi
+    cmd_launch
 }
 
 record_baseline() {
@@ -781,6 +781,13 @@ cmd_selftest() {
     awk -v offset="$offset" 'NR > offset' "$APP_LOG" 2>/dev/null | grep -E "selftest: " | tail -25 | cut -c1-200 | sed 's/^/  /'
     [ -n "$line" ] || die "no verdict from the '$name' self-test within 40s: the lines above are what it did say"
     say "$line"
+    # And the app goes back on its home screen. A launch carrying --selftest is a development run:
+    # it shows the plain status screen, which is a black screen to anyone looking at the iPad, and
+    # leaving that up after a successful test is a failed operation whatever the verdict said.
+    # Every operation against the app ends with the home screen up - anything else is a failure.
+    step "putting the app back on its home screen"
+    stop_app ""
+    cmd_launch
     case "$line" in
         *" PASS "*) return 0 ;;
     esac

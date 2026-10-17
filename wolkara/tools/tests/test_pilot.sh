@@ -188,8 +188,10 @@ printf '1234\n' > "$work/sessions/found/was-running"
 printf '1\n' > "$work/sessions/found/was-live"
 run_pilot "$work/sessions/found" restore
 check $? "restore must start the app again when the session recorded one running"
-grep -q "in the game" "$work/out.txt"
-check $? "and must put a live game back into the game rather than onto the launcher"
+grep -q "home" "$work/out.txt"
+check $? "and must leave the app on its home screen, saying what it found"
+grep -q "press Play" "$work/out.txt"
+check $? "naming what to do about the game that was live"
 
 mkdir -p "$work/sessions/stopped"
 printf '\n' > "$work/sessions/stopped/was-running"
