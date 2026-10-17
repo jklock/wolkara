@@ -40,6 +40,10 @@ extern NSString *const AKTriggerAnyElement;
 // Whether this trigger watches the given element id. Exact, "any", or a family:
 // a trigger on "controller.button." covers every button.
 - (BOOL)watchesElement:(NSString *)element;
+// The same rule without an instance: whether a mapping on `mapped` covers `element`. The
+// settings answer ownership through this one too, so the inputs that fire a trigger and the
+// inputs it keeps from the game cannot come out as two different sets.
++ (BOOL)element:(NSString *)mapped covers:(NSString *)element;
 
 #pragma mark - Storage
 

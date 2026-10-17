@@ -102,9 +102,14 @@
                                             title:@"Keep the game from seeing it"
                                        identifier:@"voice.takebutton"];
     self.takeButtonSwitch.on = AKVoiceSettings.shared.takeButtonFromGame;
+    // The sentence about what cannot be taken carries an identifier for the same reason the
+    // collision warning does: the fixture asserts it is still on the page. A limit that can
+    // disappear without a test is not a stated limit.
+    UILabel *padLimit = WKNote(@"On, a keyboard key you have mapped for dictation does not reach the game at all. A controller button cannot be taken this way, because iOS tells us about the pad's buttons in a form we cannot match to the game's own input - so for a pad, pick a button the game does not use.");
+    padLimit.accessibilityIdentifier = @"voice.takebutton.note";
     self.takeButtonCard = [self card:@[[self switchRow:@"Keep the game from seeing it"
                                               control:self.takeButtonSwitch],
-        WKNote(@"On, a keyboard key you have mapped for dictation does not reach the game at all. A controller button cannot be taken this way, because iOS tells us about the pad's buttons in a form we cannot match to the game's own input - so for a pad, pick a button the game does not use.")]];
+        padLimit]];
     [rows addArrangedSubview:self.takeButtonCard];
 
     // --- How it behaves -----------------------------------------------------
