@@ -211,12 +211,30 @@ check "$crash_ok" "the crash report is read out with its frames"
 unset WOLKARA_FAKE_IPS
 
 # A crash report that appears while waiting is the answer, and is reported as one: the
-# process is already gone by then, so it beats anything the log would say.
+# process is already gone by then, so it beats anything the log would say. The session carries
+# the baseline a launch would have written, because that is the flow this is about: launch, then
+# wait. Waiting with no baseline at all is the case below, and that is the one that used to lie.
+mkdir -p "$work/sessions/timeout"
+printf 'Tolkara-2026-10-15-090000.ips\n' > "$work/sessions/timeout/crash-baseline.txt"
+printf '2026-10-15_09.00.00_Error_1.txt\n' > "$work/sessions/timeout/baseline.txt"
+printf '0\n' > "$work/sessions/timeout/starts-baseline.txt"
 run_pilot "$work/sessions/timeout" wait --timeout 8
 [ $? -ne 0 ]
 check $? "wait must fail when a new crash report appears"
 grep -q "CRASHED" "$work/out.txt"
 check $? "and must say it crashed rather than waiting out the clock"
+
+# The other side of it: a report that was already on the device, with no baseline to compare it
+# against, is not this run's crash. On 2026-10-17 a standalone wait printed CRASHED for an app
+# that was running, because the newest report was a day old and the session had nothing to
+# compare it with. Nothing may be concluded from a comparison that was never made.
+mkdir -p "$work/sessions/nobaseline"
+run_pilot "$work/sessions/nobaseline" wait --timeout 4
+[ $? -eq 0 ]
+check $? "an old crash report with no baseline is not a crash"
+grep -q "CRASHED" "$work/out.txt" && check 1 "and CRASHED must not be printed at all"
+grep -q "cannot be judged" "$work/out.txt"
+check $? "and it must say that is why"
 
 # Nothing crashing, and nothing changing: a run that produces nothing conclusive must say
 # so rather than claiming success.
