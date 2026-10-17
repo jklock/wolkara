@@ -216,6 +216,14 @@ import, an approved personal CurseForge key and WoW's AddOns menu have not yet
 been exercised on the device, so no package or game compatibility result is
 claimed here.
 
+As of 2026-10-16 the parts of that which a fixture can hold are covered by
+`wolkara/WoW/tests/test_wow_launcher_app.m`: TOC parsing, store import (including
+importing the same add-on twice, which used to delete the installed copy), a
+missing TOC, a file the TOC does not list, pin, disable, remove, and the
+credentials contract. The device-side list above is unchanged - a fixture is not
+a device, and what it covers is the manager's own logic, not WoW reading the
+result.
+
 The game launch itself exposed a runtime gap. The guest's `NSFont` class
 reference bound to UIFoundation's private `NSFont`, whose selectors are not
 AppKit's, so `+[NSFont messageFontOfSize:]` raised during the login UI and the

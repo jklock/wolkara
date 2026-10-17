@@ -214,6 +214,13 @@ run_step "input, voice and config rules (simulator fixture)" wolkara/tools/test_
 # mode), so they belong here.
 run_step "on-screen controls and the game text field (simulator fixture)" wolkara/tools/test_touch_controls_ui.sh --self-test || failures=$((failures+1))
 run_step "the on-screen gamepad (simulator fixture)" wolkara/tools/test_touch_gamepad_ui.sh --self-test || failures=$((failures+1))
+# And these two were run by nothing either, for the same kind of reason: they were only ever
+# reached through the loop at the end of test_emulation.sh, and that loop never ran, because
+# the platform's suite exits 1 on its one known failure and `set -e` stopped the script
+# there. One of them is the only test of a patch we carry. Every suite the layer owns now
+# has a row of its own, so coverage does not depend on a wrapper's loop being reached.
+run_step "local service retry (patch 0006)" wolkara/tools/test_local_service_retry.sh || failures=$((failures+1))
+run_step "game file verification and repair (CASC)" wolkara/tools/test_wow_launcher.sh || failures=$((failures+1))
 run_step "the app builds for the device" wolkara/tools/install.sh --build-only || failures=$((failures+1))
 if [ "$full" = 1 ]; then
     # The platform's suites, with its known failures told apart from ours. A failure the

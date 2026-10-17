@@ -43,7 +43,7 @@ land in the same effort.
 | `wolkara/WoW/` | us | Client, CASC, Updater, Installation, Manifest, UpdateLock, WoWViewController, Addon*, with its tests, tools and profiles | no |
 | `wolkara/Touch/` | us | toolbar, trackpad, gamepad, layout, haptics, drafts and dictation, Fonts | no |
 | `wolkara/Bridge/` | us | thin adapters from platform APIs to layer features | no |
-| `wolkara/patches/` | us | minimal brand-free patches, each an upstream candidate | yes (13 as of 2026-10-16) |
+| `wolkara/patches/` | us | minimal brand-free patches, each an upstream candidate | yes (14 as of 2026-10-16) |
 | `wolkara/Tools/`, `wolkara/Tests/` | us | wrapper scripts and per-feature tests | no |
 | `wolkara/project.yml` | us | the XcodeGen project for `Wolkara` + `WolkaraDiagnostics` | no |
 | root | shared | README, AGENTS.md, `local.env` contract, `docs/`, `development/` | yes |
