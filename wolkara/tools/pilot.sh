@@ -19,6 +19,7 @@
 #   wolkara/tools/pilot.sh log [lines] [pat] the app's own log, from Documents
 #   wolkara/tools/pilot.sh leave [bundle]    put the app in the background for real
 #   wolkara/tools/pilot.sh return            bring it back to the front
+#   wolkara/tools/pilot.sh selftest <name>   run the app's own device self-test and read it
 #   wolkara/tools/pilot.sh cycle             state, install, launch, wait, view
 #
 # Every command that launches records the newest error file and the newest crash report
@@ -539,6 +540,22 @@ log_launch_count() {
     fi
 }
 
+# How many lines the log holds now. A self-test verdict is only accepted from *after* this
+# point, because the log outlives launches: a line left by an earlier run would otherwise be
+# read as this run's answer - the same mistake as reading a log the previous build wrote.
+log_line_count() {
+    local destination=$SESSION/app-lines.log
+    rm -f "$destination"
+    xcrun devicectl device copy from --device "$DEVICE" --domain-type appDataContainer \
+        --domain-identifier "$BUNDLE" --source "Documents/wolkara.log" \
+        --destination "$destination" >/dev/null 2>&1 || true
+    if [ -s "$destination" ]; then
+        wc -l < "$destination" | tr -d ' '
+    else
+        echo 0
+    fi
+}
+
 cmd_log() {
     local lines=${1:-60}
     local pattern=${2:-.}
@@ -632,6 +649,48 @@ cmd_return() {
     sleep 2
 }
 
+# The two things a script cannot do on a device are press a button on a pad and speak into the
+# microphone. Rather than leave those as "needs a person", the app carries self-tests that drive
+# its own code - the input router, the settings, the dictation state machine and the real audio
+# session - and write a verdict to its own log, which is what this reads. Nothing here presses
+# anything in the game; a self-test runs with no guest started. See wolkara/Shell/SelfTest.h.
+cmd_selftest() {
+    local name=${1:-}
+    [ -n "$name" ] || die "which self-test? pilot.sh selftest <input|voice>"
+    step "state before touching anything"; verdict
+    require_safe_to_install ""
+    stop_app ""
+    log_launch_count > "$SESSION/log-launches-before"
+    local offset; offset=$(log_line_count)
+    say "the log holds $offset lines from earlier launches; only what is written after this point counts"
+    record_baseline
+    say "launching $BUNDLE with --selftest=$name"
+    xcrun devicectl device process launch --device "$DEVICE" "$BUNDLE" --selftest="$name" \
+        >/dev/null 2>&1 || die "launch failed"
+    # The verdict arrives when the checks are done. The input ones are immediate; the speech ones
+    # wait on the recogniser, so this waits for the line rather than sampling once and guessing.
+    local deadline=$((SECONDS + 40))
+    local line=""
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        sleep 2
+        rm -f "$APP_LOG"
+        xcrun devicectl device copy from --device "$DEVICE" --domain-type appDataContainer \
+            --domain-identifier "$BUNDLE" --source "Documents/wolkara.log" \
+            --destination "$APP_LOG" >/dev/null 2>&1 || true
+        [ -s "$APP_LOG" ] || continue
+        line=$(awk -v offset="$offset" 'NR > offset' "$APP_LOG" | grep -E "selftest: $name (PASS|FAIL)" | tail -1)
+        [ -n "$line" ] && break
+    done
+    step "what the app said while testing itself"
+    awk -v offset="$offset" 'NR > offset' "$APP_LOG" 2>/dev/null | grep -E "selftest: " | tail -25 | cut -c1-200 | sed 's/^/  /'
+    [ -n "$line" ] || die "no verdict from the '$name' self-test within 40s: the lines above are what it did say"
+    say "$line"
+    case "$line" in
+        *" PASS "*) return 0 ;;
+    esac
+    return 1
+}
+
 case "${1:-state}" in
     state)   cmd_state ;;
     stop)    cmd_stop "${2:-}" ;;
@@ -644,6 +703,7 @@ case "${1:-state}" in
     log)     cmd_log "${2:-}" "${3:-}" ;;
     leave)   cmd_leave "${2:-}" ;;
     return)  cmd_return ;;  # `return` is a shell keyword; the case label is a plain word here
+    selftest) cmd_selftest "${2:-}" ;;
     cycle)
         cmd_install "${2:-}"
         cmd_launch

@@ -15,7 +15,10 @@
 #   4. a config file that is malformed being refused, kept, and survived
 #   5. the notices the installed app carries in its own bundle
 #   6. being put away and brought back, with nothing left listening or recording
-#   7. no new crash report and no new game error file for the launches above
+#   7. the app's own self-tests, on the installed build: the input router, the settings and a
+#      real dictation session opened and handed back - the two things a script cannot do here
+#      are press a pad button and speak, and neither is needed for these
+#   8. no new crash report and no new game error file for the launches above
 #
 #   wolkara/tools/device_matrix.sh
 set -uo pipefail
@@ -250,8 +253,18 @@ wolkara/tools/pilot.sh log 6 "foreground:" > "$work/log-back.log" 2>&1
 grep -qE "foreground: dictation=0 listening=0 learning=0 audio=[^ ]+ mic=0" "$work/log-back.log" && rc=0 || rc=1
 check "$rc" "and it came back idle, with its audio session handed back and nothing recording"
 grep -oE "foreground: [^\"]*" "$work/log-back.log" | tail -1 | sed 's/^/  /'
-
-step "7. nothing crashed and the client did not assert"
+step "7. the app's own self-tests, run on the installed build"
+# The two things a script cannot do on this device are press a button on a pad and speak into the
+# microphone. The app carries checks that drive its own input router, its settings and its real
+# dictation session - the same code the simulator fixtures drive with stand-ins - and writes a
+# verdict to its own log. Running them against the installed build is the difference between "a
+# fixture says the mapper works" and "the app on this iPad says so". See wolkara/Shell/SelfTest.h.
+for name in input voice; do
+    wolkara/tools/pilot.sh selftest "$name" > "$work/selftest-$name.log" 2>&1 && rc=0 || rc=1
+    check "$rc" "the app's own $name self-test passes on the installed build"
+    grep -oE "selftest: $name (PASS|FAIL)[^\"]*" "$work/selftest-$name.log" | tail -1 | sed 's/^/  /'
+done
+step "8. nothing crashed and the client did not assert"
 wolkara/tools/pilot.sh view > "$work/view.log" 2>&1
 grep -q "no new crash report" "$work/view.log" && rc=0 || rc=1
 check "$rc" "no new crash report for any launch above"
@@ -262,15 +275,15 @@ cat <<'DEFERRED'
 
 == deferred, and why
 
-  a real transcript          needs someone to speak into the iPad, because only a voice
-                             makes the recogniser produce words. What is checked without one,
-                             on this device, is the state the session is left in - `mic=0`
-                             above, after being put away - and that a session is closed on
-                             every path that can end one: a timeout, an interruption, and
-                             going to the background.
-  a controller button        mapping is arm-then-press: it needs a hand on a pad. What is
-                             checked without one is that nothing fires while nothing is
-                             mapped, and that no system signal can be mapped at all.
+  a real transcript          needs someone to speak into the iPad, because only a voice makes
+                             the recogniser produce words. What is covered without one is the
+                             state the session is left in: the app's own `voice` self-test opens
+                             a real session with the real recogniser and hands it back, and
+                             `mic=0` above is the same claim after being put away.
+  a controller button        a real pad, in a hand: `input` above drives the router with a
+                             synthetic press, which proves the mapper, the modes and the
+                             published key set. What it cannot prove is what iPadOS reports
+                             for a particular pad's buttons, which needs the pad.
   the game itself            a live session touches the client's own store; the CASC and
                              in-game checks stay in COMPATIBILITY.md and are done by hand.
   a real add-on import       the extractor is the Swift/ZIPFoundation path the fixture

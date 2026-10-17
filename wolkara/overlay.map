@@ -18,6 +18,8 @@ wolkara/Shell/ExecutionMode.h launcher/App/ExecutionMode.h replace
 wolkara/Shell/ExecutionMode.m launcher/App/ExecutionMode.m replace
 wolkara/Shell/Info.plist launcher/Info.plist replace
 wolkara/Shell/Integrated-Info.plist authorization/App/Integrated-Info.plist replace
+wolkara/Shell/SelfTest.h launcher/App/SelfTest.h add
+wolkara/Shell/SelfTest.m launcher/App/SelfTest.m add
 wolkara/Shell/WolkaraConfig.h launcher/App/WolkaraConfig.h add
 wolkara/Shell/WolkaraConfig.m launcher/App/WolkaraConfig.m add
 wolkara/Shell/WolkaraLog.h launcher/App/WolkaraLog.h add

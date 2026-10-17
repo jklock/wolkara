@@ -23,6 +23,9 @@
 #import "StartupActivity.h"
 #import "WolkaraConfig.h"
 #import "WolkaraLog.h"
+// The checks the app can run on itself, on a device, for the two things a script cannot do:
+// press a pad button and speak. See SelfTest.h.
+#import "SelfTest.h"
 #import "../Cloud/SteamCloudCoordinator.h"
 #include "HostDiagnostics.h"
 #include <errno.h>
@@ -350,6 +353,12 @@ static NSString *AKAudioStateDescription(void) {
         [AKControllerInspector.shared showPanel:YES];
         WKLog("host", @"controller inspector panel on");
     }
+    // A self-test asked for on the command line. It runs once this method has returned, so the
+    // scene is up and the run loop is turning - the dictation checks pump it. The verdict is
+    // written to the app's own log, which is where the device matrix reads it, and nothing in
+    // the UI can reach this. See SelfTest.h for why it exists.
+    NSString *selfTest=AKSelfTestRequestedFromArguments(arguments);
+    if (selfTest) dispatch_async(dispatch_get_main_queue(), ^{ AKRunSelfTest(selfTest); });
     // Normal Wolkara launches use the route included in this build. Development
     // arguments retain the original explicit mode selection.
     NSString *source=nil;
