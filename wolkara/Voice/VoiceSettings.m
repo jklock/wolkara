@@ -17,6 +17,9 @@ static NSString *const AKVoiceTakeButtonKey = @"AKVoiceTakeButtonFromGame";
 // dictionary, it is a corrupt file, and it would be handed to the SDK either way.
 static NSUInteger const AKVoiceWordLimit = 512;
 static NSUInteger const AKVoiceWordLengthLimit = 64;
+// UIKeyboardHIDUsage's last case is keyboardRightGUI, 0xE7. Nothing above it is a key a
+// keyboard can report, so this is the whole space of usages the adapter can ever ask about.
+static NSUInteger const AKKeyboardUsageMaximum = 0xE7;
 
 @implementation AKVoiceSettings
 
@@ -82,7 +85,10 @@ static NSUInteger const AKVoiceWordLengthLimit = 64;
         // A hand-written mapping could name a system element; nothing about a screenshot
         // can be swallowed, so it is refused here too rather than only on migration.
         if (!stored || AKInputElementIsSystem(stored.element)) continue;
-        if ([stored.element isEqualToString:element]) return YES;
+        // The rule the router fires on, not a second one: exact, or a family. Only the exact
+        // form matched before, so a mapping stored as "keyboard.key." fired the trigger for
+        // every key and still let every one of them through to the game.
+        if ([AKTrigger element:stored.element covers:element]) return YES;
     }
     return NO;
 }
@@ -92,19 +98,24 @@ static NSUInteger const AKVoiceWordLengthLimit = 64;
 - (NSSet<NSNumber *> *)ownedKeyUsages {
     if (!_enabled || !_takeButtonFromGame) return [NSSet set];
     NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
-    NSMutableSet<NSNumber *> *usages = [NSMutableSet set];
+    NSMutableArray<AKTrigger *> *stored = [NSMutableArray array];
     for (NSString *key in defaults.dictionaryRepresentation.allKeys) {
         if (![key hasPrefix:@"AKInputTrigger."]) continue;
-        AKTrigger *stored = [AKTrigger triggerFromStored:[defaults dictionaryForKey:key]];
-        if (!stored) continue;
-        NSString *element = stored.element;
-        if (![element hasPrefix:AKInputElementKeyboardPrefix]) continue;
-        // Digits only after the prefix: `keyboard.key.a` is not a usage, and something that
-        // is not a usage must not be turned into one.
-        NSString *tail = [element substringFromIndex:AKInputElementKeyboardPrefix.length];
-        if (!tail.length) continue;
-        if ([tail rangeOfCharacterFromSet:NSCharacterSet.decimalDigitCharacterSet.invertedSet].location != NSNotFound) continue;
-        [usages addObject:@(tail.integerValue)];
+        AKTrigger *trigger = [AKTrigger triggerFromStored:[defaults dictionaryForKey:key]];
+        if (trigger) [stored addObject:trigger];
+    }
+    // Asked one usage at a time, over every usage a keyboard can report, through the same
+    // matching the router fires on. Building the answer by enumerating usages is what makes
+    // a family mapping mean what it says: the old form only read a usage out of an element
+    // that was already `keyboard.key.<n>`, so a family - which the trigger model accepts and
+    // the router fires on - was accepted and inert. A mapping that is not a usage still
+    // cannot become one, because every id considered here was built from a number.
+    NSMutableSet<NSNumber *> *usages = [NSMutableSet set];
+    for (NSUInteger usage = 0; usage <= AKKeyboardUsageMaximum; usage++) {
+        NSString *element = AKInputElementForKeyboardKey((NSInteger)usage);
+        for (AKTrigger *trigger in stored) {
+            if ([AKTrigger element:trigger.element covers:element]) { [usages addObject:@(usage)]; break; }
+        }
     }
     return usages;
 }

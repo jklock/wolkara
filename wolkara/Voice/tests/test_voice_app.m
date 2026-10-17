@@ -300,6 +300,21 @@ static void TestSettings(void) {
     // know which controller it came from, and the user means the key either way.
     CHECK(([settings ownsElement:@"keyboard.key.70"]), @"a mapping made for one pad covers the key itself");
 
+    // A family mapping is not inert. It fires the trigger for every key in the family, so
+    // those keys are the user's too; only the exact form used to produce a usage, which made
+    // a family mapping that fired still let every key it covers through to the game.
+    [settings setLearnedElement:@"keyboard.key." forDevice:@"pad"];
+    CHECK(([[settings ownedKeyUsages] containsObject:@70]), @"a family mapping covers its keys");
+    CHECK(([[settings ownedKeyUsages] containsObject:@4]), @"including keys never mapped by hand");
+    CHECK(([settings ownedKeyUsages].count == 232), @"and every key the family names, got %lu", (unsigned long)[settings ownedKeyUsages].count);
+    [settings setLearnedElement:@"keyboard.key.70" forDevice:@"pad"];
+
+    // "Any" is what a trigger that was never set holds, and the header says it is never
+    // stored. A stored one used to be accepted, which is a mapping nobody chose - and with
+    // the switch on it would have taken every key the user has.
+    CHECK(([AKTrigger triggerFromStored:@{ @"element": AKTriggerAnyElement, @"pattern": @0 }] == nil),
+          @"a stored \"any\" is not a mapping");
+
     // The same answer in the form the shell publishes to the adapter, which sees usages and
     // not elements. Nothing that is not a usage may get into that set.
     CHECK(([[settings ownedKeyUsages] containsObject:@70]), @"the usage form names the key the adapter will see");
@@ -310,6 +325,13 @@ static void TestSettings(void) {
     [defaults removeObjectForKey:@"AKInputTrigger.odd"];
     settings.takeButtonFromGame = NO;
     CHECK(([settings ownedKeyUsages].count == 0), @"and with the switch off, nothing is published at all");
+
+    // Both switches are off until the user asks for them. Read through a fresh instance with
+    // the two keys removed, because every check above has just written them.
+    [defaults removeObjectForKey:@"AKVoiceTakeButtonFromGame"];
+    [defaults removeObjectForKey:@"AKVoiceEnabled"];
+    CHECK((![[AKVoiceSettings new] takeButtonFromGame] && ![[AKVoiceSettings new] enabled]),
+          @"nothing is taken and nothing listens until the user asks for it");
 
     [settings clearMappingForDevice:@"pad"];
     [settings clearMappingForDevice:@"8bitdo.pro"];
@@ -793,6 +815,13 @@ static void TestVoiceScreens(UIWindow *window) {
     UILabel *collision = (id)Find(settings.view, @"voice.mapping.collision");
     CHECK((collision != nil), @"and it says the mapped button still reaches the game");
     CHECK(([collision.text containsString:@"still reaches the game"]), @"in those words, got: %@", collision.text);
+    // The other half of the same limit: a controller button cannot be taken at all. The page
+    // has to say which inputs that is, and what to do instead, rather than leaving the switch
+    // to imply it takes anything.
+    UILabel *padLimit = (id)Find(settings.view, @"voice.takebutton.note");
+    CHECK((padLimit != nil), @"and it says a controller button cannot be taken this way");
+    CHECK(([padLimit.text containsString:@"cannot be taken"]), @"in those words, got: %@", padLimit.text);
+    CHECK(([padLimit.text containsString:@"pick a button the game does not use"]), @"and what to do instead, got: %@", padLimit.text);
     // And it does not offer patterns it cannot honour: two modes, not the model's five.
     UISegmentedControl *mode = (id)Find(settings.view, @"voice.mode");
     CHECK((mode.numberOfSegments == 2), @"and offers two modes, not the model's five patterns");
