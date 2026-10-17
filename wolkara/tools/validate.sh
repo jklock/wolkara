@@ -124,9 +124,17 @@ device_description() {
 # `devicectl` line it would have run, device identifier and all - and this file is meant
 # to be committed. AGENTS.md is explicit that device identifiers stay out of commits.
 scrub() {
-    sed -E "s/[0-9A-F]{8}-[0-9A-F]{16}/<device>/g" | {
-        if [ -n "${DEVICE:-}" ]; then sed "s/${DEVICE}/<device>/g"; else cat; fi
-    }
+    python3 -c '
+import os, re, sys
+text = sys.stdin.read()
+for key in ("DEVICE", "DEVELOPMENT_TEAM", "SIGN_IDENTITY"):
+    value = os.environ.get(key)
+    if value:
+        text = text.replace(value, "<redacted-" + key.lower() + ">")
+text = re.sub(r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{16}", "<device>", text)
+text = re.sub(r"[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}", "<identifier>", text)
+sys.stdout.write(text)
+'
 }
 
 # Each step is a command line and a name; the exit status decides the result, and the
@@ -143,7 +151,7 @@ run_step() {
     local rc=$?
     step_names+=("$name")
     if [ $rc -eq 0 ]; then step_results+=("PASS"); else step_results+=("FAIL (exit $rc)"); fi
-    step_bodies+=("$(tail -25 "$log" | scrub)")
+    step_bodies+=("$( { printf 'Command: %s\n' "$*"; tail -25 "$log"; } | scrub)")
     printf '   %s\n' "${step_results[${#step_results[@]}-1]}"
     return $rc
 }
@@ -186,23 +194,26 @@ run_platform_suite() {
     step_names+=("$name")
     if [ "$rc" -eq 0 ]; then
         step_results+=("PASS")
-    elif [ "$mine" -eq 0 ] && [ "$theirs" -gt 0 ]; then
+    elif [ "$rc" -eq 1 ] && [ "$mine" -eq 0 ] && [ "$theirs" -gt 0 ] &&
+         grep -qx PLATFORM_EMULATION_COMPLETE "$log"; then
         # Only known platform failures: say so, name them, and do not hide them.
         step_results+=("PASS ($theirs known platform failure(s))")
     else
         step_results+=("FAIL (exit $rc, $mine failure(s) not known to be the platform's)")
     fi
-    step_bodies+=("$( { printf '%s\n' "known platform failures in this run: $theirs"; \
+    step_bodies+=("$( { printf 'Command: %s\n' "$*"; printf '%s\n' "known platform failures in this run: $theirs"; \
         [ "$theirs" -gt 0 ] && sed -E 's/^([[:space:]]*#?[[:space:]]*)/  \1/' wolkara/tools/known_platform_failures.txt | grep -E "^  [a-zA-Z_]"; \
         [ "$mine" -gt 0 ] && echo "failures that are not on that list:" && grep -E "^(FAIL|ERROR): " "$log"; \
         tail -18 "$log"; } 2>/dev/null | scrub)")
     printf '   %s\n' "${step_results[${#step_results[@]}-1]}"
-    if [ "$rc" -eq 0 ] || { [ "$mine" -eq 0 ] && [ "$theirs" -gt 0 ]; }; then return 0; fi
+    if [ "$rc" -eq 0 ] || { [ "$rc" -eq 1 ] && [ "$mine" -eq 0 ] && [ "$theirs" -gt 0 ] &&
+         grep -qx PLATFORM_EMULATION_COMPLETE "$log"; }; then return 0; fi
     return 1
 }
 
 failures=0
 run_step "layer gate (check_layers.sh)" wolkara/tools/check_layers.sh || failures=$((failures+1))
+run_step "validation distinguishes known failures from incomplete suites" wolkara/tools/tests/test_validate.sh || failures=$((failures+1))
 run_step "install does the right thing per execution mode" wolkara/tools/tests/test_after_install.sh || failures=$((failures+1))
 run_step "pilot.sh fails closed and keeps its own session" wolkara/tools/tests/test_pilot.sh || failures=$((failures+1))
 run_step "launcher pages (simulator fixture)" wolkara/tools/test_wow_launcher_ui.sh || failures=$((failures+1))
@@ -220,13 +231,17 @@ run_step "the on-screen gamepad (simulator fixture)" wolkara/tools/test_touch_ga
 # there. One of them is the only test of a patch we carry. Every suite the layer owns now
 # has a row of its own, so coverage does not depend on a wrapper's loop being reached.
 run_step "local service retry (patch 0006)" wolkara/tools/test_local_service_retry.sh || failures=$((failures+1))
+run_step "CurseForge response and request contracts" wolkara/tools/test_curseforge.sh || failures=$((failures+1))
+run_step "real ZIP extraction (Swift and pinned ZIPFoundation)" wolkara/tools/test_addon_archive.sh || failures=$((failures+1))
 run_step "game file verification and repair (CASC)" wolkara/tools/test_wow_launcher.sh || failures=$((failures+1))
 run_step "the app builds for the device" wolkara/tools/install.sh --build-only || failures=$((failures+1))
 if [ "$full" = 1 ]; then
     # The platform's suites, with its known failures told apart from ours. A failure the
     # layer causes must fail the run; a failure that reproduces in a pristine checkout of
     # the platform must not, and must still be printed every time so it stays visible.
-    run_platform_suite "platform emulation suite" wolkara/tools/test_emulation.sh || failures=$((failures+1))
+    # Layer suites already have explicit rows; the wrapper would run them again and
+    # could misclassify a layer failure alongside the known platform failure.
+    run_platform_suite "platform emulation suite" bash build/platform/tools/test_emulation.sh || failures=$((failures+1))
     run_platform_suite "translation adapters (simulator)" wolkara/tools/test_translation_sim.sh || failures=$((failures+1))
 else
     step_names+=("platform emulation suite (--full)")

@@ -44,11 +44,8 @@ static AKInputSource AKInputSourceFromName(NSString *name) {
 
 // Per element state, so patterns can be measured rather than guessed.
 @interface AKInputElementState : NSObject
-@property (nonatomic) NSTimeInterval lastPress;
-@property (nonatomic) NSTimeInterval pressedSince;
 @property (nonatomic) BOOL down;
-// Set when this element's press is the first half of a chord that already fired,
-// so it cannot fire again until it is released.
+// Set after push-to-talk begins so its release ends it exactly once.
 @property (nonatomic) BOOL consumed;
 @end
 @implementation AKInputElementState
@@ -280,8 +277,8 @@ static NSTimeInterval const AKLearningTimeoutDefault = 20.0;
 #pragma mark - Patterns
 
 - (void)handlePress:(AKInputEvent *)event element:(NSString *)element key:(NSString *)key state:(AKInputElementState *)state {
+    if (state.down) return; // Repeated samples are not another physical press.
     state.down = YES;
-    state.pressedSince = event.time;
     [_down addObject:key];
 
     AKTrigger *trigger = [self triggerForDevice:event.device];
@@ -295,36 +292,6 @@ static NSTimeInterval const AKLearningTimeoutDefault = 20.0;
             [self fire:trigger event:event];
             break;
 
-        case AKTriggerPatternDouble:
-            if (state.lastPress && event.time - state.lastPress <= trigger.doubleInterval) {
-                state.lastPress = 0;
-                [self fire:trigger event:event];
-            } else {
-                state.lastPress = event.time;
-            }
-            break;
-
-        case AKTriggerPatternLong: {
-            // Fires only if it is still held when the interval is up, so a tap
-            // the game owns is untouched.
-            if (state.consumed) return;
-            NSTimeInterval deadline = trigger.holdInterval;
-            NSString *device = event.device;
-            __weak AKInputRouter *weakSelf = self;
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(deadline * NSEC_PER_SEC)),
-                           dispatch_get_main_queue(), ^{
-                AKInputRouter *strongSelf = weakSelf;
-                if (!strongSelf) return;
-                AKInputElementState *now = strongSelf->_states[key];
-                if (now.down && now.pressedSince == state.pressedSince) {
-                    now.consumed = YES;
-                    [strongSelf fire:trigger event:event];
-                }
-            });
-            (void)device;
-            break;
-        }
-
         case AKTriggerPatternPushToTalk:
             // Press starts it; the release below finishes it. Marked as consumed
             // so the pair cannot overlap.
@@ -334,15 +301,7 @@ static NSTimeInterval const AKLearningTimeoutDefault = 20.0;
             if (self.onTriggerBegan) self.onTriggerBegan(trigger, event);
             break;
 
-        case AKTriggerPatternChord: {
-            if (!trigger.chordElement.length) return;
-            NSString *partner = [NSString stringWithFormat:@"%@|%@", event.device, trigger.chordElement];
-            if ([_down containsObject:partner]) {
-                AKTrigger *copy = [trigger copy];
-                [self fire:copy event:event];
-            }
-            break;
-        }
+
     }
 }
 
@@ -355,7 +314,6 @@ static NSTimeInterval const AKLearningTimeoutDefault = 20.0;
     }
     state.down = NO;
     state.consumed = NO;
-    state.pressedSince = 0;
     [_down removeObject:key];
 }
 
