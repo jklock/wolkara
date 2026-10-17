@@ -2,6 +2,9 @@
 // starts them through the translation runtime in the user's chosen execution
 // mode, and offers development checks in a separate Diagnostics menu.
 #import <UIKit/UIKit.h>
+// AVAudioSession, because the keep-alive for a running game is an active audio session and
+// the one thing this device can prove without a voice is what that session is set to.
+#import <AVFoundation/AVFoundation.h>
 #import "AppLibrary.h"
 #import "Diagnostics.h"
 #import "DiagnosticsViewController.h"
@@ -224,14 +227,26 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     WKLog("voice", @"the user's keys: %lu published to the adapter", (unsigned long)usages.count);
 }
 
+// What the app's own audio session is set to, for the same reason the dictation flags are
+// printed: the keep-alive is an active audio session, and what a dictation session must never
+// leave behind is a recording one. Nothing on this device proved either until this was logged.
+// `mic=1` is a session this app is recording on; that is the one the matrix refuses to see.
+static NSString *AKAudioStateDescription(void) {
+    AVAudioSession *session = AVAudioSession.sharedInstance;
+    NSString *category = [session.category stringByReplacingOccurrencesOfString:@"AVAudioSessionCategory" withString:@""];
+    BOOL recording = [session.category isEqualToString:AVAudioSessionCategoryRecord] ||
+                     [session.category isEqualToString:AVAudioSessionCategoryPlayAndRecord];
+    return [NSString stringWithFormat:@"%@/%@/%d mic=%d", category, session.mode, (int)session.isActive, (int)recording];
+}
+
 - (void)sceneDidBecomeActive:(UIScene *)scene {
     (void)scene;
     // What state everything is in when the app is allowed to act again, so "nothing is left
     // running" is a fact in the log rather than an assumption. The device matrix reads these
     // lines back off the iPad after backgrounding it for real.
-    WKLog("host", @"foreground: dictation=%ld listening=%d learning=%d",
+    WKLog("host", @"foreground: dictation=%ld listening=%d learning=%d audio=%@",
           (long)AKDictation.shared.state, (int)AKDictation.shared.listening,
-          (int)AKInputRouter.shared.learning);
+          (int)AKInputRouter.shared.learning, AKAudioStateDescription());
     [self reserveExecutableMemory];
 }
 
@@ -247,15 +262,22 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
 }
 
 - (void)leftTheForeground:(NSString *)why {
-    // Dictation ends itself on the same notification; this is the app-level record of the
-    // transition, and it says whether anything was still running when it happened -
-    // including the case where the microphone was open, which is what the user would see as
-    // an indicator they cannot get rid of.
-    BOOL wasListening = AKDictation.shared.listening;
-    WKLog("host", @"%@: dictation=%ld listening=%d learning=%d",
-          why, (long)AKDictation.shared.state, (int)wasListening,
-          (int)AKInputRouter.shared.learning);
-    if (wasListening) WKLog("host", @"the microphone was open when the app went away; it is being closed");
+    // The microphone is closed here, rather than left to the dictation's own background
+    // observer, for two reasons - and the audit found the second. An app that resigns active
+    // without ever entering the background still has an open microphone, and the sentence
+    // below used to be printed while the microphone was still open: a record that claimed
+    // something had happened before it had. Ending it first makes both the sentence and the
+    // state printed underneath it true, and the state is printed *after* the close.
+    if (AKDictation.shared.listening) {
+        [AKDictation.shared cancel];
+        WKLog("host", @"the microphone was open when the app went away; it has been closed");
+    }
+    // The app-level record of the transition. The audio session is in it because the
+    // keep-alive for a running game is an active session, and because "nothing was left
+    // recording" is a claim the device can now check without anyone speaking.
+    WKLog("host", @"%@: dictation=%ld listening=%d learning=%d audio=%@",
+          why, (long)AKDictation.shared.state, (int)AKDictation.shared.listening,
+          (int)AKInputRouter.shared.learning, AKAudioStateDescription());
     // The router does this itself on the same notification. Doing it here as well costs
     // nothing and means the shell does not depend on that observer existing.
     [AKInputRouter.shared cancelLearning];

@@ -54,6 +54,14 @@ int main(void) {
         NSMutableDictionary *query=[NSMutableDictionary new];
         for (NSURLQueryItem *item in parts.queryItems) query[item.name]=item.value;
         CHECK([query[@"searchFilter"] isEqual:@"a&b café"] && [query[@"index"] isEqual:@"50"], "query encoding and pagination");
+        // A browse answer with no mod list is not a browse answer. It used to be accepted,
+        // because only the envelope was checked, and the caller then saw an empty list rather
+        // than an error - which reads exactly like "this search found nothing".
+        for (NSString *body in @[@"{}", @"{\"data\":null}", @"{\"data\":{}}"]) {
+            session.status=200; session.body=body; calls=0;
+            [client browseModsWithQuery:@"" sortField:2 sortOrder:@"desc" categoryID:nil index:0 completion:completion];
+            CHECK(error && !result && calls==1, "a browse answer with no mod list fails once without exception");
+        }
         session.body=@"{\"data\":[null,42,{}, {\"gameVersions\":[\"1.60.1\"],\"isAvailable\":true,\"fileDate\":\"2026-01-01\",\"id\":1}, {\"gameVersions\":[\"1.60.1\"],\"isAvailable\":true,\"fileDate\":\"2026-02-01\",\"id\":2}]}";
         [client latestFileForModID:@1 gameVersion:@"1.60.1" completion:completion];
         CHECK([result[@"id"] isEqual:@2] && !error, "invalid entries ignored; newest compatible file chosen");
@@ -63,6 +71,14 @@ int main(void) {
         }
         NSError *failure=nil;
         CHECK([[client assetRequestForURL:@"https://edge.forgecdn.net/a" error:&failure] valueForHTTPHeaderField:@"x-api-key"] != nil, "approved CDN request");
+        // The last step of the live install path, which nothing reached before: the URL the API
+        // hands back is what the asset request is built from.
+        session.status=200; session.body=@"{\"data\":\"https://edge.forgecdn.net/files/1/2/thing.zip\"}";
+        [client downloadURLForModID:@1 fileID:@2 completion:completion];
+        CHECK([result isEqual:@"https://edge.forgecdn.net/files/1/2/thing.zip"] && !error, "a download URL comes back as a string");
+        session.status=200; session.body=@"{\"data\":{\"not\":\"a string\"}}";
+        [client downloadURLForModID:@1 fileID:@2 completion:completion];
+        CHECK(error && !result, "and an answer that is not a URL is refused");
         session.failure=[NSError errorWithDomain:NSURLErrorDomain code:NSURLErrorNotConnectedToInternet userInfo:nil];
         [client categoriesForGameID:1 completion:completion];
         CHECK(error==session.failure && !result, "transport error preserved");

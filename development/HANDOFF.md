@@ -35,3 +35,22 @@ The archive extraction/import path is now exercised with real ZIPs locally; a Fi
 import on iPad remains useful end-to-end platform confirmation, not a substitute for that
 coverage. Never force past the pilot's running-client/update guard or alter a live client's
 store to manufacture a passing result.
+
+## What the second pass changed (2026-10-17)
+
+A second pass read the audit's findings against the code instead of trusting them, fixed
+them, and proved each with a fixture. `development/NOTES.md` has the detail; in short: the
+add-on store's failure paths no longer lose files, a ZIP can no longer expand past what it
+declares, ownership is decided by the same rule the trigger fires on, one dead input path is
+gone, and the device matrix now proves the app survives being put away and what audio session
+it is left in - with the microphone closed by the shell before the shell says so.
+
+Two documentation habits, kept: sections that are bound to a date keep their numbers and are
+corrected by a dated line rather than rewritten, and a claim with no assertion behind it is
+either given one or cut. The counts in the tables above and in `README.md` are current as of
+this pass.
+
+The remaining work is now only the physical observations listed above: a real voice for the
+recogniser, a hand on a pad, a live game session, a live CurseForge key, and an import from
+the Files picker on the iPad. The retired trigger patterns and the pad-button limit are
+decided and stated on the page where the mapping is made.

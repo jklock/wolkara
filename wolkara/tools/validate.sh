@@ -233,6 +233,7 @@ run_step "the on-screen gamepad (simulator fixture)" wolkara/tools/test_touch_ga
 run_step "local service retry (patch 0006)" wolkara/tools/test_local_service_retry.sh || failures=$((failures+1))
 run_step "CurseForge response and request contracts" wolkara/tools/test_curseforge.sh || failures=$((failures+1))
 run_step "real ZIP extraction (Swift and pinned ZIPFoundation)" wolkara/tools/test_addon_archive.sh || failures=$((failures+1))
+run_step "the app icon's assets and catalog" wolkara/tools/test_icon_assets.sh || failures=$((failures+1))
 run_step "game file verification and repair (CASC)" wolkara/tools/test_wow_launcher.sh || failures=$((failures+1))
 run_step "the app builds for the device" wolkara/tools/install.sh --build-only || failures=$((failures+1))
 if [ "$full" = 1 ]; then
