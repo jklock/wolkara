@@ -23,9 +23,7 @@ static NSTimeInterval const AKTriggerDoubleMaximum = 2.0;
 - (instancetype)init {
     if ((self = [super init])) {
         _element = AKTriggerAnyElement;
-        _pattern = AKTriggerPatternLong;
-        _holdInterval = 0.6;
-        _doubleInterval = 0.35;
+        _pattern = AKTriggerPatternPress;
     }
     return self;
 }
@@ -45,23 +43,13 @@ static NSTimeInterval const AKTriggerDoubleMaximum = 2.0;
 - (NSString *)patternName {
     switch (self.pattern) {
     case AKTriggerPatternPress: return @"press";
-    case AKTriggerPatternDouble: return @"double press";
-    case AKTriggerPatternLong: return @"long press";
-    case AKTriggerPatternChord: return @"chord";
     case AKTriggerPatternPushToTalk: return @"hold to talk";
     }
     return @"press";
 }
 
-- (BOOL)patternIsOfferedInTheLauncher {
-    return self.pattern == AKTriggerPatternPress || self.pattern == AKTriggerPatternPushToTalk;
-}
-
 - (NSString *)summary {
     NSString *element = AKInputElementDisplay(self.element);
-    if (self.pattern == AKTriggerPatternChord && self.chordElement.length)
-        return [NSString stringWithFormat:@"%@ + %@ (%@)", element,
-                AKInputElementDisplay(self.chordElement), [self patternName]];
     return [NSString stringWithFormat:@"%@ (%@)", element, [self patternName]];
 }
 
@@ -87,7 +75,8 @@ static NSTimeInterval const AKTriggerDoubleMaximum = 2.0;
     id patternValue = stored[@"pattern"] ?: @(AKTriggerPatternPress);
     if (![patternValue isKindOfClass:NSNumber.class]) return nil;
     NSInteger pattern = [patternValue integerValue];
-    if (pattern < AKTriggerPatternPress || pattern > AKTriggerPatternPushToTalk) return nil;
+    if ([patternValue doubleValue] != pattern ||
+        (pattern != AKTriggerPatternPress && pattern != AKTriggerPatternPushToTalk)) return nil;
 
     id chord = stored[@"chord"];
     if (chord && ![chord isKindOfClass:NSString.class]) return nil;
@@ -121,10 +110,7 @@ static NSTimeInterval const AKTriggerDoubleMaximum = 2.0;
     if (!validated) return nil;
     AKTrigger *trigger = [AKTrigger new];
     trigger.element = validated[@"element"];
-    trigger.chordElement = validated[@"chord"];
     trigger.pattern = (AKTriggerPattern)[validated[@"pattern"] integerValue];
-    trigger.holdInterval = validated[@"hold"] ? [validated[@"hold"] doubleValue] : 0.6;
-    trigger.doubleInterval = validated[@"double"] ? [validated[@"double"] doubleValue] : 0.35;
     return trigger;
 }
 
@@ -132,9 +118,6 @@ static NSTimeInterval const AKTriggerDoubleMaximum = 2.0;
     NSMutableDictionary *stored = [NSMutableDictionary dictionary];
     stored[@"element"] = AKInputElementCanonicalized(self.element);
     stored[@"pattern"] = @(self.pattern);
-    stored[@"hold"] = @(self.holdInterval);
-    stored[@"double"] = @(self.doubleInterval);
-    if (self.chordElement.length) stored[@"chord"] = AKInputElementCanonicalized(self.chordElement);
     return stored;
 }
 
@@ -192,10 +175,7 @@ static NSTimeInterval const AKTriggerDoubleMaximum = 2.0;
 - (id)copyWithZone:(NSZone *)zone {
     AKTrigger *copy = [[AKTrigger allocWithZone:zone] init];
     copy.element = self.element;
-    copy.chordElement = self.chordElement;
     copy.pattern = self.pattern;
-    copy.holdInterval = self.holdInterval;
-    copy.doubleInterval = self.doubleInterval;
     return copy;
 }
 

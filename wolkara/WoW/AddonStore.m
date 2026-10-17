@@ -84,6 +84,7 @@ static BOOL Managed(NSDictionary *item) { return [item[@"folders"] isKindOfClass
     NSData *archive=[NSData dataWithContentsOfURL:url options:NSDataReadingMappedIfSafe error:error];if(!archive||archive.length>128*1024*1024)return Fail(error,@"The selected ZIP is missing or exceeds the 128 MiB limit.");
     NSString *job=[_support stringByAppendingPathComponent:NSUUID.UUID.UUIDString],*extract=[job stringByAppendingPathComponent:@"extract"];
     if(![NSFileManager.defaultManager createDirectoryAtPath:job withIntermediateDirectories:YES attributes:nil error:error])return NO;
+    @try {
     Class archiveClass=NSClassFromString(@"TKAddonArchive");SEL selector=NSSelectorFromString(@"extractArchiveAtURL:toDirectoryURL:error:");
     if(!archiveClass||![archiveClass respondsToSelector:selector])return Fail(error,@"ZIP support is unavailable in this build.");
     BOOL (*extractor)(id,SEL,NSURL *,NSURL *,NSError **)= (void *)objc_msgSend;
@@ -105,7 +106,8 @@ static BOOL Managed(NSDictionary *item) { return [item[@"folders"] isKindOfClass
         NSMutableArray *packages=[self mutablePackages];NSString *identifier=folders.firstObject;NSString *toc=TOC([extract stringByAppendingPathComponent:identifier]);[packages addObject:@{ @"identifier":identifier,@"name":Value(toc,@"Title:")?:identifier,@"version":Value(toc,@"Version:")?:@"Unknown version",@"source":@"zip",@"archiveSHA256":Digest(archive),@"folders":folders,@"pinned":@NO,@"disabled":@NO }];
         for(NSString *name in folders) { if(![NSFileManager.defaultManager copyItemAtPath:[extract stringByAppendingPathComponent:name] toPath:[_directory stringByAppendingPathComponent:name] error:error])return NO; [created addObject:name]; }
         if(![self saveManifest:packages error:error])return NO;success=YES;[self reload];return YES;
-    } @finally {TKWoWReleaseUpdateLock(lock);if(!success)for(NSString *name in created)[NSFileManager.defaultManager removeItemAtPath:[_directory stringByAppendingPathComponent:name] error:NULL];[NSFileManager.defaultManager removeItemAtPath:job error:NULL];}
+    } @finally {TKWoWReleaseUpdateLock(lock);if(!success)for(NSString *name in created)[NSFileManager.defaultManager removeItemAtPath:[_directory stringByAppendingPathComponent:name] error:NULL];}
+    } @finally { [NSFileManager.defaultManager removeItemAtPath:job error:NULL]; }
 }
 - (BOOL)setDisabled:(BOOL)disabled record:(TKAddonRecord *)record error:(NSError **)error {
     if (!record.managed) return Fail(error,@"Wolkara only changes folders it installed.");
