@@ -63,6 +63,32 @@ typedef NS_ENUM(NSInteger, AKVoiceMode) {
 // "Key 70 (press)", "Not set".
 - (NSString *)mappingSummaryForDevice:(nullable NSString *)device;
 
+// Whether the game is also to be kept from seeing the button the user mapped. Off by
+// default, because on is a real change to how the game behaves: with it off the mapping
+// only listens, and a button the game uses does both things at once. With it on, a key
+// the user has taken for dictation does not reach the game at all - see
+// `-ownsElement:` for exactly which inputs that covers, and which it cannot.
+@property (nonatomic) BOOL takeButtonFromGame;
+
+// The whole decision, in one place, asked by the input router on behalf of the adapter at
+// the point where guest key events are posted: is this element mapped for dictation, and
+// has the user asked for the game not to see it?
+//
+// What it cannot cover: a *controller* button. iPadOS gives us the pad's buttons as
+// gamepad elements, and the guest receives them as key events we have no way to identify -
+// there is no API that says which HID usage a given pad button becomes. So a pad mapping
+// cannot be taken from the game, and the app says so on the page rather than pretending.
+// A keyboard key can be, because both the observation and the forwarding name it the same
+// way. A system signal can never be: there is nothing to swallow, and the layer already
+// releases the system gesture for the element it holds.
+- (BOOL)ownsElement:(NSString *)element;
+
+// The keyboard usages that follow from `ownsElement:` - the elements of the form
+// `keyboard.key.<usage>` that are mapped and taken. The shell publishes this set to the
+// adapter, which is a dylib it does not link against: the adapter cannot ask about a mapping,
+// so it is told which keys to swallow before the guest sees them.
+- (NSSet<NSNumber *> *)ownedKeyUsages;
+
 // Fired when anything above changes, so the launcher can redraw and the input router
 // can re-decide which system gestures are ours to hold.
 extern NSNotificationName const AKVoiceSettingsDidChangeNotification;

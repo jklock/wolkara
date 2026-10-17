@@ -30,6 +30,8 @@
 @property (nonatomic, strong) UILabel *mappingHint;
 @property (nonatomic, strong) UIButton *mapButton;
 @property (nonatomic, strong) UIButton *clearButton;
+@property (nonatomic, strong) UISwitch *takeButtonSwitch;
+@property (nonatomic, strong) UIView *takeButtonCard;
 @property (nonatomic, strong) UISegmentedControl *modeControl;
 @property (nonatomic, strong) UISwitch *autoSubmitSwitch;
 @property (nonatomic, strong) UISwitch *trailingSpaceSwitch;
@@ -81,15 +83,27 @@
     self.clearButton = [self borderedButton:@"voice.clear" title:@"Clear" action:@selector(clearMapping)];
     self.mappingHint = WKNote(@"Tap Map, then press the button you want to use.");
     // The audit's finding, said where the mapping is made rather than in a document
-    // nobody reads: this feature listens to a button, it does not take the button away
-    // from the game. So a button the game already uses does both, and a pattern like
-    // hold-to-talk is not a way to keep the game from seeing the press. It carries an
-    // identifier because the voice fixture asserts the warning is still on the page: a
-    // warning that can disappear without a test is the same as no warning.
-    UILabel *collision = WKNote(@"The button you map still reaches the game. Nothing here takes it away from the game, so choosing one the game already uses makes it do both things at once.");
+    // reads: by default this feature listens to a button and does not take it from the game.
+    // The switch below is how the user takes it, and it says which buttons that works for. It
+    // carries an identifier because the voice fixture asserts the warning is still on the
+    // page: a warning that can disappear without a test is the same as no warning.
+    UILabel *collision = WKNote(@"The button you map still reaches the game unless you take it below. Nothing here takes it away from the game by itself, so choosing one the game already uses makes it do both things at once.");
     collision.accessibilityIdentifier = @"voice.mapping.collision";
     self.mappingCard = [self card:@[self.mappingValue, self.mapButton, self.clearButton, self.mappingHint, collision]];
     [rows addArrangedSubview:self.mappingCard];
+
+    // Keep the game from seeing it: the user's explicit choice, off by default. With it on
+    // a keyboard key the user has taken for dictation does not reach the game at all, which
+    // is what "collision-free" means for the inputs this can be done for. The note says
+    // which those are, because a pad button cannot be taken - iPadOS gives us the pad's
+    // buttons as gamepad elements and the guest's key events cannot be traced back to them.
+    self.takeButtonSwitch = [self switchWithAction:@selector(takeButtonChanged)];
+    self.takeButtonSwitch.accessibilityIdentifier = @"voice.takebutton";
+    self.takeButtonSwitch.on = AKVoiceSettings.shared.takeButtonFromGame;
+    self.takeButtonCard = [self card:@[[self switchRow:@"Keep the game from seeing it"
+                                              control:self.takeButtonSwitch],
+        WKNote(@"On, a keyboard key you have mapped for dictation does not reach the game at all. A controller button cannot be taken this way, because iOS tells us about the pad's buttons in a form we cannot match to the game's own input - so for a pad, pick a button the game does not use.")]];
+    [rows addArrangedSubview:self.takeButtonCard];
 
     // --- How it behaves -----------------------------------------------------
     [rows addArrangedSubview:WKHeading(@"Mode")];
@@ -188,6 +202,14 @@
 
 #pragma mark - On, or off
 
+- (void)takeButtonChanged {
+    AKVoiceSettings.shared.takeButtonFromGame = self.takeButtonSwitch.on;
+    // Said in the log as well as on the page: this is the one setting that changes what the
+    // game itself receives.
+    WKLog("voice", @"the game %s see a mapped keyboard key",
+          self.takeButtonSwitch.on ? "will not" : "will still");
+}
+
 - (void)enabledChanged {
     AKVoiceSettings.shared.enabled = self.enabledSwitch.on;
     if (!self.enabledSwitch.on) {
@@ -206,13 +228,14 @@
         ? (device ? [NSString stringWithFormat:@"On. The button below applies to %@.", device]
                   : @"On. Connect a controller and map a button.")
         : @"Off. The microphone is not opened and no controller is affected.";
-    for (UIView *card in @[self.mappingCard, self.modeCard, self.afterCard, self.wordsCard]) {
+    for (UIView *card in @[self.mappingCard, self.takeButtonCard, self.modeCard, self.afterCard, self.wordsCard]) {
         card.alpha = on ? 1.0 : 0.4;
         card.userInteractionEnabled = on;
     }
     self.mapButton.enabled = on && !AKInputRouter.shared.learning;
     self.clearButton.enabled = on;
     self.modeControl.enabled = on;
+    self.takeButtonSwitch.enabled = on;
     self.autoSubmitSwitch.enabled = on;
     self.trailingSpaceSwitch.enabled = on;
     self.dictionaryField.enabled = on;

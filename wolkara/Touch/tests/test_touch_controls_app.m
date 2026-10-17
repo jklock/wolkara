@@ -10,6 +10,9 @@
 @property NSString *lastAction;
 @property NSRange selection;
 @property NSUInteger replacements;
+// The last key event this guest view was given, so a test can say whether the adapter posted
+// one at all. Nil is the answer that matters for a key the user has taken.
+@property (nonatomic, strong, nullable) NSEvent *lastKeyEvent;
 @end
 @implementation AKInputFixtureView
 - (instancetype)initWithFrame:(NSRect)frame {
@@ -46,6 +49,7 @@
 }
 - (BOOL)acceptsFirstResponder { return YES; }
 - (void)keyDown:(NSEvent *)event {
+    self.lastKeyEvent = event;
     if (event.keyCode == 0 && (event.modifierFlags & NSEventModifierFlagCommand)) {
         self.selection = NSMakeRange(0, self.text.length);
         self.replacements++;
@@ -96,6 +100,59 @@ static UIView *AKFindInputView(UIView *root, NSString *identifier) {
         if (found) return found;
     }
     return nil;
+}
+
+#pragma mark - Faking a key press at the adapter's door
+
+// UIKey and UIPress cannot be constructed, so they are subclassed and the accessors
+// `postKeys:` reads are overridden: keyCode, characters, modifierFlags and timestamp. This
+// is the only way to drive the one place the adapter posts guest key events, and a contract
+// nothing exercises is a contract that is not tested - the Replace assertion above sat
+// failing for a day for exactly that reason.
+@interface AKFixtureKey : UIKey
+@property (nonatomic) UIKeyboardHIDUsage usage;
+@end
+@implementation AKFixtureKey
+- (UIKeyboardHIDUsage)keyCode { return self.usage; }
+- (UIKeyModifierFlags)modifierFlags { return 0; }
+// "a" for usage 0x04, "b" for 0x05, and so on: enough for the guest view to insert.
+- (NSString *)characters { return [NSString stringWithFormat:@"%c", (char)('a' + (self.usage - 0x04))]; }
+- (NSString *)charactersIgnoringModifiers { return self.characters; }
+@end
+
+@interface AKFixturePress : UIPress
+@property (nonatomic, strong) AKFixtureKey *fakeKey;
+@end
+@implementation AKFixturePress
+- (UIKey *)key { return self.fakeKey; }
+- (NSTimeInterval)timestamp { return NSProcessInfo.processInfo.systemUptime; }
+@end
+
+static AKFixturePress *AKPressForUsage(unsigned short usage) {
+    AKFixturePress *press = [AKFixturePress new];
+    AKFixtureKey *key = [AKFixtureKey new];
+    key.usage = usage;
+    press.fakeKey = key;
+    return press;
+}
+
+// Press a key the way UIKit would, then let the event queue deliver it, and answer with the
+// event the guest's own view received - nil when the adapter posted nothing.
+static NSEvent *AKFixturePressKey(UIView *host, AKInputFixtureView *guest, unsigned short usage) {
+    guest.lastKeyEvent = nil;
+    [host pressesBegan:[NSSet setWithObject:AKPressForUsage(usage)] withEvent:nil];
+    AKDrainFixtureEvents();
+    return guest.lastKeyEvent;
+}
+
+// The stand-in for the shell: publish which usages the user has taken, exactly as main.m
+// does, and let the adapter's own observer decide. The notification is dispatched to the main
+// queue, so it is drained before returning.
+static void AKFixtureOwnsUsages(NSArray<NSNumber *> *usages) {
+    [NSNotificationCenter.defaultCenter postNotificationName:AKTouchOwnedKeyUsagesDidChangeNotification
+                                                     object:nil
+                                                   userInfo:@{AKTouchOwnedKeyUsagesKey: [NSSet setWithArray:usages]}];
+    AKDrainFixtureEvents();
 }
 
 static void AKFixtureInputSource(void *context) {
@@ -412,6 +469,49 @@ static void AKFixtureInputSource(void *context) {
                 assert(CGRectEqualToRect(toolbarFrame, controls.frame));
                 [controls setGamepadVisible:NO]; [host layoutIfNeeded];
                 assert(CGRectEqualToRect(toolbarFrame, controls.frame));
+
+                // --- a key the user took for dictation must not reach the game -------
+                //
+                // This drives the one place the adapter posts guest key events, because that
+                // is where ownership is honoured. The shell cannot call in here - the adapter
+                // is a dylib it does not link - so it publishes the usages it has taken and
+                // this posts that same notification, which is the real path.
+                [controls dismissKeyboard];
+                [host layoutIfNeeded];
+                assert([self.guest makeFirstResponder:fixture]);
+                fixture.selection = NSMakeRange(0, 0);
+                [fixture.text setString:@""];
+                NSEvent *arrived = AKFixturePressKey(host, fixture, 0x04 /* 'a' */);
+                assert(arrived != nil && [fixture.text isEqual:@"a"]);
+                AKFixtureOwnsUsages(@[@0x04]);
+                [fixture.text setString:@""];
+                fixture.selection = NSMakeRange(0, 0);
+                arrived = AKFixturePressKey(host, fixture, 0x04);
+                assert(arrived == nil && !fixture.text.length);
+                NSLog(@"native: usage 0x04 is the user's; the guest's view never heard of it");
+                // The release goes with it, or the game is left holding a key down.
+                [host pressesEnded:[NSSet setWithObject:AKPressForUsage(0x04)] withEvent:nil];
+                AKDrainFixtureEvents();
+                assert(!fixture.text.length);
+                // A key the user has not taken is untouched.
+                fixture.selection = NSMakeRange(0, 0);
+                arrived = AKFixturePressKey(host, fixture, 0x05 /* 'b' */);
+                assert(arrived != nil && [fixture.text isEqual:@"b"]);
+                // Taking it back gives the key straight back to the game.
+                AKFixtureOwnsUsages(@[]);
+                [fixture.text setString:@""];
+                fixture.selection = NSMakeRange(0, 0);
+                arrived = AKFixturePressKey(host, fixture, 0x04);
+                assert(arrived != nil && [fixture.text isEqual:@"a"]);
+                // And with nothing published at all - what a build that never fills this in
+                // does - every key still goes through.
+                AKTouchKeyIsTakenForVoice = NULL;
+                [fixture.text setString:@""];
+                fixture.selection = NSMakeRange(0, 0);
+                arrived = AKFixturePressKey(host, fixture, 0x04);
+                assert(arrived != nil && [fixture.text isEqual:@"a"]);
+                [fixture.text setString:expected];
+
                 [NSTimer scheduledTimerWithTimeInterval:1 repeats:NO block:^(NSTimer *timer) {
                     (void)timer;
                     assert([fixture.text isEqual:expected]);

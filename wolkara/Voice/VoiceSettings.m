@@ -2,6 +2,7 @@
 
 #import "VoiceSettings.h"
 #import "../App/WolkaraLog.h"
+#import "../Input/InputElement.h"
 
 NSNotificationName const AKVoiceSettingsDidChangeNotification = @"AKVoiceSettingsDidChange";
 
@@ -10,6 +11,7 @@ static NSString *const AKVoiceModeKey = @"AKVoiceMode";
 static NSString *const AKVoiceAutoSubmitKey = @"AKVoiceAutoSubmit";
 static NSString *const AKVoiceTrailingSpaceKey = @"AKVoiceTrailingSpace";
 static NSString *const AKVoiceCustomWordsKey = @"AKVoiceCustomWords";
+static NSString *const AKVoiceTakeButtonKey = @"AKVoiceTakeButtonFromGame";
 
 // The dictionary is biased into the recogniser, so it is bounded: a huge list is not a
 // dictionary, it is a corrupt file, and it would be handed to the SDK either way.
@@ -39,6 +41,9 @@ static NSUInteger const AKVoiceWordLengthLimit = 64;
         _autoSubmit = [defaults boolForKey:AKVoiceAutoSubmitKey];
         _trailingSpace = [defaults boolForKey:AKVoiceTrailingSpaceKey];
         _customWords = [self sanitizedWords:[defaults arrayForKey:AKVoiceCustomWordsKey] ?: @[]];
+        // Off: a mapping listens to a button, and making the game stop seeing it is a
+        // change to how the game behaves that the user has to ask for.
+        _takeButtonFromGame = [defaults boolForKey:AKVoiceTakeButtonKey];
         // One pass at startup: an older build wrote element names that are not ids.
         NSUInteger migrated = [AKTrigger migrateStoredTriggersInDefaults:defaults];
         if (migrated) WKLog("voice", @"migrated %lu stored mapping(s) to canonical element ids", (unsigned long)migrated);
@@ -58,6 +63,51 @@ static NSUInteger const AKVoiceWordLengthLimit = 64;
     [self persist:AKVoiceModeKey value:@(mode)];
 }
 - (void)setAutoSubmit:(BOOL)autoSubmit { _autoSubmit = autoSubmit; [self persist:AKVoiceAutoSubmitKey value:@(autoSubmit)]; }
+- (void)setTakeButtonFromGame:(BOOL)takeButtonFromGame {
+    _takeButtonFromGame = takeButtonFromGame;
+    [self persist:AKVoiceTakeButtonKey value:@(takeButtonFromGame)];
+}
+
+// The one place that decides whether the guest is kept from seeing an input. Deliberately
+// asked by *element* and not by device: the adapter sees a key press, not a controller, and
+// the mapping is per device, so "any device has taken this" is the only question the
+// adapter's position can answer.
+- (BOOL)ownsElement:(NSString *)element {
+    if (!_enabled || !_takeButtonFromGame) return NO;
+    if (!element.length || AKInputElementIsSystem(element)) return NO;
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    for (NSString *key in defaults.dictionaryRepresentation.allKeys) {
+        if (![key hasPrefix:@"AKInputTrigger."]) continue;
+        AKTrigger *stored = [AKTrigger triggerFromStored:[defaults dictionaryForKey:key]];
+        // A hand-written mapping could name a system element; nothing about a screenshot
+        // can be swallowed, so it is refused here too rather than only on migration.
+        if (!stored || AKInputElementIsSystem(stored.element)) continue;
+        if ([stored.element isEqualToString:element]) return YES;
+    }
+    return NO;
+}
+
+// The same decision in the form the adapter can use: it is about to post a key and knows the
+// usage, not the element. One scan, for the shell to publish to the adapter as a set.
+- (NSSet<NSNumber *> *)ownedKeyUsages {
+    if (!_enabled || !_takeButtonFromGame) return [NSSet set];
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    NSMutableSet<NSNumber *> *usages = [NSMutableSet set];
+    for (NSString *key in defaults.dictionaryRepresentation.allKeys) {
+        if (![key hasPrefix:@"AKInputTrigger."]) continue;
+        AKTrigger *stored = [AKTrigger triggerFromStored:[defaults dictionaryForKey:key]];
+        if (!stored) continue;
+        NSString *element = stored.element;
+        if (![element hasPrefix:AKInputElementKeyboardPrefix]) continue;
+        // Digits only after the prefix: `keyboard.key.a` is not a usage, and something that
+        // is not a usage must not be turned into one.
+        NSString *tail = [element substringFromIndex:AKInputElementKeyboardPrefix.length];
+        if (!tail.length) continue;
+        if ([tail rangeOfCharacterFromSet:NSCharacterSet.decimalDigitCharacterSet.invertedSet].location != NSNotFound) continue;
+        [usages addObject:@(tail.integerValue)];
+    }
+    return usages;
+}
 - (void)setTrailingSpace:(BOOL)trailingSpace { _trailingSpace = trailingSpace; [self persist:AKVoiceTrailingSpaceKey value:@(trailingSpace)]; }
 - (void)setCustomWords:(NSArray<NSString *> *)customWords {
     _customWords = [self sanitizedWords:customWords];

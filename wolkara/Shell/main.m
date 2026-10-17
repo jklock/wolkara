@@ -11,6 +11,7 @@
 #import "../Controller/ControllerWindow.h"
 #import "../Input/InputRouter.h"
 #import "../Voice/Dictation.h"
+#import "../Voice/VoiceSettings.h"
 #import "../WoW/CASC.h"
 #import "../WoW/WoWViewController.h"
 #import "LaunchProgressView.h"
@@ -30,6 +31,14 @@
 #import "LocalAuthorization.h"
 #import "Tolkara-Swift.h"
 #endif
+
+// The names, not the constants: the adapter is compiled into a signed dylib that this app
+// does not link against, so a constant it defines cannot be referenced from here. These are
+// AKTouchOwnedKeyUsagesDidChangeNotification and AKTouchOwnedKeyUsagesKey in
+// wolkara/Touch/TouchControls.h, and the wording is part of the contract between the two -
+// the same arrangement as AKTouchGameTextInputDidAppear below.
+static NSString *const AKOwnedKeysNotification = @"AKTouchOwnedKeyUsagesDidChange";
+static NSString *const AKOwnedKeysUserInfoKey = @"usages";
 
 @interface AKHostSceneDelegate : UIResponder <UIWindowSceneDelegate, TKLibraryViewControllerDelegate>
 @property(nonatomic, strong) UIWindow *window;
@@ -203,6 +212,18 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     WKLog("voice", @"the game's text input is up; dictation will type into it");
 }
 
+// What the adapter needs to know, and the only thing it can be told: which keys are the
+// user's, so the guest does not see them. Sent on every change to the settings - a mapping,
+// the switch, or voice going off - because each of those changes the answer.
+- (void)publishOwnedKeys:(NSNotification *)note {
+    (void)note;
+    NSSet<NSNumber *> *usages = [AKVoiceSettings.shared ownedKeyUsages];
+    [NSNotificationCenter.defaultCenter postNotificationName:AKOwnedKeysNotification
+                                                     object:nil
+                                                   userInfo:@{AKOwnedKeysUserInfoKey: usages}];
+    WKLog("voice", @"the user's keys: %lu published to the adapter", (unsigned long)usages.count);
+}
+
 - (void)sceneDidBecomeActive:(UIScene *)scene {
     (void)scene; [self reserveExecutableMemory];
 }
@@ -240,8 +261,7 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
         (void)event;
         WKLog("voice", @"input trigger ended: %@", [trigger summary]);
         [AKDictation.shared end];
-    };
-    // Something the user needs to know about the microphone: a refused permission, a
+    };    // Something the user needs to know about the microphone: a refused permission, a
     // device that cannot recognise speech on its own, a session that would not start.
     AKDictation.shared.problemHandler = ^(NSString *message) {
         WKLog("voice", @"dictation problem: %@", message);
@@ -253,6 +273,15 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     // AKTouchGameTextInputDidAppearNotification in wolkara/Touch/TouchControls.h.
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(gameTextInputAppeared:)
                                                name:@"AKTouchGameTextInputDidAppear" object:nil];
+    // Tell the adapter which keys are the user's, so it can swallow them before the guest
+    // sees them. Every change to the settings re-publishes: a mapping, the switch on the page
+    // and switching voice off all change the answer. Published rather than asked because the
+    // adapter is a dylib - it cannot call in here, and it must not have to.
+    [NSNotificationCenter.defaultCenter addObserver:self
+                                           selector:@selector(publishOwnedKeys:)
+                                               name:AKVoiceSettingsDidChangeNotification
+                                             object:nil];
+    [self publishOwnedKeys:nil];
     [AKInputRouter.shared begin];
     if([arguments containsObject:@"--inspect-controller"]) {
         [AKControllerInspector.shared showPanel:YES];

@@ -126,22 +126,35 @@ model carries five patterns - `press`, `double`, `long`, `chord` and
 
 ## What this cannot do, said plainly
 
-**A mapping listens to a button; it does not take the button away from the
-game.** The router observes input and the game observes it too, so a button the
-game already uses does both things at once — and a pattern does not change that:
-hold-to-talk is still a press the game receives, and a chord is still those keys.
-Nothing here arbitrates, owns or swallows input, and no pattern should be read as
-a way to make a button safe to share. The page says this where the mapping is
-made, and so does the log line written when one is saved.
+**By default a mapping listens to a button; it does not take the button away from the
+game.** The router observes input and the game observes it too, so a button the game already
+uses does both things at once — and a pattern does not change that: hold-to-talk is still a
+press the game receives, and a chord is still those keys.
 
-What follows from that, for anyone choosing a button: pick one the game does not
-already use. Apple-reserved buttons cannot be fully ours either, which is why a
-system signal cannot be mapped at all and why hold-to-talk needs a button whose
-press *and* release both reach us.
+**Keep the game from seeing it**, the switch on the same page, is the one thing that does take
+a button away — and only for what can be taken:
+
+- **A keyboard key works.** The user maps the key and turns the switch on; the key then
+  reaches dictation and nothing else. The adapter does not post it to the guest at all, press
+  or release, so the game is never left holding a key down. The trigger still fires, because
+  the router learns what was pressed from the adapter's own observation rather than from the
+  guest's event queue: the same physical key, seen once, forwarded nowhere.
+- **A controller button does not, and the page says so.** iPadOS reports a pad's buttons to us
+  as gamepad elements, and the guest receives them as key events with no way to tell which pad
+  button produced one — there is no API that maps a pad button to the usage the game sees. A
+  pad mapping therefore cannot be matched at the point where a key would be swallowed, and
+  choosing a button the game does not use remains the answer for a pad.
+- **A system signal never can be.** There is no key event to swallow; the layer releases the
+  system gesture for the element it holds instead, which is why `system.screenshot` cannot be
+  mapped at all.
+
+So: with the switch off, pick a button the game does not use. With it on and a keyboard key,
+the game genuinely does not see the key. Apple-reserved buttons cannot be fully ours either,
+which is why hold-to-talk needs a button whose press *and* release both reach us.
 
 **The launcher offers two patterns: hold to talk, and press to start and stop.**
 The trigger model stores and validates five - `press`, `double`, `long`, `chord`
 and `push-to-talk` - and migrations keep old mappings readable, but the page
 offers no double-tap, long press or chord choice, so do not read the model's five
-patterns as five options the user has. Implementing arbitration or offering the
-other patterns is not started; see `development/NOTES.md`.
+patterns as five options the user has. Offering the other patterns is not
+started; see `development/NOTES.md`.

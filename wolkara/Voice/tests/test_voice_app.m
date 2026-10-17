@@ -259,7 +259,6 @@ static void TestSettings(void) {
 
     [settings clearMappingForDevice:@"pad"];
     CHECK(([settings triggerForDevice:@"pad"] == nil), @"clearing the mapping leaves nothing");
-
     // A mapping from an older build, keyed by the vendor name alone.
     [defaults setObject:@{@"element": @"Button X", @"pattern": @0} forKey:@"AKInputTrigger.8bitdo"];
     CHECK(([settings adoptLegacyMappingForDevice:@"8bitdo.pro" vendor:@"8bitdo"]), @"the old mapping is adopted");
@@ -271,6 +270,49 @@ static void TestSettings(void) {
     settings.customWords = @[@"Thunderfury", @"Thunderfury", @"", @"  ", [@"" stringByPaddingToLength:200 withString:@"x" startingAtIndex:0], @42, @"Ragnaros"];
     CHECK((settings.customWords.count == 2), @"duplicates, blanks and overlong words are dropped, got %lu", (unsigned long)settings.customWords.count);
     CHECK(([settings.customWords containsObject:@"Thunderfury"] && [settings.customWords containsObject:@"Ragnaros"]), @"the real words stay");
+
+    // --- Keeping the game from seeing the key ---------------------------------
+    //
+    // The audit's "neither collision-free nor complete" finding. The product listens to a
+    // button; with this on, a key the user has taken for dictation does not reach the game
+    // either. Asked by element, because the adapter sees a key press rather than a device.
+    settings.takeButtonFromGame = NO;
+    [settings setLearnedElement:@"keyboard.key.70" forDevice:@"pad"];
+    CHECK((![settings ownsElement:@"keyboard.key.70"]), @"by default the mapping only listens: the game still gets the key");
+    settings.takeButtonFromGame = YES;
+    CHECK(([settings ownsElement:@"keyboard.key.70"]), @"with it on, the mapped key is the user's");
+    CHECK((![settings ownsElement:@"keyboard.key.71"]), @"and a key that is not mapped is untouched");
+    CHECK(([defaults boolForKey:@"AKVoiceTakeButtonFromGame"]), @"the choice is remembered");
+
+    // Switching the feature off gives the key straight back: nothing may be swallowed by a
+    // setting that is off.
+    settings.enabled = NO;
+    CHECK((![settings ownsElement:@"keyboard.key.70"]), @"switching voice off gives the key back");
+    settings.enabled = YES;
+
+    // A system signal can never be owned: there is no key event to swallow, and the layer
+    // releases the system gesture instead.
+    [settings setLearnedElement:@"system.screenshot" forDevice:@"pad"];
+    CHECK((![settings ownsElement:@"system.screenshot"]), @"a system signal cannot be taken from the game");
+    [settings setLearnedElement:@"keyboard.key.70" forDevice:@"pad"];
+
+    // A mapping stored against another device is still the user's key: the adapter cannot
+    // know which controller it came from, and the user means the key either way.
+    CHECK(([settings ownsElement:@"keyboard.key.70"]), @"a mapping made for one pad covers the key itself");
+
+    // The same answer in the form the shell publishes to the adapter, which sees usages and
+    // not elements. Nothing that is not a usage may get into that set.
+    CHECK(([[settings ownedKeyUsages] containsObject:@70]), @"the usage form names the key the adapter will see");
+    CHECK(([settings ownedKeyUsages].count == 1), @"and nothing else, got %@", [settings ownedKeyUsages]);
+    [defaults setObject:@{@"element": @"keyboard.key.notanumber", @"pattern": @0} forKey:@"AKInputTrigger.odd"];
+    CHECK((![[settings ownedKeyUsages] containsObject:@0] && [settings ownedKeyUsages].count == 1),
+          @"an id that is not a usage is not turned into one, got %@", [settings ownedKeyUsages]);
+    [defaults removeObjectForKey:@"AKInputTrigger.odd"];
+    settings.takeButtonFromGame = NO;
+    CHECK(([settings ownedKeyUsages].count == 0), @"and with the switch off, nothing is published at all");
+
+    [settings clearMappingForDevice:@"pad"];
+    [settings clearMappingForDevice:@"8bitdo.pro"];
 
     for (NSString *key in defaults.dictionaryRepresentation.allKeys)
         if ([key hasPrefix:@"AKInputTrigger."] || [key hasPrefix:@"AKVoice"]) [defaults removeObjectForKey:key];
