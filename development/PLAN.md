@@ -163,9 +163,10 @@ carried. `VALIDATION.md` checks this phase, and every other one, against the des
 16. Device parity on Dadpad: install (same bundle id, data preserved), game reaches the
     login screen, CASC repair line for a planted truncated index, keyboard request plus
     hardware-keyboard diagnosis, switch away to Messages and back with `arena result`
-    still 1, screenshot. **partial** - not run since the split. It needs a device build
-    that signs with the builder's own team and may prompt for keychain access, so it is
-    left for a person; `VALIDATION.md` records it as the one open check.
+    still 1, screenshot. **partial** - post-split builds, installs and scripted device
+    checks are recorded under `validation/`. The remaining physical microphone,
+    controller and live-game observations must be recorded for the installed candidate;
+    simulator results do not establish them.
 17. Wire `check_layers.sh` into the test entry point and CI. **done locally** -
     `wolkara/tools/test_emulation.sh` now runs the gate before the suites. There is no
     pull-request CI in this repository to wire into: the only workflow is the tagged
