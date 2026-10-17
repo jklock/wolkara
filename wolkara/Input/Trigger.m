@@ -30,14 +30,18 @@ static NSTimeInterval const AKTriggerDoubleMaximum = 2.0;
 
 #pragma mark - What it watches
 
-- (BOOL)watchesElement:(NSString *)element {
-    if (!element.length) return NO;
-    if ([self.element isEqualToString:AKTriggerAnyElement]) return YES;
-    if ([self.element isEqualToString:element]) return YES;
++ (BOOL)element:(NSString *)mapped covers:(NSString *)element {
+    if (!mapped.length || !element.length) return NO;
+    if ([mapped isEqualToString:AKTriggerAnyElement]) return YES;
+    if ([mapped isEqualToString:element]) return YES;
     // A family: "controller.button." covers every controller button, "system." covers
     // both of the system's signals.
-    if ([self.element hasSuffix:@"."]) return [element hasPrefix:self.element];
+    if ([mapped hasSuffix:@"."]) return [element hasPrefix:mapped];
     return NO;
+}
+
+- (BOOL)watchesElement:(NSString *)element {
+    return [AKTrigger element:self.element covers:element];
 }
 
 - (NSString *)patternName {
@@ -71,6 +75,11 @@ static NSTimeInterval const AKTriggerDoubleMaximum = 2.0;
     // safe - the audit's second remediation blocker. It is recorded in the log and
     // reported to nobody, and no stored mapping may point at it.
     if (AKInputElementIsSystem(canonical)) return nil;
+    // "Any" is what a trigger that has never been set holds, and the header says it is
+    // never stored. Accepting one made it possible for a hand-written or imported value to
+    // mean a mapping nobody chose - and, with the switch on, to take every key the user
+    // has. A stored "any" is not a mapping and is dropped like any other unreadable value.
+    if ([canonical isEqualToString:AKTriggerAnyElement]) return nil;
 
     id patternValue = stored[@"pattern"] ?: @(AKTriggerPatternPress);
     if (![patternValue isKindOfClass:NSNumber.class]) return nil;
