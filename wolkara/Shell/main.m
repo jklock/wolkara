@@ -228,15 +228,23 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
 }
 
 // What the app's own audio session is set to, for the same reason the dictation flags are
-// printed: the keep-alive is an active audio session, and what a dictation session must never
-// leave behind is a recording one. Nothing on this device proved either until this was logged.
-// `mic=1` is a session this app is recording on; that is the one the matrix refuses to see.
+// printed: the keep-alive for a running game is an audio session set for playback, and what a
+// dictation session must never leave behind is a recording one. Nothing on this device proved
+// either until this was logged. `mic=1` is a session this app is recording on; that is the one
+// the matrix refuses to see.
+//
+// The activation state is deliberately not in the line: iOS does not let AVAudioSession be
+// asked whether the session is active - which is the same limitation `Dictation.m` names when
+// it says its restore path puts the category back and does not claim to have restored the
+// session. The device build failed on the first version of this that tried, which is how the
+// line was corrected: what can be read is the category, the mode and whether it is a
+// recording one.
 static NSString *AKAudioStateDescription(void) {
     AVAudioSession *session = AVAudioSession.sharedInstance;
     NSString *category = [session.category stringByReplacingOccurrencesOfString:@"AVAudioSessionCategory" withString:@""];
     BOOL recording = [session.category isEqualToString:AVAudioSessionCategoryRecord] ||
                      [session.category isEqualToString:AVAudioSessionCategoryPlayAndRecord];
-    return [NSString stringWithFormat:@"%@/%@/%d mic=%d", category, session.mode, (int)session.isActive, (int)recording];
+    return [NSString stringWithFormat:@"%@/%@ mic=%d", category, session.mode, (int)recording];
 }
 
 - (void)sceneDidBecomeActive:(UIScene *)scene {
