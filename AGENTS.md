@@ -63,4 +63,20 @@ changing its memory beyond loading it, and workarounds for its integrity, licenc
 checks. A test that feeds Wolkara's own input router or dictation a synthetic event is our code
 testing itself; a macro that presses buttons in the game is not.
 
+## How to work here (standing instruction, 2026-10-17)
+
+Iterate until the work is finished: implemented, built, installed, and tested on the device where
+the device is the test. Do not hand back a partial result and do not stop to ask when the answer
+is to keep going. Ask only when a decision is genuinely the user's - scope, product behaviour, or
+anything that touches their data or their device in a way they must agree to.
+
+Three rules learned the hard way, all of them by being wrong first:
+
+- Never report a finding without having measured it. "The tap delivers nothing" was a check that
+  asked 60 milliseconds after the session opened; the tap was fine.
+- Never report a fix without the evidence that it works. The check that found the fault is the
+  check that has to pass afterwards, on the device.
+- Leave the device in no state other than the normal home screen, with the app running. Any
+  operation against the app that leaves anything else up is a failure, whatever its verdict said.
+
 The original executable is never modified: it is imported as hash-verified data and never patched or re-signed. Three execution modes exist and each user chooses one. **Developer service** never signs application code: the iPad's developer service prepares memory and detaches before any application code runs. **External JIT** (TolkaraDiagnostics only) never signs application code either: a JIT enabler (the user's sideloading tool, or one such as StikDebug) attaches at launch and prepares memory; the runtime asks it to detach and refuses guest entry while any debugger is attached or the arena is not executable. **Local signing** signs only a page container derived locally from the application's final code pages, with the user's own developer identity; containers and captures stay in ignored build output or on the user's device and are never committed. Otherwise sign only our runtime and helpers. Users build Tolkara themselves; docs present that first. As a secondary convenience for External JIT, a `v*` tag publishes one prebuilt app, the unsigned generic `Tolkara-unsigned.ipa` (`.github/workflows/release.yml`): only our own code, never application code, assets, signing material or anything exported from macOS (it is built with `TOLKARA_SYSTEM_ROOTS=NO`, so no system root certificates). Runtime stubs for unresolved imports only where no build-time analysis covered them: in generic builds and for carried libraries' imports; in a build for one executable, that executable's unresolved imports fail. No application-memory inspection beyond loading and verifying the image, no automation or integrity-check workarounds. Keep credentials, signing teams, device identifiers and pairing records out of commits and logs. Never attach an external debugger after guest entry. Do not uninstall the app from a user's device without coordination.

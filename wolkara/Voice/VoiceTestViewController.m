@@ -198,6 +198,29 @@
     self.stateLabel.text = text;
     BOOL busy = state != AKDictationStateIdle;
     self.stateLabel.textColor = busy ? WKGold() : WKMuted();
+    // While it is listening, what it is hearing: the user asked to see that the microphone is being
+    // received rather than take the app's word for it. Ten cells, filled by the loudest sample seen
+    // this session. Redrawn at most ten times a second, because the tap calls the handler about
+    // forty-eight times a second and a label does not need to keep up with that.
+    if (state == AKDictationStateListening) {
+        static NSTimeInterval lastDrawn = 0;   // one test screen, one level: a file-scope clock is
+                                              // enough to keep the redraw to something sane
+        __weak typeof(self) weakSelf = self;
+        AKDictation.shared.levelHandler = ^(float level) {
+            if (AKDictation.shared.state != AKDictationStateListening) return;
+            NSTimeInterval now = NSDate.date.timeIntervalSinceReferenceDate;
+            if (now - lastDrawn < 0.1) return;
+            lastDrawn = now;
+            int cell = (int)(level * 10.0f);
+            if (level > 0 && cell == 0) cell = 1;
+            if (cell > 10) cell = 10;
+            NSMutableString *bar = [NSMutableString stringWithString:@"Listening… "];
+            for (int index = 0; index < 10; index++) [bar appendString:(index < cell ? @"▮" : @"▯")];
+            weakSelf.stateLabel.text = bar;
+        };
+    } else if (state == AKDictationStateIdle) {
+        AKDictation.shared.levelHandler = nil;
+    }
 }
 
 #pragma mark - Small pieces
