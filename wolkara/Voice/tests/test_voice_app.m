@@ -507,6 +507,21 @@ static void TestAudioRestoreRetry(void) {
     audio.restoreFailures = 0;
     dictation.problemHandler = nil;
     dictation.transcriptHandler = nil;
+
+    // And the retry must not reach into a newer session. This is the fault that broke dictation on
+    // an iPad on 2026-10-17: a put-back failed, its retry fired half a second later, and by then a
+    // new session was listening - so the audio session was put back underneath it, the tap went
+    // silent, and the recogniser reported that it heard nothing.
+    audio.restoreFailures = 1;
+    [dictation begin];
+    Pump(0.05);
+    [dictation cancel];                       // one refusal, so a retry is now pending
+    [dictation begin];                        // a newer session takes the audio
+    Pump(1.2);                                // long enough for the retry to have fired
+    CHECK((audio.recording), @"a pending retry must not put the audio back under a newer session");
+    CHECK((audio.restores == 1), @"and must not have run at all, got %lu put-back(s)", (unsigned long)audio.restores);
+    [dictation cancel];
+    Pump(0.2);
 }
 
 static void TestAudioSessionPolicy(void) {
