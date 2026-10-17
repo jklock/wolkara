@@ -713,6 +713,40 @@ other path that can end a session - a timeout, an interruption, going to the bac
 covered, and the state the session is left in is now read back off the iPad.
 
 Proof: `test_addon_archive.sh` 58 checks (from 49), `test_voice.sh` 252 (from 244), the
-device matrix at 21 checks, and the record under `development/validation/`. The 21 is one more
-than before and the record says so; the count in this note is the one the script printed, not
-the one this paragraph was written with.
+device matrix at 23 checks, and the record under `development/validation/`.
+
+## 2026-10-17 - the app tests itself on the device
+
+The two things no script here could do were press a button on a pad and speak into the
+microphone, and both were parked as "needs a person". `wolkara/Shell/SelfTest.m` is the answer:
+launched with `--selftest=<name>` - and reachable no other way - the app drives its own code and
+writes a verdict to its own log, which `pilot.sh selftest` reads and the device matrix checks.
+The record for `dfe4150` carries both:
+
+    selftest: input PASS 28/28 checks (matching, the forms that may be stored, the mapper,
+                                        both modes, the published key set)
+    selftest: voice PASS  7/7 checks (speech=authorized on-device=1, session=record-then-restored)
+
+`input` asserts the matching rule the router fires on, the stored forms that may exist at all,
+the mapper arming and adopting the first press, the router firing once per physical press in
+each mode, and the key set published to the adapter - then that every setting it touched is back
+exactly as it was, which is the last three checks because it uses the real store. `voice` opens a
+real session with the real recogniser, on-device only, and checks it is handed back; when the
+session does not open it asserts the policy instead (the app says why, and takes nothing), and
+when permission has never been asked for it opens nothing at all and says so, because a
+permission prompt with nobody in front of the iPad is a hang.
+
+Three things were learned making it work, and the first two were found *by* it:
+
+- It left its own mapping behind, because it only restored the keys it had snapshotted and its
+  own key was created afterwards. The last check of the input test caught it.
+- Two checks assumed a clean store: an empty published key set, and that the switch was off.
+  On a device with the user's own keys taken, they failed - correctly, and for the wrong reason.
+- The speech test has to run off the main thread. The app's speech callback is delivered *to* the
+  main queue, and libdispatch will not drain the main queue while a block from it is still
+  running - so the first version pumped the run loop from inside a main-queue block and sat in
+  `Authorizing` for ten seconds with the answer already waiting.
+
+What is still not machine-checked, and honestly cannot be from a Mac: a real voice producing a
+real transcript, what iPadOS reports for a particular pad's buttons (the router is proven with
+synthetic presses; the pad itself needs the pad), and the game. The matrix prints those.
