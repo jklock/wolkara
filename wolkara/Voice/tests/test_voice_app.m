@@ -369,7 +369,6 @@ static void TestLearning(void) {
     [router beginLearning];
     [NSNotificationCenter.defaultCenter postNotificationName:GCControllerDidDisconnectNotification object:nil];
     CHECK((!router.learning), @"a controller leaving disarms the mapper");
-
     // But a pad arriving must not. It connects a moment after launch on real hardware,
     // and cancelling then would make mapping impossible - measured in this fixture.
     [router beginLearning];
@@ -600,6 +599,29 @@ static void TestDictation(void) {
     // A late final result after delivery must not deliver again.
     [speech say:@"hello world again" final:YES];
     CHECK((heard.count == 1), @"exactly once, even if the recogniser says so twice");
+
+    // --- the app going to the background while the microphone is open ---------------
+    //
+    // This app declares `UIBackgroundModes: [audio]` so a running game keeps its sound, which
+    // means iOS does NOT take the session away when the user goes to the Home screen. So the
+    // session is ours to end, and leaving it listening would hold the microphone and Apple's
+    // recogniser open behind the Home screen: an indicator the user cannot get rid of, and
+    // words that will never be typed anywhere.
+    [heard removeAllObjects];
+    problem = nil;
+    [dictation begin];
+    CHECK((dictation.state == AKDictationStateListening && audio.recording), @"the microphone is open to start with");
+    [speech say:@"half a thought" final:NO];
+    NSUInteger restoresBeforeBackground = audio.restores;
+    [NSNotificationCenter.defaultCenter postNotificationName:UIApplicationDidEnterBackgroundNotification object:nil];
+    Pump(0.2);
+    CHECK((dictation.state == AKDictationStateIdle), @"going to the background ends the session");
+    CHECK((!audio.recording), @"and gives the audio session back, so the microphone is closed");
+    CHECK((audio.restores > restoresBeforeBackground), @"which the session records as a restoration");
+    CHECK((problem.length > 0), @"and the user is told, not left wondering why nothing was typed");
+    [speech say:@"something said on the way out" final:YES];
+    CHECK((heard.count == 0), @"a result arriving after the app went away is not typed anywhere");
+    CHECK((dictation.state == AKDictationStateIdle), @"and the session stays over");
 
     // If the last words never come, nothing is delivered and the user is told. What is in
     // hand is a partial result; the product promises a final transcript, and half a sentence
@@ -855,6 +877,101 @@ static void TestVoiceScreens(UIWindow *window) {
     dictation.problemHandler = nil;
 }
 
+// --- the pages' layout, which used to be "a person looks at it" ------------------------
+//
+// The audit's remaining hole in this file: the pages' *behaviour* was asserted and their
+// arrangement was left to the eye. An arrangement can be asserted too, and the things worth
+// asserting are the ones that break silently: a card that never got a height, controls
+// stacked on top of each other, a switch row whose control overlaps its own label, and a page
+// wider or taller than the screen it is on.
+//
+// What this cannot do is say whether it *looks* good. It says the layout is sound, which is
+// the part a machine can know.
+static NSArray<UIView *> *AllSubviewsOfClass(UIView *root, Class kind) {
+    NSMutableArray *found = [NSMutableArray array];
+    for (UIView *child in root.subviews) {
+        if ([child isKindOfClass:kind]) [found addObject:child];
+        [found addObjectsFromArray:AllSubviewsOfClass(child, kind)];
+    }
+    return found;
+}
+
+static void CheckLayout(UIView *root, NSString *page, NSArray<NSString *> *identifiers) {
+    UIView *host = root.window ?: root;
+    CGRect bounds = host.bounds;
+    CHECK((bounds.size.width > 0 && bounds.size.height > 0), @"%@: the page is on a screen with a size", page);
+    for (NSString *identifier in identifiers) {
+        UIView *view = Find(root, identifier);
+        CHECK((view != nil), @"%@: %@ is on the page", page, identifier);
+        if (!view || !view.window) continue;
+        // A control the page has deliberately hidden - Clear, with nothing mapped - has no
+        // size and is not expected to have one. Everything else must be on screen and big
+        // enough to hit: a zero-height row is a row nobody can touch.
+        if (view.hidden || view.alpha < 0.01) continue;
+        CGRect frame = [view convertRect:view.bounds toView:host];
+        CGRect intersection = CGRectIntersection(frame, bounds);
+        CHECK((!CGRectIsNull(intersection) && !CGRectIsEmpty(intersection)),
+              @"%@: %@ is on screen at %.0f,%.0f %.0fx%.0f", page, identifier,
+              frame.origin.x, frame.origin.y, frame.size.width, frame.size.height);
+        CHECK((frame.size.width > 1 && frame.size.height > 1),
+              @"%@: %@ has a size (%0.fx%0.f)", page, identifier, frame.size.width, frame.size.height);
+    }
+    // A switch whose control overlaps its label is a control the user cannot read or hit.
+    for (UISwitch *toggle in AllSubviewsOfClass(root, UISwitch.class)) {
+        UIView *row = toggle.superview;
+        if (!row || row.subviews.count < 2) continue;
+        CGRect control = [toggle convertRect:toggle.bounds toView:host];
+        for (UIView *sibling in row.subviews) {
+            if (sibling == toggle) continue;
+            CGRect other = [sibling convertRect:sibling.bounds toView:host];
+            CHECK((!CGRectIntersectsRect(control, other)),
+                  @"%@: a switch does not overlap what is next to it", page);
+        }
+    }
+}
+
+static NSArray<UIView *> *AllSubviewsOfClass(UIView *root, Class kind);
+
+static void TestPageLayout(UIWindow *window) {
+    UIViewController *host = [UIViewController new];
+    UINavigationController *navigation = [[UINavigationController alloc] initWithRootViewController:host];
+    window.rootViewController = navigation;
+    [window makeKeyAndVisible];
+    [window layoutIfNeeded];
+    AKVoiceSettings.shared.enabled = YES;
+    AKVoiceSettings.shared.takeButtonFromGame = NO;
+
+    AKVoiceViewController *settings = [AKVoiceViewController new];
+    [navigation pushViewController:settings animated:NO];
+    Pump(0.3);
+    [settings.view layoutIfNeeded];
+    CheckLayout(settings.view, @"voice settings", @[@"voice.enabled", @"voice.mapping", @"voice.map",
+                                                    @"voice.clear", @"voice.takebutton", @"voice.mode",
+                                                    @"voice.words", @"voice.mapping.collision"]);
+    // Every switch, named and labelled: the row's text is a separate label, so a switch with
+    // neither is one a screen reader cannot describe and a test cannot find. Two of them were
+    // in exactly that state until this check existed.
+    NSArray<UIView *> *toggles = AllSubviewsOfClass(settings.view, UISwitch.class);
+    CHECK((toggles.count == 4), @"the settings page has four switches, got %lu", (unsigned long)toggles.count);
+    for (UISwitch *toggle in toggles) {
+        CHECK((toggle.accessibilityIdentifier.length > 0),
+              @"every switch can be found by name, got %@", toggle.accessibilityIdentifier);
+        CHECK((toggle.accessibilityLabel.length > 0),
+              @"and is described for a screen reader, got %@", toggle.accessibilityLabel);
+    }
+    NSSet *switches = [NSSet setWithArray:[toggles valueForKeyPath:@"accessibilityIdentifier"]];
+    CHECK((switches.count == toggles.count), @"its switches have one identifier each, got %@", switches);
+
+    AKVoiceTestViewController *page = [AKVoiceTestViewController new];
+    [navigation pushViewController:page animated:NO];
+    Pump(0.3);
+    [page.view layoutIfNeeded];
+    CheckLayout(page.view, @"voice test page", @[@"voice.test.button", @"voice.test.box", @"voice.test.state"]);
+
+    [navigation popToRootViewControllerAnimated:NO];
+    Pump(0.2);
+}
+
 // The parts of the file's life that only happen when something is wrong: a file that was
 // cut off halfway, a write that cannot happen, and the previous good copy.
 static void TestConfigRecovery(void) {
@@ -1054,6 +1171,7 @@ static void TestConfigWriteFailure(void) {
     TestDictation();
     TestTypingIntoTheGame();
     TestVoiceScreens(self.window);
+    TestPageLayout(self.window);
     TestConfigCorpus();
     TestConfigRecovery();
     TestConfigOversized();
