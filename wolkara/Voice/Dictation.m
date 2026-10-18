@@ -32,13 +32,15 @@ static NSTimeInterval const AKDefaultFinalizeTimeout = 3.0;
     BOOL _finished;
     float _inputLevel;
     NSUInteger _buffersReceived;
+    NSUInteger _unreadableBuffers;
     void (^_levelHandler)(float);
 }
 
 // The loudest sample in a buffer, 0 to 1. The tap is installed with the input's own float format,
 // so anything else is treated as silence rather than guessed at.
-static float AKSpeechPeak(AVAudioPCMBuffer *buffer) {
-    if (!buffer.floatChannelData || buffer.frameLength == 0) return 0;
+static float AKSpeechPeak(AVAudioPCMBuffer *buffer, BOOL *readable) {
+    if (readable) *readable = (buffer.floatChannelData != NULL && buffer.frameLength > 0);
+    if (!readable || !*readable) return 0;
     float peak = 0;
     for (AVAudioChannelCount channel = 0; channel < buffer.format.channelCount; channel++) {
         const float *samples = buffer.floatChannelData[channel];
@@ -98,6 +100,7 @@ static float AKSpeechPeak(AVAudioPCMBuffer *buffer) {
           format.sampleRate, (unsigned)format.channelCount);
     _inputLevel = 0;
     _buffersReceived = 0;
+    _unreadableBuffers = 0;
     [input installTapOnBus:0 bufferSize:1024 format:format
                      block:^(AVAudioPCMBuffer *buffer, AVAudioTime *when) {
         (void)when;
@@ -106,9 +109,11 @@ static float AKSpeechPeak(AVAudioPCMBuffer *buffer) {
         // a screen draws it; the peak is kept rather than the last sample so that a bar built from
         // this does not flicker to zero between words. Counting buffers as well as measuring them
         // is what tells a silent room apart from a microphone that is not delivering anything.
-        float level = AKSpeechPeak(buffer);
+        BOOL readable = NO;
+        float level = AKSpeechPeak(buffer, &readable);
         dispatch_async(dispatch_get_main_queue(), ^{
             self->_buffersReceived++;
+            if (!readable) self->_unreadableBuffers++;
             if (level > self->_inputLevel) self->_inputLevel = level;
             if (self->_levelHandler) self->_levelHandler(self->_inputLevel);
         });
@@ -144,6 +149,12 @@ static float AKSpeechPeak(AVAudioPCMBuffer *buffer) {
     _finished = YES;
     _handler = nil;
     _levelHandler = nil;
+    // The tap's own account, where its counters are in scope: how many buffers it delivered, how
+    // many of those could not be read as samples at all, and the loudest sample seen. A buffer
+    // that cannot be read is the difference between a meter that is blind and a microphone that is
+    // hearing nothing, and only this line tells them apart.
+    WKLog("voice", @"dictation: tap delivered %lu buffer(s), %lu unreadable, loudest %.3f",
+          (unsigned long)_buffersReceived, (unsigned long)_unreadableBuffers, _inputLevel);
     if (_engine) {
         [_engine.inputNode removeTapOnBus:0];
         [_engine stop];
@@ -344,7 +355,7 @@ static __weak UIView *AKGameTextTarget = nil;
     // shared with the app's own keep-alive and with whatever the game does, and a category that
     // changes under a running dictation would stop the audio with no other sign of it - which is
     // exactly the kind of fault that reads as "it heard nothing".
-    [self logWhatIsBeingHeard];
+
     // Whether the app may use the microphone at all, asked before anything is opened. On
     // 2026-10-17 a reinstall left this app without the microphone grant, and dictation then said
     // "Nothing was heard" - the recogniser listening to a silent stream, which is what iOS feeds
@@ -383,6 +394,12 @@ static __weak UIView *AKGameTextTarget = nil;
         [self fail:[NSString stringWithFormat:@"The audio session would not start: %@", error.localizedDescription]];
         return;
     }
+    // Measured here, where it means something. The first version of this logged the category at the
+    // top of this method, before the session was taken, so it read the app's ordinary category and
+    // said nothing at all about the session - and a finding was drawn from it. This is the moment
+    // the session has been taken; anything other than Record here is the fault.
+    WKLog("voice", @"dictation: category=%@ after taking the session", AVAudioSession.sharedInstance.category);
+    [self logWhatIsBeingHeard];
     __weak AKDictation *weakSelf = self;
     [self.speech startOnDevice:YES words:AKVoiceSettings.shared.customWords
                        handler:^(NSString *transcript, BOOL isFinal, NSError *error2) {
@@ -508,6 +525,12 @@ static __weak UIView *AKGameTextTarget = nil;
 }
 
 - (void)giveTheSessionBack {
+    // What this session heard, once, on every path that ends one however short it was: the buffer
+    // count, the loudest sample, and how many buffers could not be read as samples at all. A press
+    // can be a third of a second, which is too short for the half-second line, and this is the line
+    // that says whether the microphone picked anything up.
+    WKLog("voice", @"dictation: this session heard %lu buffer(s), loudest %.3f",
+          (unsigned long)self.buffersReceived, self.inputLevel);
     NSError *error = nil;
     if ([self.audio restore:&error]) { _audioRestoreAttempt = 0; return; }
     WKLog("voice", @"audio: could not put the session back yet: %@", error.localizedDescription ?: @"no reason given");
