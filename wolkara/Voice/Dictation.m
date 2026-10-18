@@ -192,11 +192,21 @@ static float AKSpeechPeak(AVAudioPCMBuffer *buffer, BOOL *readable) {
     _mode = session.mode;
     _options = session.categoryOptions;
     _saved = YES;
-    // Record only, and without asking the system to duck or interrupt anything: the
-    // game's audio is not ours to take away.
-    return [session setCategory:AVAudioSessionCategoryRecord mode:AVAudioSessionModeDefault
-                        options:0 error:error] &&
-           [session setActive:YES error:error];
+    // A session that is not already recording is taken in two steps: the old one is torn down, the
+    // recording category is set, and the session is activated again.
+    //
+    // Measured on an iPad on 2026-10-17: a session taken while the app was on its ordinary category
+    // delivered digital silence for its whole life - Record, 48 kHz, buffers at the right rate, and
+    // every sample zero - while a session that was already Record delivered audio. The first
+    // dictation worked because the microphone-held bug had left the session on Record; fixing that
+    // bug made every session cold, and cold is silent. Cycling the activation is what makes a cold
+    // session behave like the one that worked.
+    BOOL cold = ![_category isEqualToString:AVAudioSessionCategoryRecord];
+    if (cold) [session setActive:NO error:NULL];
+    if (![session setCategory:AVAudioSessionCategoryRecord mode:AVAudioSessionModeDefault
+                        options:0 error:error]) return NO;
+    if (cold) [session setActive:NO error:NULL];
+    return [session setActive:YES error:error];
 }
 
 // What "restore" means here, exactly.
@@ -395,11 +405,13 @@ static __weak UIView *AKGameTextTarget = nil;
         return;
     }
     // The person holding the iPad is who this is listening to, so the built-in microphone is asked
-    // for by name. A controller that reconnects can otherwise become the input, and a controller
-    // has no microphone in it: the session is then healthy - Record, the right sample rate, buffers
-    // arriving at the right rate - and every sample in them is zero, which reads as the app hearing
-    // nothing. That is what happened here: the first dictation worked, a controller reconnected,
-    // and after that every one of them was silence with nothing wrong to see.
+    // for by name, whatever route iOS would otherwise have picked. A session whose input is not the
+    // microphone - a headset with nothing in it, anything else that presents an input - is healthy
+    // in every way that can be seen from inside the app: Record, the right sample rate, buffers
+    // arriving at the right rate, and every sample in them zero, which reads as the app hearing
+    // nothing. Asking for the microphone by name is the one thing that cannot be wrong about it.
+    // The route that was actually given is logged below, so which input the session got is a fact
+    // rather than an inference.
     AVAudioSession *audioSession = AVAudioSession.sharedInstance;
     for (AVAudioSessionPortDescription *port in audioSession.availableInputs) {
         if ([port.portType isEqualToString:AVAudioSessionPortBuiltInMic]) {
