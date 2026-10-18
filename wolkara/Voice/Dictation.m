@@ -394,11 +394,39 @@ static __weak UIView *AKGameTextTarget = nil;
         [self fail:[NSString stringWithFormat:@"The audio session would not start: %@", error.localizedDescription]];
         return;
     }
+    // The person holding the iPad is who this is listening to, so the built-in microphone is asked
+    // for by name. A controller that reconnects can otherwise become the input, and a controller
+    // has no microphone in it: the session is then healthy - Record, the right sample rate, buffers
+    // arriving at the right rate - and every sample in them is zero, which reads as the app hearing
+    // nothing. That is what happened here: the first dictation worked, a controller reconnected,
+    // and after that every one of them was silence with nothing wrong to see.
+    AVAudioSession *audioSession = AVAudioSession.sharedInstance;
+    for (AVAudioSessionPortDescription *port in audioSession.availableInputs) {
+        if ([port.portType isEqualToString:AVAudioSessionPortBuiltInMic]) {
+            NSError *preference = nil;
+            if (![audioSession setPreferredInput:port error:&preference])
+                WKLog("voice", @"dictation: could not ask for the built-in microphone: %@", preference.localizedDescription);
+            else
+                WKLog("voice", @"dictation: asked for the built-in microphone, from %lu available input(s)", (unsigned long)audioSession.availableInputs.count);
+            break;
+        }
+    }
     // Measured here, where it means something. The first version of this logged the category at the
     // top of this method, before the session was taken, so it read the app's ordinary category and
     // said nothing at all about the session - and a finding was drawn from it. This is the moment
     // the session has been taken; anything other than Record here is the fault.
     WKLog("voice", @"dictation: category=%@ after taking the session", AVAudioSession.sharedInstance.category);
+    // Which input the session was actually given. The samples are read back as float and counted,
+    // so a stream of zeros can be told from a stream that never arrived - but neither says whether
+    // iOS routed the microphone at all, and a route that is a headset with nothing in it, or no
+    // input at all, looks exactly like silence from the inside.
+    AVAudioSessionRouteDescription *route = AVAudioSession.sharedInstance.currentRoute;
+    NSMutableString *inputs = [NSMutableString string];
+    for (AVAudioSessionPortDescription *port in route.inputs)
+        [inputs appendFormat:@"%@(%@) ", port.portName, port.portType];
+    WKLog("voice", @"dictation: input route is %@ - %lu input(s), session %.0fHz",
+          inputs.length ? inputs : @"NOTHING", (unsigned long)route.inputs.count,
+          AVAudioSession.sharedInstance.sampleRate);
     [self logWhatIsBeingHeard];
     __weak AKDictation *weakSelf = self;
     [self.speech startOnDevice:YES words:AKVoiceSettings.shared.customWords
