@@ -75,6 +75,15 @@ case "$args" in
     case "$source" in
     *.ips) printf '%s' "${WOLKARA_FAKE_IPS:-}" > "$dest";;
     *native-guest.log) printf '%s' "${WOLKARA_FAKE_GUESTLOG:-guest log line}" > "$dest";;
+    *wolkara.log)
+        # Each ordinary launch appends its home line to the real log. Preserve
+        # that property in the fixture so launch proof is about a new line, not
+        # a home line a previous launch wrote.
+        state="$(dirname "$dest")/.fake-home-copies"
+        count=$(cat "$state" 2>/dev/null || echo 0)
+        count=$((count + 1)); echo "$count" > "$state"
+        for ((i=1; i<count; i++)); do printf '[host] earlier launch\n' >> "$dest"; done
+        printf '%s\n' "${WOLKARA_FAKE_APPLOG:-[ui] home: the launcher is up}" >> "$dest";;
     *) printf 'guest log line\n' > "$dest";;
     esac
     exit 0;;
@@ -161,6 +170,7 @@ export WOLKARA_FAKE_PROCESSES="  1234   /private/var/containers/Bundle/Applicati
 export WOLKARA_FAKE_LISTING="$(listing_with_error)"
 export WOLKARA_FAKE_CRASHES='{"result":{"files":[]}}'
 export WOLKARA_FAKE_IPS=""
+export PILOT_HOME_TIMEOUT=1
 run_pilot "$work/sessions/seen" state
 check $? "state should succeed"
 grep -q "newest 2026-10-16_09.00.00_Error_1.txt" "$work/out.txt"
@@ -213,6 +223,15 @@ check $? "and must leave the app on its home screen, saying what it found"
 # And it must not claim to put a game session back. Nothing can: the state is memory in the process
 # that a stop kills. The review outcome calls this out, so the check is that the claim is absent.
 grep -qE "press Play|game session was live" "$work/out.txt" && check 1 "and must not claim a game session can be restored"
+
+# A process listing is not proof that the normal launcher is visible: the
+# enrollment and self-test status screens are processes too. Launch must wait
+# for the app's own home marker and fail if it cannot see one.
+( export WOLKARA_FAKE_APPLOG="[ui] development status screen"; run_pilot "$work/sessions/no-home" launch )
+[ $? -ne 0 ]
+check $? "launch must fail when it cannot prove the normal launcher reached the screen"
+grep -q "did not prove that Wolkara's normal launcher" "$work/out.txt"
+check $? "and must name the status-screen failure rather than reporting launch success"
 
 mkdir -p "$work/sessions/stopped"
 printf '\n' > "$work/sessions/stopped/was-running"
