@@ -53,28 +53,13 @@ typedef NS_ENUM(NSInteger, AKDictationState) {
 - (void)finish;
 /// Abandon the session. No further handler calls.
 - (void)cancel;
-/// How much sound has arrived this session: the loudest sample seen, 0 to 1, and how many buffers
-/// the tap delivered. A recogniser that reports no speech and a level of zero are the same
-/// finding - the difference between an app that is not listening and a room that is quiet - and
-/// the buffer count is what proves audio is reaching the app when the room is silent.
-///
-/// Written as methods rather than as properties on purpose: a property declared in a protocol
-/// cannot be synthesised by an implementer that writes its own accessors, and this build treats
-/// that warning as an error.
-- (float)inputLevel;
-- (NSUInteger)buffersReceived;
-- (void (^)(float))levelHandler;
-- (void)setLevelHandler:(void (^)(float))handler;
 @end
 
 @protocol AKDictationAudio <NSObject>
 /// Take the session for recording, remembering how to put it back.
 - (BOOL)beginRecording:(NSError **)error;
-/// Put back the category, mode, options and active state that were there before. Returns NO
-/// when it could not be done, and fills in why. Leaving the session on a recording category
-/// holds the microphone, which the user can see on the iPad, so the caller retries rather than
-/// assuming this worked.
-- (BOOL)restore:(NSError **)error;
+/// Put back the category, mode, options and active state that were there before.
+- (void)restore;
 @end
 
 #pragma mark - Dictation
@@ -87,11 +72,6 @@ typedef NS_ENUM(NSInteger, AKDictationState) {
 /// The microphone is open. True while listening *and* while waiting for the last
 /// words, because the indicator above the iPad must not blink off in between.
 @property (nonatomic, readonly) BOOL listening;
-/// What the microphone has heard this session, and called while it changes so a screen can show
-/// that it is being heard as it happens. Nil when nothing is running.
-@property (nonatomic, readonly) float inputLevel;
-@property (nonatomic, readonly) NSUInteger buffersReceived;
-@property (nonatomic, copy, nullable) void (^levelHandler)(float level);
 
 - (void)toggle;
 - (void)begin;
