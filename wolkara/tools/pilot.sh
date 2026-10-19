@@ -77,6 +77,34 @@ ERRORS=$SESSION/errors
 CRASH_DIR=$SESSION/crash
 STAGED="Documents/.tolkara-updates"
 mkdir -p "$ERRORS" "$CRASH_DIR"
+
+# A locked iPad used to leave every `devicectl` invocation waiting forever. That
+# is not a harmless delay: a self-test can then remain on its development status
+# screen and an install can strand the protected-enrollment screen. Bound every
+# device call and fail closed rather than leaving an unbounded process behind.
+PILOT_DEVICE_TIMEOUT=${PILOT_DEVICE_TIMEOUT:-8}
+PILOT_HOME_TIMEOUT=${PILOT_HOME_TIMEOUT:-20}
+xcrun() {
+    if [ "${1:-}" != "devicectl" ]; then
+        command xcrun "$@"
+        return $?
+    fi
+    command xcrun "$@" &
+    local child=$! waited=0
+    while kill -0 "$child" 2>/dev/null; do
+        if [ "$waited" -ge "$PILOT_DEVICE_TIMEOUT" ]; then
+            kill "$child" 2>/dev/null || true
+            wait "$child" 2>/dev/null || true
+            printf 'pilot: devicectl did not answer within %ss (unlock the iPad and try again)\n' \
+                "$PILOT_DEVICE_TIMEOUT" >&2
+            return 124
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+    wait "$child"
+}
+
 # ---------------------------------------------------------------------------
 # What the device is doing. One python helper, because the answers come from
 # three different commands and comparing timestamps in shell is how mistakes
@@ -386,10 +414,12 @@ cmd_install() {
     # launch that follows is an ordinary one from a clean slate.
     step "stopping what the install left running"
     stop_app "$force"
-    # And now what was found. An install that leaves the iPad on the launcher while a game was
-    # running on it has changed the device, not just the build - on 2026-10-17 an install run
-    # while a session was being tested did exactly that, and said nothing about it.
-    [ "$restore" = "1" ] && cmd_restore
+    # An install is never complete on an enrollment or development status screen.
+    # A live game was refused before the stop, so returning the ordinary launcher is
+    # both safe and the only useful final state. `--no-restore` is only the cycle
+    # implementation's internal hand-off; its following cmd_launch proves the same
+    # invariant before cycle can report success.
+    [ "$restore" = "1" ] && cmd_launch
 }
 
 # What was running, and whether a game session was live, recorded *before* a command takes the
@@ -471,6 +501,7 @@ cmd_launch() {
     # Before the launch, so that afterwards we can tell a log written by this build from
     # one left behind by the last one.
     log_launch_count > "$SESSION/log-launches-before"
+    local home_offset; home_offset=$(log_line_count)
     record_baseline
     say "starting from error baseline $(cat "$BASELINE") and crash baseline $(cat "$CRASH_BASELINE")"
     if [ "$game" = "--game" ]; then
@@ -485,6 +516,28 @@ cmd_launch() {
         plainOutput=$(xcrun devicectl device process launch --device "$DEVICE" "$BUNDLE" 2>&1) || launch_failed "$plainOutput"
     fi
     say "launched"
+    [ "$game" = "--game" ] || await_launcher_home "$home_offset"
+}
+
+# Process existence only proves that a process exists. The application records
+# this exact line after installing the normal WoW launcher; the enrollment and
+# self-test status screens never do. A caller therefore cannot report success
+# while the iPad is visibly stranded on one of those screens.
+await_launcher_home() {
+    local offset=$1 deadline=$((SECONDS + PILOT_HOME_TIMEOUT))
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        rm -f "$APP_LOG"
+        xcrun devicectl device copy from --device "$DEVICE" --domain-type appDataContainer \
+            --domain-identifier "$BUNDLE" --source "Documents/wolkara.log" \
+            --destination "$APP_LOG" >/dev/null 2>&1 || true
+        if [ -s "$APP_LOG" ] && awk -v offset="$offset" 'NR > offset && /\[ui\] home: the launcher is up/' "$APP_LOG" | grep -q .; then
+            say "the normal launcher is up"
+            return 0
+        fi
+        sleep 1
+    done
+    die "the app process launched but did not prove that Wolkara's normal launcher is on screen.
+       It may be on an enrollment or development status screen; this command is not a success."
 }
 
 # Block until the answer is known, rather than guessing at a fixed wait. What counts as
@@ -826,15 +879,15 @@ cmd_selftest() {
     done
     step "what the app said while testing itself"
     awk -v offset="$offset" 'NR > offset' "$APP_LOG" 2>/dev/null | grep -E "selftest: " | tail -25 | cut -c1-200 | sed 's/^/  /'
-    [ -n "$line" ] || die "no verdict from the '$name' self-test within 40s: the lines above are what it did say"
-    say "$line"
     # And the app goes back on its home screen. A launch carrying --selftest is a development run:
     # it shows the plain status screen, which is a black screen to anyone looking at the iPad, and
-    # leaving that up after a successful test is a failed operation whatever the verdict said.
+    # leaving that up after any test outcome is a failed operation whatever the verdict said.
     # Every operation against the app ends with the home screen up - anything else is a failure.
     step "putting the app back on its home screen"
     stop_app ""
     cmd_launch
+    [ -n "$line" ] || die "no verdict from the '$name' self-test within 40s: the lines above are what it did say"
+    say "$line"
     case "$line" in
         *" PASS "*) return 0 ;;
     esac
