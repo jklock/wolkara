@@ -67,10 +67,45 @@ static NSTimeInterval const AKDefaultFinalizeTimeout = 3.0;
     _engine = [[AVAudioEngine alloc] init];
     AVAudioInputNode *input = _engine.inputNode;
     AVAudioFormat *format = [input outputFormatForBus:0];
+    WKLog("voice", @"dictation: tap on %.0fHz %lu channel(s), %@", format.sampleRate,
+          (unsigned long)format.channelCount, format.isStandard ? @"standard float32" : @"NOT standard");
     [input installTapOnBus:0 bufferSize:1024 format:format
                      block:^(AVAudioPCMBuffer *buffer, AVAudioTime *when) {
         (void)when;
         [self->_request appendAudioPCMBuffer:buffer];
+        // What the first buffer actually is. Every reading I have taken so far could not tell an empty
+        // buffer from a silent one from a non-float one, and those are three different faults with three
+        // different causes: an input that never started, a microphone hearing nothing, or a tap installed
+        // against the wrong format. One line says which.
+        static BOOL saidTheShape = NO;
+        if (!saidTheShape) {
+            saidTheShape = YES;
+            WKLog("voice", @"dictation: first buffer is %lu frame(s), %.0fHz %lu channel(s), float data %@",
+                  (unsigned long)buffer.frameLength, buffer.format.sampleRate,
+                  (unsigned long)buffer.format.channelCount,
+                  buffer.floatChannelData ? @"present" : @"ABSENT");
+        }
+        // The loudest sample of the last second, once a second, while dictation runs. Read-only.
+        //
+        // This is the one measurement that separates a microphone delivering nothing from a recogniser
+        // that will not work. Everything else is already logged and correct: PlayAndRecord, the built-in
+        // microphone, 48000Hz, one channel, input available. The device still transcribes "No" whatever
+        // is said, and "No" is what a recogniser says to silence - so either the samples are empty or the
+        // recogniser is. A microphone in a room never reads exactly zero, so one number settles it.
+        if (buffer.floatChannelData && buffer.frameLength > 0) {
+            float peak = 0;
+            for (AVAudioFrameCount frame = 0; frame < buffer.frameLength; frame++) {
+                float value = buffer.floatChannelData[0][frame];
+                if (value < 0) value = -value;
+                if (value > peak) peak = value;
+            }
+            static NSTimeInterval lastReport = 0;
+            NSTimeInterval now = NSDate.date.timeIntervalSinceReferenceDate;
+            if (now - lastReport >= 1.0) {
+                lastReport = now;
+                WKLog("voice", @"dictation: the loudest sample heard is %.4f", peak);
+            }
+        }
     }];
 
     __weak AKSpeechSession *weakSelf = self;
@@ -91,6 +126,13 @@ static NSTimeInterval const AKDefaultFinalizeTimeout = 3.0;
         [self cancel];
         if (_handler) _handler(@"", NO, error);
     }
+    // The tap never fires, so the engine is the one being asked. isStandard is the exact fact: an engine
+    // input that is not standard float32 cannot give the tap float data however the session is set up.
+    AVAudioFormat *inFormat = [_engine.inputNode outputFormatForBus:0];
+    WKLog("voice", @"dictation: engine %@, input %.0fHz %lu channel(s), %@",
+          _engine.isRunning ? @"running" : @"NOT running",
+          inFormat.sampleRate, (unsigned long)inFormat.channelCount,
+          inFormat.isStandard ? @"standard float32" : @"NOT standard");
 }
 
 - (void)finish {
