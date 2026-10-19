@@ -88,6 +88,12 @@ case "$args" in
     [ -n "$dest" ] || exit 1
     printf 'not really a png\n' > "$dest"
     exit 0;;
+*"device process launch"*)
+    if [ -n "${WOLKARA_FAKE_LAUNCH_LOCKED:-}" ]; then
+        printf 'BSErrorCodeDescription = Locked\nNSLocalizedFailureReason = Unable to launch because the device was not, or could not be, unlocked.\n' >&2
+        exit 1
+    fi
+    exit 0;;
 *"device info apps"*)
     printf 'Wolkara Forever  local.wolkara.johnklock\n'
     exit 0;;
@@ -272,6 +278,15 @@ run_pilot "$work/sessions/quiet" stop --dry-run
 check $? "with nothing live, stop still works"
 grep -q "dry run" "$work/out.txt"
 check $? "and says what it would do"
+
+# A locked iPad cannot be launched into, and the tool has to say that rather than "launch failed".
+# Every measurement taken while it is locked is worthless, which is how an evening of microphone
+# measurements happened on a device that could not deliver audio to anything.
+( export WOLKARA_FAKE_LAUNCH_LOCKED=1; export WOLKARA_FAKE_PROCESSES=""; run_pilot "$work/sessions/locked" launch )
+[ $? -ne 0 ]
+check $? "a locked device is a refusal, not a success"
+grep -q "iPad is locked" "$work/out.txt"
+check $? "and the tool says which lock it is, in those words"
 
 # Each run keeps its own work files.
 run_pilot "$work/sessions/one" state
