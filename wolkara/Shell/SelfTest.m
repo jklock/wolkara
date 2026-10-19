@@ -317,12 +317,24 @@ static void AKSelfTestRunVoice(AKSelfTestRecorder *recorder) {
             // `listening` is the app's own record that it got as far as opening the microphone,
             // and this is the operating system's corroboration of it.
             [recorder check:AKSelfTestIsRecordingCategory(session.category) _:@"the microphone is opened for a session started for real"];
+            // Hold it long enough for audio to actually arrive, and say what arrived. The check above
+            // only proves the session looks right; it passed for months over a microphone that was
+            // delivering nothing. A live microphone in a quiet room still has a noise floor, so exactly
+            // zero across a second and a half is not a quiet room - it is a microphone that is not
+            // reaching us, and it is the difference between a recogniser that fails and a session that
+            // was never wrong.
+            AKSelfTestSleep(1.5);
+            double loudest = AKVoiceLoudestSample();
+            WKLog("selftest", @"selftest: held the microphone for 1.5 seconds; the loudest sample was %.5f while the session was %@",
+                  loudest, session.category);
+            [recorder check:(loudest > 0) _:[NSString stringWithFormat:@"the microphone delivers more than digital silence (loudest %.5f)", loudest]];
+            [recorder check:AKSelfTestIsRecordingCategory(session.category) _:@"and it is still recording, not taken away mid-hold"];
             AKSelfTestOnMain(^{ [dictation cancel]; });
             AKSelfTestSleep(0.6);
             [recorder check:(dictation.state == AKDictationStateIdle) _:@"cancelling ends the session"];
             [recorder check:(!dictation.listening) _:@"and closes the microphone"];
             [recorder check:[session.category isEqualToString:categoryBefore] _:@"and puts the audio session back as it was"];
-            detail = @"speech=authorized on-device=1, session=record-then-restored";
+            detail = [NSString stringWithFormat:@"speech=authorized on-device=1, session=record-then-restored, loudest=%.5f", loudest];
         } else {
             // It did not open. On a device where it does not, the app must either say why or be
             // visibly still waiting on the permission callback - doing neither, silently, is the

@@ -17,6 +17,14 @@ static unsigned short const AKReturnKeyCode = 36;
 // hold the microphone open.
 static NSTimeInterval const AKDefaultFinalizeTimeout = 3.0;
 
+// Per capture, not per process: what the loudest sample of this capture has been, and whether the
+// shape of its first buffer has been reported. Both are reset when a capture starts, so a second
+// hold never reports the first hold's numbers.
+static double AKLoudestSoFar;
+static BOOL AKSaidTheShape;
+
+double AKVoiceLoudestSample(void) { return AKLoudestSoFar; }
+
 #pragma mark - The real recogniser
 
 // Owns the audio engine, the request and the task, because those three are one thing:
@@ -65,6 +73,8 @@ static NSTimeInterval const AKDefaultFinalizeTimeout = 3.0;
     if (words.count) _request.contextualStrings = words;
 
     _engine = [[AVAudioEngine alloc] init];
+    AKLoudestSoFar = 0;
+    AKSaidTheShape = NO;
     AVAudioInputNode *input = _engine.inputNode;
     AVAudioFormat *format = [input outputFormatForBus:0];
     WKLog("voice", @"dictation: tap on %.0fHz %lu channel(s), %@", format.sampleRate,
@@ -73,25 +83,22 @@ static NSTimeInterval const AKDefaultFinalizeTimeout = 3.0;
                      block:^(AVAudioPCMBuffer *buffer, AVAudioTime *when) {
         (void)when;
         [self->_request appendAudioPCMBuffer:buffer];
-        // What the first buffer actually is. Every reading I have taken so far could not tell an empty
-        // buffer from a silent one from a non-float one, and those are three different faults with three
-        // different causes: an input that never started, a microphone hearing nothing, or a tap installed
-        // against the wrong format. One line says which.
-        static BOOL saidTheShape = NO;
-        if (!saidTheShape) {
-            saidTheShape = YES;
+        // What the first buffer actually is. Every reading available before this could not tell an
+        // empty buffer from a silent one from a non-float one, and those are three different faults
+        // with three different causes. One line says which.
+        if (!AKSaidTheShape) {
+            AKSaidTheShape = YES;
             WKLog("voice", @"dictation: first buffer is %lu frame(s), %.0fHz %lu channel(s), float data %@",
                   (unsigned long)buffer.frameLength, buffer.format.sampleRate,
                   (unsigned long)buffer.format.channelCount,
                   buffer.floatChannelData ? @"present" : @"ABSENT");
         }
-        // The loudest sample of the last second, once a second, while dictation runs. Read-only.
+        // The loudest sample of the capture so far, once a second, while dictation runs. Read-only.
         //
         // This is the one measurement that separates a microphone delivering nothing from a recogniser
         // that will not work. Everything else is already logged and correct: PlayAndRecord, the built-in
-        // microphone, 48000Hz, one channel, input available. The device still transcribes "No" whatever
-        // is said, and "No" is what a recogniser says to silence - so either the samples are empty or the
-        // recogniser is. A microphone in a room never reads exactly zero, so one number settles it.
+        // microphone, 48000Hz, one channel, input available, the engine running. A microphone in a room
+        // never reads exactly zero, so one number settles it.
         if (buffer.floatChannelData && buffer.frameLength > 0) {
             float peak = 0;
             for (AVAudioFrameCount frame = 0; frame < buffer.frameLength; frame++) {
@@ -99,11 +106,17 @@ static NSTimeInterval const AKDefaultFinalizeTimeout = 3.0;
                 if (value < 0) value = -value;
                 if (value > peak) peak = value;
             }
+            if (peak > AKLoudestSoFar) AKLoudestSoFar = peak;
             static NSTimeInterval lastReport = 0;
             NSTimeInterval now = NSDate.date.timeIntervalSinceReferenceDate;
             if (now - lastReport >= 1.0) {
                 lastReport = now;
-                WKLog("voice", @"dictation: the loudest sample heard is %.4f", peak);
+                // The category is read here, during the capture, and not at the transition: the whole
+                // point is that something outside this class can change it between the two, and a
+                // capture that is still recording PlayAndRecord cannot be receiving digital silence
+                // for any reason to do with the session.
+                WKLog("voice", @"dictation: the loudest sample heard is %.5f while the session is %@",
+                      AKLoudestSoFar, AVAudioSession.sharedInstance.category);
             }
         }
     }];
