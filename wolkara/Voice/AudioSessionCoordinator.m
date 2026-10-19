@@ -145,13 +145,12 @@ static char const AKAudioCoordinatorQueueKey;
         // PlayAndRecord, not Record: the game's audio has to stay audible while the user talks, and
         // Record silences everything else. This is the review outcome's declared policy.
         //
-        // VoiceChat, not Default: VoiceChat is the mode for capturing a nearby voice. Default does no
-        // voice processing and no gain for a person speaking into a held device, which is exactly the
-        // case here - the microphone is at the far edge, and what reaches the recogniser is the room.
-        // The recogniser transcribing the room rather than the speaker is what "No" for every phrase
-        // looks like. Playback and the launcher policy stay on Default: they do not capture.
+        // Dictation consumes the captured signal itself. VoiceChat enables the system's bidirectional
+        // voice-processing path, which is for a VoIP render/capture graph, not this input-only engine.
+        // It clipped live speech on Dadpad. Keep the normal PlayAndRecord policy with Default mode:
+        // simultaneous game output remains available and the input reaches Speech unmodified.
         if (![session setCategory:AVAudioSessionCategoryPlayAndRecord
-                             mode:AVAudioSessionModeVoiceChat
+                             mode:AVAudioSessionModeDefault
                           options:AVAudioSessionCategoryOptionDefaultToSpeaker |
                                   AVAudioSessionCategoryOptionAllowBluetooth
                             error:&failure]) {
