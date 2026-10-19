@@ -9,39 +9,40 @@
 #
 diff --git a/translation/CoreAudio/Hardware.m b/translation/CoreAudio/Hardware.m
 diff --git a/translation/CoreAudio/Hardware.m b/translation/CoreAudio/Hardware.m
-index 10de4b4..eba594f 100644
+index 10de4b4..66d5318 100644
 --- a/translation/CoreAudio/Hardware.m
 +++ b/translation/CoreAudio/Hardware.m
-@@ -6,7 +6,47 @@
+@@ -6,10 +6,51 @@
  typedef UInt32 AudioDeviceID;
  typedef OSStatus (*HardwareListener)(UInt32,void *);
  static _Atomic(UInt32) defaultOutputDevice;
-+// Push to talk takes the session for recording, and while it holds it nothing here may force
-+// playback: doing that is what ended a running dictation mid-sentence. The app's coordinator posts
-+// this by name - the same arrangement as the touch adapter's notification, because this file lives
-+// in translation/ and cannot include the app's headers - and this adapter obeys it.
-+static _Atomic(BOOL) pushToTalkHoldsTheSession;
-+static NSString *const pushToTalkLeaseNotification=@"AKAudioSessionPushToTalkLeaseDidChange";
-+// The app declares the audio background mode, and iPadOS only honours it while
-+// the audio session is active: that is what keeps a running game alive (and its
-+// connection up) when the user switches to another app. Nothing here deactivates
-+// the session, so it stays active across the switch; these observers put it back
-+// only when something else took it away.
++// The host owns the audio session. This asks it for the game's playback lease, synchronously, and
++// does nothing else: forcing the category here is what took the session away from a running dictation,
++// and a second owner of the session is what this adapter used to be.
++//
++// The request goes through dlsym rather than a declaration, because this adapter is its own image and
++// cannot link against the app's symbol; the app is the main image, so RTLD_DEFAULT finds it. A host
++// that does not implement it has nothing done to its session, which is the right answer for a process
++// that has not said what it wants. dlfcn.h is included here already, for the same kind of reason.
++typedef BOOL (*TKWolkaraPlaybackRequest)(void);
++static TKWolkaraPlaybackRequest playbackRequest(void) {
++    static TKWolkaraPlaybackRequest found;
++    static dispatch_once_t once;
++    dispatch_once(&once,^{ found=(TKWolkaraPlaybackRequest)dlsym(RTLD_DEFAULT,"TKWolkaraRequestGamePlayback"); });
++    return found;
++}
++// The app declares the audio background mode, and iPadOS only honours it while the audio session is
++// active: that is what keeps a running game alive (and its connection up) when the user switches to
++// another app. An interruption ending, or a media services reset, is when the session can be asked
++// for again - asked for, never taken.
 +static void keepSession(void) {
-+    if(pushToTalkHoldsTheSession) return;
-+    AVAudioSession *session=AVAudioSession.sharedInstance;NSError *error=nil;
-+    if(![session.category isEqualToString:AVAudioSessionCategoryPlayback] && ![session setCategory:AVAudioSessionCategoryPlayback error:&error]) {
-+        AKLog(@"audio session category failed: %@",error.localizedDescription);return;
-+    }
-+    if(![session setActive:YES error:&error]) AKLog(@"audio session activate failed: %@",error.localizedDescription);
++    TKWolkaraPlaybackRequest ask=playbackRequest();
++    if(ask) ask();
 +}
 +static void observeSession(void) {
 +    static dispatch_once_t once;
 +    dispatch_once(&once,^{
-+        // AVFAudio notifications only: this adapter stays UIKit-free. The audio
-+        // background mode plus an active session is what lets iPadOS keep a
-+        // running guest alive (and online) while another app is in front; an
-+        // interruption ending is the one thing that takes the session away.
++        // AVFAudio notifications only: this adapter stays UIKit-free.
 +        NSNotificationCenter *center=NSNotificationCenter.defaultCenter;
 +        [center addObserverForName:AVAudioSessionInterruptionNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
 +            NSNumber *type=note.userInfo[AVAudioSessionInterruptionTypeKey];
@@ -50,13 +51,19 @@ index 10de4b4..eba594f 100644
 +        [center addObserverForName:AVAudioSessionMediaServicesWereResetNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
 +            (void)note; keepSession();
 +        }];
-+        [center addObserverForName:pushToTalkLeaseNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
-+            pushToTalkHoldsTheSession=[note.userInfo[@"active"] boolValue];
-+        }];
 +    });
 +}
  static NSString *outputName(void) {
+-    AVAudioSession *session=AVAudioSession.sharedInstance; NSError *error=nil;
+-    if(![session.category isEqualToString:AVAudioSessionCategoryPlayback] || session.sampleRate<=0 || !session.currentRoute.outputs.count)
+-        if(![session setCategory:AVAudioSessionCategoryPlayback error:&error] || ![session setActive:YES error:&error])return nil;
 +    observeSession();
-     AVAudioSession *session=AVAudioSession.sharedInstance; NSError *error=nil;
-     if(![session.category isEqualToString:AVAudioSessionCategoryPlayback] || session.sampleRate<=0 || !session.currentRoute.outputs.count)
-         if(![session setCategory:AVAudioSessionCategoryPlayback error:&error] || ![session setActive:YES error:&error])return nil;
++    // Asked for, not taken. If the host declines - a dictation holds the session, or it has not asked
++    // for playback yet - there is no output name to report, and that is the answer.
++    TKWolkaraPlaybackRequest ask=playbackRequest();
++    if(ask) ask();
++    AVAudioSession *session=AVAudioSession.sharedInstance;
++    if(![session.category isEqualToString:AVAudioSessionCategoryPlayback] || !session.currentRoute.outputs.count)return nil;
+     NSArray *outputs=session.currentRoute.outputs;
+     return outputs.count?[(AVAudioSessionPortDescription *)outputs.firstObject portName]:nil;
+ }

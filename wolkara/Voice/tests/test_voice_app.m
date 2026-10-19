@@ -546,6 +546,42 @@ static void TestAFailedPutBackIsReported(void) {
     dictation.transcriptHandler = nil;
 }
 
+// The platform's adapter asks for the game's playback lease through this, from whatever thread
+// CoreAudio is on.
+extern BOOL TKWolkaraRequestGamePlayback(void);
+
+// The adapter must not be able to take the session from a running dictation. This races its requests
+// against a held push-to-talk lease: whatever order they land in, the category stays PlayAndRecord
+// until push to talk releases it, and only then goes to the game's Playback. The version before this
+// had the adapter read a flag from a notification and force the category itself, which left a window
+// for exactly the failure this phase exists to remove.
+static void TestTheAdapterCannotTakeTheSessionFromPushToTalk(void) {
+    AKAudioSessionCoordinator *coordinator = AKAudioSessionCoordinator.shared;
+    AVAudioSession *session = AVAudioSession.sharedInstance;
+    NSError *error = nil;
+    CHECK(([coordinator beginPushToTalk:&error]), @"push to talk takes the session: %@", error.localizedDescription);
+
+    dispatch_queue_t racers = dispatch_queue_create("test.racers", DISPATCH_QUEUE_CONCURRENT);
+    dispatch_group_t group = dispatch_group_create();
+    for (NSInteger index = 0; index < 200; index++) {
+        dispatch_group_async(group, racers, ^{
+            // The platform's own entry point, exactly as the adapter calls it.
+            TKWolkaraRequestGamePlayback();
+        });
+    }
+    dispatch_group_wait(group, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5 * NSEC_PER_SEC)));
+    Pump(0.1);
+
+    CHECK(([session.category isEqualToString:AVAudioSessionCategoryPlayAndRecord]),
+          @"the adapter cannot take the session from push to talk, got %@", session.category);
+    CHECK((coordinator.pushToTalkActive), @"and push to talk still holds the lease");
+
+    CHECK(([coordinator endPushToTalk:&error]), @"push to talk releases it: %@", error.localizedDescription);
+    CHECK(([session.category isEqualToString:AVAudioSessionCategoryPlayback]),
+          @"and the game's declared policy is what follows, got %@", session.category);
+    [coordinator releaseGamePlayback];
+}
+
 static void TestAudioSessionPolicy(void) {
     AKDictation *dictation = AKDictation.shared;
     AVAudioSession *session = AVAudioSession.sharedInstance;
@@ -1345,6 +1381,7 @@ static void TestConfigWriteFailure(void) {
     TestLearning();
     TestTriggerPatterns();
     TestAudioSessionCoordinator();
+    TestTheAdapterCannotTakeTheSessionFromPushToTalk();
     TestAudioSessionPolicy();
     TestAFailedPutBackIsReported();
     TestScreenshotIsolation();

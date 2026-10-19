@@ -188,6 +188,23 @@ else
     printf '     %s\n' $mutators
 fi
 
+# The scan above only sees wolkara/*.m and *.h, and the session's second owner was in the CoreAudio
+# patch: a unified diff, so a grep for source files walked straight past it and "the audio session has
+# one owner" passed while the adapter still forced the category. The patch's added lines and the file
+# prepare.sh generates from them are both checked now - the review outcome's Phase 1 asks for the gate
+# to look at what is built, not only at the layer's sources.
+patchMutators=$(grep -hE "^\+.*(setCategory:|setActive:|setPreferredInput:)" wolkara/patches/*.patch 2>/dev/null | head -3)
+preparedMutators=""
+if [ -f build/platform/translation/CoreAudio/Hardware.m ]; then
+    preparedMutators=$(grep -hE "setCategory:|setActive:|setPreferredInput:" build/platform/translation/CoreAudio/Hardware.m 2>/dev/null | head -3)
+fi
+if [ -z "$patchMutators" ] && [ -z "$preparedMutators" ]; then
+    ok "no patch and no prepared platform file mutates the audio session"
+else
+    bad "the audio session has more than one owner (patch or prepared tree):"
+    printf '     %s\n' $patchMutators $preparedMutators
+fi
+
 if [ "$fail" -eq 0 ]; then
     echo "check_layers: OK"
 else
