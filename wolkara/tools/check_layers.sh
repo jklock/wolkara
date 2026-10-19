@@ -180,6 +180,9 @@ fi
 # One owner of the audio session. The review outcome's Phase 1: everything else asks the coordinator.
 # A second caller of these is how the session ended up somewhere nobody asked for - dictation taking
 # it for recording while the CoreAudio adapter forced playback underneath.
+# `setMode:` is deliberately not in this first scan: the layer has its own -setMode: for the voice
+# mode, which has nothing to do with the audio session, and a gate that cries wolf gets turned off.
+# It is checked below, where the only code scanned is the platform's, and a setMode there is one.
 mutators=$(git grep -l -e 'setCategory:' -e 'setActive:' -e 'setPreferredInput:' -- wolkara 2>/dev/null | grep -E '\.(m|h)$' | grep -v "AudioSessionCoordinator" | grep -v "/tests/" | head -5)
 if [ -z "$mutators" ]; then
     ok "the audio session has one owner"
@@ -193,11 +196,15 @@ fi
 # one owner" passed while the adapter still forced the category. The patch's added lines and the file
 # prepare.sh generates from them are both checked now - the review outcome's Phase 1 asks for the gate
 # to look at what is built, not only at the layer's sources.
-patchMutators=$(grep -hE "^\+.*(setCategory:|setActive:|setPreferredInput:)" wolkara/patches/*.patch 2>/dev/null | head -3)
-preparedMutators=""
-if [ -f build/platform/translation/CoreAudio/Hardware.m ]; then
-    preparedMutators=$(grep -hE "setCategory:|setActive:|setPreferredInput:" build/platform/translation/CoreAudio/Hardware.m 2>/dev/null | head -3)
-fi
+patchMutators=$(grep -hE "^\+.*(setCategory:|setActive:|setMode:|setPreferredInput:)" wolkara/patches/*.patch 2>/dev/null | head -3)
+# Every prepared platform file that has ever taken the session, not only the first one found. The
+# second owner was AudioToolbox, and a gate that watches one file passes for as long as the leak is in
+# the other - which is exactly how it was missed.
+preparedMutators=$(for prepared in build/platform/translation/CoreAudio/Hardware.m \
+                                build/platform/translation/AudioToolbox/Output.m; do
+    [ -f "$prepared" ] || continue
+    grep -hE "setCategory:|setActive:|setMode:|setPreferredInput:" "$prepared" 2>/dev/null | head -3
+done)
 if [ -z "$patchMutators" ] && [ -z "$preparedMutators" ]; then
     ok "no patch and no prepared platform file mutates the audio session"
 else

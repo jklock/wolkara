@@ -35,6 +35,15 @@ typedef NS_ENUM(NSInteger, AKDictationState) {
     AKDictationStateFinalizing,
 };
 
+/// The loudest sample the most recent capture heard, as a fraction of full scale.
+///
+/// Zero means the capture delivered digital silence for its whole life, which a live microphone never
+/// does - a quiet room still has a noise floor. This exists because the voice self-test used to pass
+/// over a microphone that was delivering nothing at all: it checked that the session looked right and
+/// never checked that sound came out of it. A recogniser handed silence answers with a short word, or
+/// with "No speech detected", and both look like a working app from every other angle.
+double AKVoiceLoudestSample(void);
+
 #pragma mark - The two seams
 
 @protocol AKDictationSpeech <NSObject>

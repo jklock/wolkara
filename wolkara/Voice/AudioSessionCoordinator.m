@@ -44,8 +44,25 @@ static char const AKAudioCoordinatorQueueKey;
         dispatch_queue_set_specific(_transitions, &AKAudioCoordinatorQueueKey, (void *)&AKAudioCoordinatorQueueKey, NULL);
         _lease = AKAudioLeaseNone;
         _lastTransition = @"none yet";
+        // Reading the microphone permission needs no recording, so it can be answered at launch instead
+        // of during a hold. It has to be read here because it is the one fact that cannot be told apart
+        // from anywhere else in this class: when iOS has not granted it, the session still activates and
+        // reports PlayAndRecord, the built-in microphone, input available, and the engine still runs -
+        // the tap still fires with correctly shaped buffers - and every sample in them is exactly 0.0.
+        // Nothing else in the audio chain looks wrong, because nothing else is.
+        dispatch_async(dispatch_get_main_queue(), ^{ [self logMicrophonePermission]; });
     }
     return self;
+}
+
+- (void)logMicrophonePermission {
+    NSString *mic = @"unknown";
+    switch (AVAudioSession.sharedInstance.recordPermission) {
+        case AVAudioSessionRecordPermissionUndetermined: mic = @"UNDETERMINED - never asked for"; break;
+        case AVAudioSessionRecordPermissionDenied: mic = @"DENIED"; break;
+        case AVAudioSessionRecordPermissionGranted: mic = @"granted"; break;
+    }
+    WKLog("audio", @"microphone permission: %@", mic);
 }
 
 // On the queue, or inline if this thread is already on it. See AKAudioCoordinatorQueueKey.
