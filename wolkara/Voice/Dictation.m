@@ -1,6 +1,7 @@
 // Wolkara: dictation, in full.
 
 #import "Dictation.h"
+#import "AudioSessionCoordinator.h"
 #import "../App/WolkaraLog.h"
 #import "VoiceSettings.h"
 
@@ -120,45 +121,18 @@ static NSTimeInterval const AKDefaultFinalizeTimeout = 3.0;
 @interface AKAudioSessionBridge : NSObject <AKDictationAudio>
 @end
 
-@implementation AKAudioSessionBridge {
-    AVAudioSessionCategory _category;
-    AVAudioSessionMode _mode;
-    AVAudioSessionCategoryOptions _options;
-    BOOL _saved;
-}
+@implementation AKAudioSessionBridge
 
+// The session is not this object's to take or to put back. The coordinator owns it, and this asks
+// for a push-to-talk lease and hands it back. The answer is whether the session is in the state the
+// policy says it should be in - not whether a call returned success, which is a different thing and
+// is the one the old code reported while the microphone stayed held.
 - (BOOL)beginRecording:(NSError **)error {
-    AVAudioSession *session = AVAudioSession.sharedInstance;
-    _category = session.category;
-    _mode = session.mode;
-    _options = session.categoryOptions;
-    _saved = YES;
-    // Record only, and without asking the system to duck or interrupt anything: the
-    // game's audio is not ours to take away.
-    return [session setCategory:AVAudioSessionCategoryRecord mode:AVAudioSessionModeDefault
-                        options:0 error:error] &&
-           [session setActive:YES error:error];
+    return [[AKAudioSessionCoordinator shared] beginPushToTalk:error];
 }
 
-// What "restore" means here, exactly.
-//
-// The category, mode and options that were there before are put back, and the session is
-// left **active**. AVAudioSession has no public way to ask whether it was active before we
-// arrived, so the previous activation state cannot be observed and is not claimed: this is
-// an audio policy, not a snapshot of everything. The policy is right for this app - a
-// foreground game host whose session is expected to be active - and it is what the header
-// and docs/VOICE.md say, rather than "the session is restored exactly".
-- (void)restore {
-    if (!_saved) return;
-    _saved = NO;
-    AVAudioSession *session = AVAudioSession.sharedInstance;
-    NSError *error = nil;
-    if (![session setCategory:_category mode:_mode options:_options error:&error])
-        WKLog("voice", @"audio: could not restore the category: %@", error.localizedDescription);
-    if (![session setActive:YES error:&error])
-        WKLog("voice", @"audio: could not reactivate the session: %@", error.localizedDescription);
-    WKLog("voice", @"audio: put back %@/%@ (options %lu) and left the session active",
-          _category, _mode, (unsigned long)_options);
+- (BOOL)restore:(NSError **)error {
+    return [[AKAudioSessionCoordinator shared] endPushToTalk:error];
 }
 
 @end
@@ -185,10 +159,18 @@ static NSTimeInterval const AKDefaultFinalizeTimeout = 3.0;
     if ((self = [super init])) {
         _transcript = [NSMutableString string];
         _finalizeTimeout = AKDefaultFinalizeTimeout;
-        // A call, Siri, or another app taking the session ends dictation rather than
-        // leaving the microphone open behind a session we no longer own.
-        [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(sessionWasInterrupted:)
-                                                   name:AVAudioSessionInterruptionNotification object:nil];
+        // The audio session is the coordinator's, and it says when push to talk was ended by an
+        // interruption, a media reset or the route going. Dictation used to observe
+        // AVAudioSessionInterruptionNotification itself, which is two owners of one session with two
+        // ideas about it - what the review outcome's Phase 1 exists to remove.
+        __weak AKDictation *weakSelf = self;
+        [AKAudioSessionCoordinator shared].pushToTalkWasTaken = ^(NSString *why) {
+            AKDictation *self2 = weakSelf;
+            if (!self2) return;
+            [self2 cancel];
+            void (^problem)(NSString *) = self2.problemHandler;
+            if (problem) problem([NSString stringWithFormat:@"Something else took the audio (%@), so nothing was typed.", why]);
+        };
         // And leaving the app does too. This matters here more than in most apps: the
         // target declares `UIBackgroundModes: [audio]` so a running game keeps its sound,
         // which means iOS does NOT take the session away when the user goes to the Home
@@ -210,16 +192,6 @@ static NSTimeInterval const AKDefaultFinalizeTimeout = 3.0;
     [self cancel];
     void (^problem)(NSString *) = self.problemHandler;
     if (problem) problem(@"The app went to the background, so nothing was typed.");
-}
-
-- (void)sessionWasInterrupted:(NSNotification *)note {
-    NSNumber *type = note.userInfo[AVAudioSessionInterruptionTypeKey];
-    if (![type isKindOfClass:NSNumber.class] || type.unsignedIntegerValue != AVAudioSessionInterruptionTypeBegan) return;
-    if (_state == AKDictationStateIdle) return;
-    WKLog("voice", @"dictation: the audio session was taken away; nothing will be typed");
-    [self cancel];
-    void (^problem)(NSString *) = self.problemHandler;
-    if (problem) problem(@"Something else took the audio, so nothing was typed.");
 }
 
 - (BOOL)listening { return _state == AKDictationStateListening || _state == AKDictationStateFinalizing; }
@@ -344,7 +316,7 @@ static __weak UIView *AKGameTextTarget = nil;
     if (_state != AKDictationStateFinalizing) return;
     WKLog("voice", @"dictation: no final result within %.1fs; nothing will be typed", self.finalizeTimeout);
     [self.speech cancel];
-    [self.audio restore];
+    [self giveTheSessionBack];
     _abandoned = YES;
     _delivered = YES;   // nothing may be delivered for this session
     _session++;
@@ -358,7 +330,7 @@ static __weak UIView *AKGameTextTarget = nil;
     _delivered = YES;   // nothing may be delivered after a cancel
     _session++;
     [self.speech cancel];
-    [self.audio restore];
+    [self giveTheSessionBack];
     [_transcript setString:@""];
     [self setState:AKDictationStateIdle];
 }
@@ -388,15 +360,29 @@ static __weak UIView *AKGameTextTarget = nil;
     if (_delivered || _abandoned) return;
     _delivered = YES;
     if (transcript.length) [_transcript setString:transcript];
-    [self.audio restore];
+    [self giveTheSessionBack];
     [self.speech cancel];
     [self setState:AKDictationStateIdle];
     [self deliver];
 }
 
+// Handing the session back, once, and saying so when it did not work.
+//
+// No retries. The review outcome is explicit that a failed put-back leaves an explicit recoverable
+// state and a user-visible message rather than an unbounded retry loop, and the retry this replaces
+// is the clearest example of why: a retry from a failed put-back could fire after the next dictation
+// had begun and take the session away from it, which the user saw as the microphone being broken.
+- (void)giveTheSessionBack {
+    NSError *error = nil;
+    if ([self.audio restore:&error]) return;
+    WKLog("voice", @"audio: the session could not be handed back: %@", error.localizedDescription ?: @"no reason given");
+    if (self.problemHandler)
+        self.problemHandler(@"The microphone could not be handed back. If the microphone indicator is still on, close Wolkara and open it again.");
+}
+
 - (void)fail:(NSString *)message {
     WKLog("voice", @"dictation: %@", message);
-    [self.audio restore];
+    [self giveTheSessionBack];
     [self.speech cancel];
     _abandoned = YES;
     _session++;
