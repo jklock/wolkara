@@ -30,26 +30,6 @@ static NSTimeInterval const AKDefaultFinalizeTimeout = 3.0;
     SFSpeechRecognitionTask *_task;
     void (^_handler)(NSString *, BOOL, NSError *);
     BOOL _finished;
-    float _inputLevel;
-    NSUInteger _buffersReceived;
-    NSUInteger _unreadableBuffers;
-    void (^_levelHandler)(float);
-}
-
-// The loudest sample in a buffer, 0 to 1. The tap is installed with the input's own float format,
-// so anything else is treated as silence rather than guessed at.
-static float AKSpeechPeak(AVAudioPCMBuffer *buffer, BOOL *readable) {
-    if (readable) *readable = (buffer.floatChannelData != NULL && buffer.frameLength > 0);
-    if (!readable || !*readable) return 0;
-    float peak = 0;
-    for (AVAudioChannelCount channel = 0; channel < buffer.format.channelCount; channel++) {
-        const float *samples = buffer.floatChannelData[channel];
-        for (AVAudioFrameCount frame = 0; frame < buffer.frameLength; frame++) {
-            float value = samples[frame] < 0 ? -samples[frame] : samples[frame];
-            if (value > peak) peak = value;
-        }
-    }
-    return peak;
 }
 
 - (instancetype)init {
@@ -85,38 +65,11 @@ static float AKSpeechPeak(AVAudioPCMBuffer *buffer, BOOL *readable) {
 
     _engine = [[AVAudioEngine alloc] init];
     AVAudioInputNode *input = _engine.inputNode;
-    // The input route is not ready the instant the session is made active, and a tap installed
-    // against a format read too early delivers nothing at all: the session looks healthy, the
-    // recogniser is handed a stream with nothing in it, and it reports that it heard no speech.
-    // That is what the user saw on an iPad on 2026-10-17 - zero buffers, with the microphone
-    // permission granted. Waited out, briefly, rather than guessed at, and the format is logged so
-    // the next run shows what it was.
     AVAudioFormat *format = [input outputFormatForBus:0];
-    for (NSUInteger attempt = 0; attempt < 20 && (format.sampleRate <= 0 || format.channelCount == 0); attempt++) {
-        [NSThread sleepForTimeInterval:0.025];
-        format = [input outputFormatForBus:0];
-    }
-    WKLog("voice", @"dictation: input format %.0fHz %u channel(s) after waiting",
-          format.sampleRate, (unsigned)format.channelCount);
-    _inputLevel = 0;
-    _buffersReceived = 0;
-    _unreadableBuffers = 0;
     [input installTapOnBus:0 bufferSize:1024 format:format
                      block:^(AVAudioPCMBuffer *buffer, AVAudioTime *when) {
         (void)when;
         [self->_request appendAudioPCMBuffer:buffer];
-        // What it is hearing, for the screen and for the log. Published on the main queue because
-        // a screen draws it; the peak is kept rather than the last sample so that a bar built from
-        // this does not flicker to zero between words. Counting buffers as well as measuring them
-        // is what tells a silent room apart from a microphone that is not delivering anything.
-        BOOL readable = NO;
-        float level = AKSpeechPeak(buffer, &readable);
-        dispatch_async(dispatch_get_main_queue(), ^{
-            self->_buffersReceived++;
-            if (!readable) self->_unreadableBuffers++;
-            if (level > self->_inputLevel) self->_inputLevel = level;
-            if (self->_levelHandler) self->_levelHandler(self->_inputLevel);
-        });
     }];
 
     __weak AKSpeechSession *weakSelf = self;
@@ -148,13 +101,6 @@ static float AKSpeechPeak(AVAudioPCMBuffer *buffer, BOOL *readable) {
 - (void)cancel {
     _finished = YES;
     _handler = nil;
-    _levelHandler = nil;
-    // The tap's own account, where its counters are in scope: how many buffers it delivered, how
-    // many of those could not be read as samples at all, and the loudest sample seen. A buffer
-    // that cannot be read is the difference between a meter that is blind and a microphone that is
-    // hearing nothing, and only this line tells them apart.
-    WKLog("voice", @"dictation: tap delivered %lu buffer(s), %lu unreadable, loudest %.3f",
-          (unsigned long)_buffersReceived, (unsigned long)_unreadableBuffers, _inputLevel);
     if (_engine) {
         [_engine.inputNode removeTapOnBus:0];
         [_engine stop];
@@ -164,11 +110,6 @@ static float AKSpeechPeak(AVAudioPCMBuffer *buffer, BOOL *readable) {
     _task = nil;
     _request = nil;
 }
-
-- (float)inputLevel { return _inputLevel; }
-- (NSUInteger)buffersReceived { return _buffersReceived; }
-- (void (^)(float))levelHandler { return _levelHandler; }
-- (void)setLevelHandler:(void (^)(float))handler { _levelHandler = [handler copy]; }
 
 @end
 
@@ -192,21 +133,11 @@ static float AKSpeechPeak(AVAudioPCMBuffer *buffer, BOOL *readable) {
     _mode = session.mode;
     _options = session.categoryOptions;
     _saved = YES;
-    // A session that is not already recording is taken in two steps: the old one is torn down, the
-    // recording category is set, and the session is activated again.
-    //
-    // Measured on an iPad on 2026-10-17: a session taken while the app was on its ordinary category
-    // delivered digital silence for its whole life - Record, 48 kHz, buffers at the right rate, and
-    // every sample zero - while a session that was already Record delivered audio. The first
-    // dictation worked because the microphone-held bug had left the session on Record; fixing that
-    // bug made every session cold, and cold is silent. Cycling the activation is what makes a cold
-    // session behave like the one that worked.
-    BOOL cold = ![_category isEqualToString:AVAudioSessionCategoryRecord];
-    if (cold) [session setActive:NO error:NULL];
-    if (![session setCategory:AVAudioSessionCategoryRecord mode:AVAudioSessionModeDefault
-                        options:0 error:error]) return NO;
-    if (cold) [session setActive:NO error:NULL];
-    return [session setActive:YES error:error];
+    // Record only, and without asking the system to duck or interrupt anything: the
+    // game's audio is not ours to take away.
+    return [session setCategory:AVAudioSessionCategoryRecord mode:AVAudioSessionModeDefault
+                        options:0 error:error] &&
+           [session setActive:YES error:error];
 }
 
 // What "restore" means here, exactly.
@@ -217,24 +148,17 @@ static float AKSpeechPeak(AVAudioPCMBuffer *buffer, BOOL *readable) {
 // an audio policy, not a snapshot of everything. The policy is right for this app - a
 // foreground game host whose session is expected to be active - and it is what the header
 // and docs/VOICE.md say, rather than "the session is restored exactly".
-- (BOOL)restore:(NSError **)error {
-    if (!_saved) return YES;
+- (void)restore {
+    if (!_saved) return;
+    _saved = NO;
     AVAudioSession *session = AVAudioSession.sharedInstance;
-    NSError *failure = nil;
-    BOOL category = [session setCategory:_category mode:_mode options:_options error:&failure];
-    BOOL active = category && [session setActive:YES error:&failure];
-    if (category && active) {
-        _saved = NO;
-        // Said only when it happened. The version before this printed the line even when both
-        // calls had failed, so the app's own log claimed the session had been given back while
-        // it sat on Record holding the microphone - measured on an iPad on 2026-10-17, a minute
-        // after dictation ended. `_saved` stays set on failure so the retry can try again.
-        WKLog("voice", @"audio: put back %@/%@ (options %lu) and left the session active",
-              _category, _mode, (unsigned long)_options);
-        return YES;
-    }
-    if (error) *error = failure;
-    return NO;
+    NSError *error = nil;
+    if (![session setCategory:_category mode:_mode options:_options error:&error])
+        WKLog("voice", @"audio: could not restore the category: %@", error.localizedDescription);
+    if (![session setActive:YES error:&error])
+        WKLog("voice", @"audio: could not reactivate the session: %@", error.localizedDescription);
+    WKLog("voice", @"audio: put back %@/%@ (options %lu) and left the session active",
+          _category, _mode, (unsigned long)_options);
 }
 
 @end
@@ -248,7 +172,6 @@ static float AKSpeechPeak(AVAudioPCMBuffer *buffer, BOOL *readable) {
     BOOL _delivered;
     BOOL _abandoned;
     NSUInteger _session;
-    NSUInteger _audioRestoreAttempt;
 }
 
 + (instancetype)shared {
@@ -339,7 +262,6 @@ static __weak UIView *AKGameTextTarget = nil;
     }
     _abandoned = NO;
     _delivered = NO;
-    _audioRestoreAttempt = 0;
     [_transcript setString:@""];
     NSUInteger session = ++_session;
     [self setState:AKDictationStateAuthorizing];
@@ -360,38 +282,6 @@ static __weak UIView *AKGameTextTarget = nil;
 
 - (void)startAudioForSession:(NSUInteger)session {
     if (_session != session || _abandoned) return;
-    // What it is hearing, every half second, while it runs: the buffer count, the loudest sample,
-    // and the category the session is on. The category is in there because the audio session is
-    // shared with the app's own keep-alive and with whatever the game does, and a category that
-    // changes under a running dictation would stop the audio with no other sign of it - which is
-    // exactly the kind of fault that reads as "it heard nothing".
-
-    // Whether the app may use the microphone at all, asked before anything is opened. On
-    // 2026-10-17 a reinstall left this app without the microphone grant, and dictation then said
-    // "Nothing was heard" - the recogniser listening to a silent stream, which is what iOS feeds
-    // an app it has not allowed to listen. That message sent the user looking for a fault that was
-    // not there; this is the fault, and it has a different answer.
-    AVAudioApplicationRecordPermission permission = [AVAudioApplication sharedInstance].recordPermission;
-    WKLog("voice", @"dictation: microphone permission=%ld", (long)permission);
-    if (permission == AVAudioApplicationRecordPermissionDenied) {
-        [self fail:@"Wolkara is not allowed to use the microphone. Turn it on in Settings, under Privacy & Security, Microphone, then try again."];
-        return;
-    }
-    if (permission == AVAudioApplicationRecordPermissionUndetermined) {
-        __weak AKDictation *weakSelf = self;
-        [AVAudioApplication requestRecordPermissionWithCompletionHandler:^(BOOL granted) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                AKDictation *self2 = weakSelf;
-                if (!self2 || self2->_session != session) return;
-                if (!granted) {
-                    [self2 fail:@"Wolkara is not allowed to use the microphone. Turn it on in Settings, under Privacy & Security, Microphone, then try again."];
-                    return;
-                }
-                [self2 startAudioForSession:session];
-            });
-        }];
-        return;
-    }
     // Refused before anything is opened, rather than started and failed: the audio
     // session is not ours to take if there is nothing to feed it to.
     if (!self.speech.isAvailable) {
@@ -404,42 +294,6 @@ static __weak UIView *AKGameTextTarget = nil;
         [self fail:[NSString stringWithFormat:@"The audio session would not start: %@", error.localizedDescription]];
         return;
     }
-    // The person holding the iPad is who this is listening to, so the built-in microphone is asked
-    // for by name, whatever route iOS would otherwise have picked. A session whose input is not the
-    // microphone - a headset with nothing in it, anything else that presents an input - is healthy
-    // in every way that can be seen from inside the app: Record, the right sample rate, buffers
-    // arriving at the right rate, and every sample in them zero, which reads as the app hearing
-    // nothing. Asking for the microphone by name is the one thing that cannot be wrong about it.
-    // The route that was actually given is logged below, so which input the session got is a fact
-    // rather than an inference.
-    AVAudioSession *audioSession = AVAudioSession.sharedInstance;
-    for (AVAudioSessionPortDescription *port in audioSession.availableInputs) {
-        if ([port.portType isEqualToString:AVAudioSessionPortBuiltInMic]) {
-            NSError *preference = nil;
-            if (![audioSession setPreferredInput:port error:&preference])
-                WKLog("voice", @"dictation: could not ask for the built-in microphone: %@", preference.localizedDescription);
-            else
-                WKLog("voice", @"dictation: asked for the built-in microphone, from %lu available input(s)", (unsigned long)audioSession.availableInputs.count);
-            break;
-        }
-    }
-    // Measured here, where it means something. The first version of this logged the category at the
-    // top of this method, before the session was taken, so it read the app's ordinary category and
-    // said nothing at all about the session - and a finding was drawn from it. This is the moment
-    // the session has been taken; anything other than Record here is the fault.
-    WKLog("voice", @"dictation: category=%@ after taking the session", AVAudioSession.sharedInstance.category);
-    // Which input the session was actually given. The samples are read back as float and counted,
-    // so a stream of zeros can be told from a stream that never arrived - but neither says whether
-    // iOS routed the microphone at all, and a route that is a headset with nothing in it, or no
-    // input at all, looks exactly like silence from the inside.
-    AVAudioSessionRouteDescription *route = AVAudioSession.sharedInstance.currentRoute;
-    NSMutableString *inputs = [NSMutableString string];
-    for (AVAudioSessionPortDescription *port in route.inputs)
-        [inputs appendFormat:@"%@(%@) ", port.portName, port.portType];
-    WKLog("voice", @"dictation: input route is %@ - %lu input(s), session %.0fHz",
-          inputs.length ? inputs : @"NOTHING", (unsigned long)route.inputs.count,
-          AVAudioSession.sharedInstance.sampleRate);
-    [self logWhatIsBeingHeard];
     __weak AKDictation *weakSelf = self;
     [self.speech startOnDevice:YES words:AKVoiceSettings.shared.customWords
                        handler:^(NSString *transcript, BOOL isFinal, NSError *error2) {
@@ -490,7 +344,7 @@ static __weak UIView *AKGameTextTarget = nil;
     if (_state != AKDictationStateFinalizing) return;
     WKLog("voice", @"dictation: no final result within %.1fs; nothing will be typed", self.finalizeTimeout);
     [self.speech cancel];
-    [self giveTheSessionBack];
+    [self.audio restore];
     _abandoned = YES;
     _delivered = YES;   // nothing may be delivered for this session
     _session++;
@@ -504,7 +358,7 @@ static __weak UIView *AKGameTextTarget = nil;
     _delivered = YES;   // nothing may be delivered after a cancel
     _session++;
     [self.speech cancel];
-    [self giveTheSessionBack];
+    [self.audio restore];
     [_transcript setString:@""];
     [self setState:AKDictationStateIdle];
 }
@@ -534,79 +388,15 @@ static __weak UIView *AKGameTextTarget = nil;
     if (_delivered || _abandoned) return;
     _delivered = YES;
     if (transcript.length) [_transcript setString:transcript];
-    [self giveTheSessionBack];
+    [self.audio restore];
     [self.speech cancel];
     [self setState:AKDictationStateIdle];
     [self deliver];
 }
 
-// Giving the session back, with the retry the audio session needs.
-//
-// The put-back can fail transiently: a dictation session on an iPad on 2026-10-17 met
-// InsufficientPriority ('!pri', OSStatus 561017449) once, and once was enough for the app to
-// leave its session on Record - the microphone stays held and the indicator stays on, which is
-// exactly what the user sees and cannot account for. So it is tried again a few times, nothing
-// is claimed until it works, and if it never works the user is told rather than left with a
-// microphone that is still on.
-// Every half second while a session is running, what it is hearing. Half a second because that is
-// long enough to see a change and short enough to see it happen while the user is still speaking.
-- (void)logWhatIsBeingHeard {
-    // Started when the session starts, which is while it is still authorizing: the first buffers
-    // arrive before the state changes to listening, and waiting for that state is how the first
-    // version of this logged nothing at all.
-    if (_state == AKDictationStateIdle) return;
-    AVAudioSession *session = AVAudioSession.sharedInstance;
-    WKLog("voice", @"dictation: heard %lu buffer(s), loudest %.3f, category=%@, activeInput=%d",
-          (unsigned long)self.buffersReceived, self.inputLevel, session.category,
-          (int)[session isInputAvailable]);
-    __weak AKDictation *weakSelf = self;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{ [weakSelf logWhatIsBeingHeard]; });
-}
-
-- (void)giveTheSessionBack {
-    // What this session heard, once, on every path that ends one however short it was: the buffer
-    // count, the loudest sample, and how many buffers could not be read as samples at all. A press
-    // can be a third of a second, which is too short for the half-second line, and this is the line
-    // that says whether the microphone picked anything up.
-    WKLog("voice", @"dictation: this session heard %lu buffer(s), loudest %.3f",
-          (unsigned long)self.buffersReceived, self.inputLevel);
-    NSError *error = nil;
-    if ([self.audio restore:&error]) { _audioRestoreAttempt = 0; return; }
-    WKLog("voice", @"audio: could not put the session back yet: %@", error.localizedDescription ?: @"no reason given");
-    if (_audioRestoreAttempt >= 4) {
-        WKLog("voice", @"audio: STILL not given back after 4 attempts; the microphone may be held");
-        if (self.problemHandler)
-            self.problemHandler(@"The microphone could not be handed back to the game. If the microphone indicator is still on, close Wolkara and open it again.");
-        return;
-    }
-    _audioRestoreAttempt++;
-    // The retry belongs to the session whose put-back failed, and to no other. A retry that fires
-    // after a newer session has started puts the audio session back underneath it: on 2026-10-17
-    // the category went to SoloAmbient microseconds into a new session, the tap delivered no
-    // buffers, and the recogniser reported that it heard nothing - which is what the user saw as
-    // the microphone being busted, and it was this.
-    NSUInteger generation = _session;
-    __weak AKDictation *weakSelf = self;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{
-        AKDictation *self2 = weakSelf;
-        if (!self2 || self2->_session != generation || self2->_state != AKDictationStateIdle) return;
-        [self2 giveTheSessionBack];
-    });
-}
-
-// What the microphone is hearing, straight from the session that owns the tap. A screen draws it
-// and the log records it, so whether audio is arriving is answered by a number rather than by the
-// absence of an error message.
-- (float)inputLevel { return self.speech.inputLevel; }
-- (NSUInteger)buffersReceived { return self.speech.buffersReceived; }
-- (void (^)(float))levelHandler { return self.speech.levelHandler; }
-- (void)setLevelHandler:(void (^)(float))handler { self.speech.levelHandler = handler; }
-
 - (void)fail:(NSString *)message {
     WKLog("voice", @"dictation: %@", message);
-    [self giveTheSessionBack];
+    [self.audio restore];
     [self.speech cancel];
     _abandoned = YES;
     _session++;

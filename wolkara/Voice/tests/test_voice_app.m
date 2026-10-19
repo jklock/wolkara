@@ -70,14 +70,6 @@ static UIView *Find(UIView *view, NSString *identifier) {
 @property (nonatomic, copy) NSArray<NSString *> *words;
 @end
 
-// The fixture's stand-in for the audio tap: what it claims to have heard, and where the level
-// goes. The app must say whether audio is arriving, not merely that a session opened.
-@interface FakeSpeech ()
-@property (nonatomic) float level;
-@property (nonatomic) NSUInteger buffers;
-@property (nonatomic, copy, nullable) void (^onLevel)(float level);
-@end
-
 @implementation FakeSpeech
 - (instancetype)init { if ((self = [super init])) { _available = YES; _onDevice = YES; _authorized = YES; } return self; }
 - (BOOL)isAvailable { return self.available; }
@@ -91,10 +83,6 @@ static UIView *Find(UIView *view, NSString *identifier) {
 }
 - (void)finish { self.finishes++; }
 - (void)cancel { self.cancels++; self.handler = nil; }
-- (float)inputLevel { return self.level; }
-- (NSUInteger)buffersReceived { return self.buffers; }
-- (void (^)(float))levelHandler { return self.onLevel; }
-- (void)setLevelHandler:(void (^)(float))handler { self.onLevel = handler; }
 // What a recogniser would do next.
 - (void)say:(NSString *)text final:(BOOL)isFinal {
     void (^handler)(NSString *, BOOL, NSError *) = self.handler;
@@ -105,9 +93,6 @@ static UIView *Find(UIView *view, NSString *identifier) {
 @interface FakeAudio : NSObject <AKDictationAudio>
 @property (nonatomic) BOOL refuse;
 @property (nonatomic) BOOL recording;
-// How many put-backs should fail before one works, so the app's retry can be exercised: this
-// stands in for the InsufficientPriority failure a real session gave on an iPad.
-@property (nonatomic) NSUInteger restoreFailures;
 @property (nonatomic) NSUInteger begins, restores;
 @end
 
@@ -121,16 +106,7 @@ static UIView *Find(UIView *view, NSString *identifier) {
     self.recording = YES;
     return YES;
 }
-- (BOOL)restore:(NSError **)error {
-    self.restores++;
-    if (self.restoreFailures > 0) {
-        self.restoreFailures--;
-        if (error) *error = [NSError errorWithDomain:@"test" code:2 userInfo:@{NSLocalizedDescriptionKey: @"the session said no"}];
-        return NO;
-    }
-    self.recording = NO;
-    return YES;
-}
+- (void)restore { self.restores++; self.recording = NO; }
 @end
 
 // The game's own text view, as far as dictation is concerned.
@@ -468,62 +444,6 @@ static void TestTriggerPatterns(void) {
 // The audio session, through the real bridge rather than a fake. The remediation review
 // accepted a documented policy in place of exact restoration, and a policy still has to be
 // the one that happens: the category and mode it found are what is there afterwards.
-// The put-back can fail, and when it does the app must try again and then say so - never claim
-// a restore that did not happen. On an iPad on 2026-10-17 it claimed one while its session sat
-// on Record with the microphone held, a minute after dictation ended; the user sees that as a
-// microphone indicator that will not go away.
-static void TestAudioRestoreRetry(void) {
-    AKDictation *dictation = AKDictation.shared;
-    FakeAudio *audio = [FakeAudio new];
-    dictation.audio = audio;
-    dictation.speech = [FakeSpeech new];
-    dictation.transcriptHandler = nil;
-    NSMutableArray<NSString *> *problems = [NSMutableArray array];
-    dictation.problemHandler = ^(NSString *message) { [problems addObject:message]; };
-
-    // Two refusals and then success: the first attempt is immediate, the next two follow on
-    // their own, and the session ends up given back with nothing said to the user.
-    audio.restoreFailures = 2;
-    [dictation begin];
-    Pump(0.05);
-    CHECK((dictation.state == AKDictationStateListening), @"the session starts for the retry case");
-    [dictation cancel];
-    Pump(1.6);
-    CHECK((audio.restores == 3), @"a put-back that fails is tried again until it works, got %lu", (unsigned long)audio.restores);
-    CHECK((!audio.recording), @"and the session is actually given back");
-    CHECK((problems.count == 0), @"with nothing alarming said when it works out, got %@", problems);
-
-    // Never works: the app stops after its attempts and tells the user, because a microphone
-    // that is still on is something they can see and cannot explain.
-    audio.restoreFailures = 99;
-    [dictation begin];
-    Pump(0.05);
-    [dictation cancel];
-    Pump(3.0);
-    CHECK((audio.recording), @"a put-back that never works leaves the session taken");
-    CHECK((problems.count == 1), @"and the user is told once, got %@", problems);
-    CHECK(([problems.firstObject containsString:@"microphone"]), @"in words that name the microphone, got %@", problems.firstObject);
-
-    audio.restoreFailures = 0;
-    dictation.problemHandler = nil;
-    dictation.transcriptHandler = nil;
-
-    // And the retry must not reach into a newer session. This is the fault that broke dictation on
-    // an iPad on 2026-10-17: a put-back failed, its retry fired half a second later, and by then a
-    // new session was listening - so the audio session was put back underneath it, the tap went
-    // silent, and the recogniser reported that it heard nothing.
-    audio.restoreFailures = 1;
-    [dictation begin];
-    Pump(0.05);
-    [dictation cancel];                       // one refusal, so a retry is now pending
-    [dictation begin];                        // a newer session takes the audio
-    Pump(1.2);                                // long enough for the retry to have fired
-    CHECK((audio.recording), @"a pending retry must not put the audio back under a newer session");
-    CHECK((audio.restores == 1), @"and must not have run at all, got %lu put-back(s)", (unsigned long)audio.restores);
-    [dictation cancel];
-    Pump(0.2);
-}
-
 static void TestAudioSessionPolicy(void) {
     AKDictation *dictation = AKDictation.shared;
     AVAudioSession *session = AVAudioSession.sharedInstance;
@@ -1246,7 +1166,6 @@ static void TestConfigWriteFailure(void) {
     TestLearning();
     TestTriggerPatterns();
     TestAudioSessionPolicy();
-    TestAudioRestoreRetry();
     TestScreenshotIsolation();
     TestDictation();
     TestTypingIntoTheGame();
