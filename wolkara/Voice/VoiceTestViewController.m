@@ -143,7 +143,8 @@
 // option is on. One utterance per line, because the box is read by eye.
 - (void)appendTranscript:(NSString *)text {
     if (!text.length) {
-        self.hint.text = @"Nothing was heard. Try again, a little closer to the iPad.";
+        double peak = AKVoiceLoudestSample();
+        self.hint.text = [NSString stringWithFormat:@"Nothing was heard (microphone peak %.5f). Try again, a little closer to the iPad.", peak];
         return;
     }
     if (AKVoiceSettings.shared.trailingSpace) text = [text stringByAppendingString:@" "];

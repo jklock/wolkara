@@ -82,7 +82,7 @@ mkdir -p "$ERRORS" "$CRASH_DIR"
 # is not a harmless delay: a self-test can then remain on its development status
 # screen and an install can strand the protected-enrollment screen. Bound every
 # device call and fail closed rather than leaving an unbounded process behind.
-PILOT_DEVICE_TIMEOUT=${PILOT_DEVICE_TIMEOUT:-8}
+PILOT_DEVICE_TIMEOUT=${PILOT_DEVICE_TIMEOUT:-30}
 PILOT_HOME_TIMEOUT=${PILOT_HOME_TIMEOUT:-20}
 xcrun() {
     if [ "${1:-}" != "devicectl" ]; then

@@ -474,6 +474,8 @@ static void TestAudioSessionCoordinator(void) {
     CHECK((coordinator.pushToTalkActive), @"and the coordinator says so");
     CHECK(([session.category isEqualToString:AVAudioSessionCategoryPlayAndRecord]),
           @"the declared policy is PlayAndRecord, got %@", session.category);
+    CHECK(([session.mode isEqualToString:AVAudioSessionModeDefault]),
+          @"dictation uses the unprocessed Default input mode, got %@", session.mode);
 
     // And the game asking for playback while it is held must not take the session away: this is the
     // fault that ended a running dictation, and the coordinator must refuse it rather than obey.
