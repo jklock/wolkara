@@ -4,6 +4,7 @@
 #import "../App/WolkaraLog.h"
 
 #import <AVFAudio/AVFAudio.h>
+#include <dlfcn.h>
 
 NSNotificationName const AKAudioPushToTalkLeaseDidChangeNotification =
     @"AKAudioSessionPushToTalkLeaseDidChange";
@@ -292,6 +293,38 @@ static char const AKAudioCoordinatorQueueKey;
 // called synchronously from whatever thread the adapter is on, and the coordinator decides: the adapter
 // never touches the session itself, so there is no flag for it to read, no notification to race, and no
 // window in which it can take the session from a running dictation. That window is what this replaced.
+// Exported and retained on purpose, and both words are load-bearing.
+//
+// CoreAudio finds this with dlsym(RTLD_DEFAULT, ...), and dlsym sees nothing the linker has stripped.
+// The first version of this hook was dead-stripped out of the shipped app: every test passed, because
+// they call the function directly, which keeps it alive in the test binary and nowhere else - and the
+// adapter's lookup returned NULL at runtime, so the game never got its lease. `used` stops the linker
+// removing it, the default visibility keeps it findable, and a build-artifact test in the gate asserts
+// the symbol is in the app rather than in a test.
+__attribute__((used, visibility("default")))
 BOOL TKWolkaraRequestGamePlayback(void) {
     return [[AKAudioSessionCoordinator shared] requestGamePlayback:@"the CoreAudio adapter asked"];
+}
+
+// A reference the linker cannot argue with, and a line in the log that says whether the adapter will be
+// able to find the hook at all.
+//
+// `used` stops the compiler removing the function; nothing stops the linker removing a global that
+// nothing references, and dlsym needs it in the image. Taking its address here is a real reference, so
+// the symbol is kept and exported - and the log line means the launch says out loud whether the name
+// resolves, rather than a missing feature being discovered weeks later. The version before this was dead
+// stripped out of the shipped app while every test passed, because the tests call the function directly.
+__attribute__((constructor))
+static void AKPublishTheHostPlaybackHook(void) {
+    // A real reference the linker cannot argue with: nothing else in the app calls this, and a global
+    // nothing references is exactly what gets stripped.
+    void *hook = (void *)&TKWolkaraRequestGamePlayback;
+    // Logged a moment later, not here: constructors run before main, which is where the log file is set
+    // up, so a line written now goes nowhere. One second in is after logging works and before anyone can
+    // press a button, and it is the same dlsym call the adapter makes.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        void *found = dlsym(RTLD_DEFAULT, "TKWolkaraRequestGamePlayback");
+        WKLog("audio", @"the playback hook is at %p and %@ by name", hook,
+              found ? @"reachable" : @"NOT reachable - the adapter cannot ask for playback");
+    });
 }
