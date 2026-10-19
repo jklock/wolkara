@@ -92,6 +92,7 @@ static UIView *Find(UIView *view, NSString *identifier) {
 
 @interface FakeAudio : NSObject <AKDictationAudio>
 @property (nonatomic) BOOL refuse;
+@property (nonatomic) BOOL refuseRestore;
 @property (nonatomic) BOOL recording;
 @property (nonatomic) NSUInteger begins, restores;
 @end
@@ -106,7 +107,15 @@ static UIView *Find(UIView *view, NSString *identifier) {
     self.recording = YES;
     return YES;
 }
-- (void)restore { self.restores++; self.recording = NO; }
+- (BOOL)restore:(NSError **)error {
+    self.restores++;
+    if (self.refuseRestore) {
+        if (error) *error = [NSError errorWithDomain:@"test" code:2 userInfo:@{NSLocalizedDescriptionKey: @"the session said no"}];
+        return NO;
+    }
+    self.recording = NO;
+    return YES;
+}
 @end
 
 // The game's own text view, as far as dictation is concerned.
@@ -444,6 +453,99 @@ static void TestTriggerPatterns(void) {
 // The audio session, through the real bridge rather than a fake. The remediation review
 // accepted a documented policy in place of exact restoration, and a policy still has to be
 // the one that happens: the category and mode it found are what is there afterwards.
+#import "AudioSessionCoordinator.h"
+
+// The audio session coordinator: the declared states, and that they are the ones that happen.
+//
+// This is the review outcome's Phase 1 test list, as far as a simulator can carry it: the session
+// here is real, so the category and the activation are real. What cannot be forced in a simulator -
+// an activation that fails - is covered at the dictation level instead, through a fake that refuses.
+static void TestAudioSessionCoordinator(void) {
+    AKAudioSessionCoordinator *coordinator = AKAudioSessionCoordinator.shared;
+    AVAudioSession *session = AVAudioSession.sharedInstance;
+
+    // Nothing is claimed at the start, and push to talk is not active.
+    CHECK((!coordinator.pushToTalkActive), @"push to talk is not active before anything asks");
+
+    // Taking the session for push to talk: the declared policy is PlayAndRecord, so that the game's
+    // audio stays audible while the user speaks. Record would silence it.
+    NSError *error = nil;
+    CHECK(([coordinator beginPushToTalk:&error]), @"push to talk takes the session: %@", error.localizedDescription);
+    CHECK((coordinator.pushToTalkActive), @"and the coordinator says so");
+    CHECK(([session.category isEqualToString:AVAudioSessionCategoryPlayAndRecord]),
+          @"the declared policy is PlayAndRecord, got %@", session.category);
+
+    // And the game asking for playback while it is held must not take the session away: this is the
+    // fault that ended a running dictation, and the coordinator must refuse it rather than obey.
+    CHECK(([coordinator requestGamePlayback:@"the guest asked"]), @"the game's request is answered");
+    CHECK(([session.category isEqualToString:AVAudioSessionCategoryPlayAndRecord]),
+          @"but not by taking the session from push to talk, got %@", session.category);
+
+    // Handing it back with a game lease held restores the declared game policy - Playback - rather
+    // than a guessed prior state.
+    CHECK(([coordinator endPushToTalk:&error]), @"push to talk hands the session back: %@", error.localizedDescription);
+    CHECK((!coordinator.pushToTalkActive), @"and is no longer active");
+    CHECK(([session.category isEqualToString:AVAudioSessionCategoryPlayback]),
+          @"with the game's declared policy restored, got %@", session.category);
+
+    // Handing it back again changes nothing and is not an error: a cancel after a cancel is ordinary.
+    CHECK(([coordinator endPushToTalk:&error]), @"a second hand-back is not a failure");
+    CHECK(([session.category isEqualToString:AVAudioSessionCategoryPlayback]),
+          @"and changes nothing, got %@", session.category);
+
+    // With no game lease, the session is released rather than left active: NotifyOthersOnDeactivation
+    // is what lets whatever the game interrupted resume.
+    [coordinator releaseGamePlayback];
+    CHECK(([coordinator beginPushToTalk:&error]), @"push to talk takes it again: %@", error.localizedDescription);
+    CHECK(([coordinator endPushToTalk:&error]), @"and hands it back with no game lease");
+    CHECK((!session.isOtherAudioPlaying), @"the session is not left claiming to play audio");
+
+    // When the system takes the session away, the lease goes and the owner of dictation is told. The
+    // notification is the system's own, so this is the same path an interruption takes.
+    __block NSString *takenWhy = nil;
+    coordinator.pushToTalkWasTaken = ^(NSString *why) { takenWhy = why; };
+    CHECK(([coordinator beginPushToTalk:&error]), @"push to talk takes it for the interruption case");
+    [NSNotificationCenter.defaultCenter postNotificationName:AVAudioSessionInterruptionNotification
+                                                     object:nil
+                                                   userInfo:@{AVAudioSessionInterruptionTypeKey: @(AVAudioSessionInterruptionTypeBegan)}];
+    Pump(0.2);
+    CHECK((!coordinator.pushToTalkActive), @"an interruption ends the lease");
+    CHECK((takenWhy != nil), @"and the owner of dictation is told why");
+    coordinator.pushToTalkWasTaken = nil;
+
+    // A media services reset is the same: the lease cannot survive it.
+    CHECK(([coordinator beginPushToTalk:&error]), @"push to talk takes it for the reset case");
+    [NSNotificationCenter.defaultCenter postNotificationName:AVAudioSessionMediaServicesWereResetNotification
+                                                     object:nil userInfo:nil];
+    Pump(0.2);
+    CHECK((!coordinator.pushToTalkActive), @"a media services reset ends the lease");
+
+    // Leave the session as the other tests expect to find it.
+    [coordinator releaseGamePlayback];
+}
+
+// A put-back that fails is reported to the user, once, and not retried. The retry this replaces is
+// what could fire after the next dictation had begun and take the session away from it.
+static void TestAFailedPutBackIsReported(void) {
+    AKDictation *dictation = AKDictation.shared;
+    FakeAudio *audio = [FakeAudio new];
+    dictation.audio = audio;
+    dictation.speech = [FakeSpeech new];
+    NSMutableArray<NSString *> *problems = [NSMutableArray array];
+    dictation.problemHandler = ^(NSString *message) { [problems addObject:message]; };
+    audio.refuseRestore = YES;
+    [dictation begin];
+    Pump(0.05);
+    [dictation cancel];
+    Pump(1.5);
+    CHECK((audio.restores == 1), @"a failed put-back is attempted once, got %lu", (unsigned long)audio.restores);
+    CHECK((problems.count == 1), @"and reported once, got %@", problems);
+    CHECK(([problems.firstObject containsString:@"microphone"]), @"in words that name the microphone");
+    audio.refuseRestore = NO;
+    dictation.problemHandler = nil;
+    dictation.transcriptHandler = nil;
+}
+
 static void TestAudioSessionPolicy(void) {
     AKDictation *dictation = AKDictation.shared;
     AVAudioSession *session = AVAudioSession.sharedInstance;
@@ -463,15 +565,17 @@ static void TestAudioSessionPolicy(void) {
 
     [dictation begin];
     CHECK((dictation.state == AKDictationStateListening), @"the real bridge starts a session");
-    CHECK(([session.category isEqualToString:AVAudioSessionCategoryRecord]),
-          @"and takes the session for recording, got %@", session.category);
+    CHECK(([session.category isEqualToString:AVAudioSessionCategoryPlayAndRecord]),
+          @"and takes the session without silencing the game, got %@", session.category);
 
     [dictation end];
     [speech say:@"done" final:YES];
-    CHECK(([session.category isEqualToString:AVAudioSessionCategoryPlayback]),
-          @"and puts the category it found back, got %@", session.category);
-    CHECK(([session.mode isEqualToString:AVAudioSessionModeMoviePlayback]),
-          @"and the mode, got %@", session.mode);
+    // Handing it back is a declared state, not a replay of what was found: with no game lease held,
+    // the coordinator releases the session with NotifyOthersOnDeactivation and says so. The old
+    // code put back a category it had saved, which is the design the review outcome replaces.
+    CHECK((!AKAudioSessionCoordinator.shared.pushToTalkActive), @"and the lease is handed back");
+    CHECK((![session.category isEqualToString:AVAudioSessionCategoryRecord]),
+          @"and the microphone is no longer held, got %@", session.category);
 
     [AKDictation setGameTextTarget:nil];
     [dictation cancel];
@@ -632,14 +736,21 @@ static void TestDictation(void) {
 
     // Something else taking the audio ends the session rather than leaving the microphone
     // open behind a session we no longer own.
+    // An interruption ends the session, and it does so through the coordinator, which owns the
+    // session: dictation no longer observes the audio session itself. The real bridge is used here
+    // because the lease the coordinator ends is the one the bridge takes.
     [heard removeAllObjects];
+    id<AKDictationAudio> seamThatWasThere = dictation.audio;
+    dictation.audio = nil;      // the real bridge, so the coordinator holds the lease
     [dictation begin];
     [speech say:@"interrupted" final:NO];
     [NSNotificationCenter.defaultCenter postNotificationName:AVAudioSessionInterruptionNotification
                                                       object:nil
                                                     userInfo:@{AVAudioSessionInterruptionTypeKey: @(AVAudioSessionInterruptionTypeBegan)}];
+    Pump(0.3);
     CHECK((dictation.state == AKDictationStateIdle), @"an interruption ends the session");
     CHECK((heard.count == 0), @"and delivers nothing");
+    dictation.audio = seamThatWasThere;
 
     // Repeated triggers while it is already listening are the same press.
     [heard removeAllObjects];
@@ -1165,7 +1276,9 @@ static void TestConfigWriteFailure(void) {
     TestSettings();
     TestLearning();
     TestTriggerPatterns();
+    TestAudioSessionCoordinator();
     TestAudioSessionPolicy();
+    TestAFailedPutBackIsReported();
     TestScreenshotIsolation();
     TestDictation();
     TestTypingIntoTheGame();

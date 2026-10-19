@@ -58,8 +58,11 @@ typedef NS_ENUM(NSInteger, AKDictationState) {
 @protocol AKDictationAudio <NSObject>
 /// Take the session for recording, remembering how to put it back.
 - (BOOL)beginRecording:(NSError **)error;
-/// Put back the category, mode, options and active state that were there before.
-- (void)restore;
+/// Hand the session back. The coordinator puts it where the declared policy says it should be - the
+/// game's playback if a game lease is held, released with NotifyOthersOnDeactivation otherwise - and
+/// answers whether that happened. A refusal is reported to the user, not retried: an unbounded retry
+/// from a failed put-back is what could land in the middle of the next dictation.
+- (BOOL)restore:(NSError **)error;
 @end
 
 #pragma mark - Dictation
