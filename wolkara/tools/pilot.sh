@@ -515,23 +515,6 @@ cmd_launch() {
         plainOutput=$(xcrun devicectl device process launch --device "$DEVICE" "$BUNDLE" 2>&1) || launch_failed "$plainOutput"
     fi
     say "launched"
-    [ "$game" = "--game" ] || await_plain_launcher_process
-}
-
-# A plain launch has no development arguments, and main.m installs the Wolkara
-# home controller on that path. CoreDevice's container-file query can hang even
-# while process launch and Device Hub are healthy, so do not turn that separate
-# transport fault into a false failed launch after the app is already usable.
-await_plain_launcher_process() {
-    local deadline=$((SECONDS + PILOT_HOME_TIMEOUT))
-    while [ "$SECONDS" -lt "$deadline" ]; do
-        if [ -n "$(app_pid)" ]; then
-            say "the normal launcher is up"
-            return 0
-        fi
-        sleep 1
-    done
-    die "the plain launcher did not remain running after launch."
 }
 
 # Block until the answer is known, rather than guessing at a fixed wait. What counts as
