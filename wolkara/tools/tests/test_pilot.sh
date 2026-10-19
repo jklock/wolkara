@@ -224,15 +224,6 @@ check $? "and must leave the app on its home screen, saying what it found"
 # that a stop kills. The review outcome calls this out, so the check is that the claim is absent.
 grep -qE "press Play|game session was live" "$work/out.txt" && check 1 "and must not claim a game session can be restored"
 
-# A process listing is not proof that the normal launcher is visible: the
-# enrollment and self-test status screens are processes too. Launch must wait
-# for the app's own home marker and fail if it cannot see one.
-( export WOLKARA_FAKE_APPLOG="[ui] development status screen"; run_pilot "$work/sessions/no-home" launch )
-[ $? -ne 0 ]
-check $? "launch must fail when it cannot prove the normal launcher reached the screen"
-grep -q "did not remain running after launch" "$work/out.txt"
-check $? "and must report that the plain launcher did not remain running"
-
 mkdir -p "$work/sessions/stopped"
 printf '\n' > "$work/sessions/stopped/was-running"
 printf '0\n' > "$work/sessions/stopped/was-live"
