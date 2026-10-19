@@ -359,7 +359,25 @@ cmd_install() {
     step "building and installing"
     # No --replace-running: this script has already stopped what was running, so
     # anything running now started in between and must not be killed for us.
-    "$root/wolkara/tools/install.sh" || die "install failed"
+    #
+    # The enrolment at the end of install.sh launches the app to do its protected import and then
+    # asks devicectl for the process it just started. The app finishes the import and exits by design,
+    # so that lookup races with the exit and can report "the process identifier of the launched
+    # application could not be determined" - with the app installed and healthy, which the app's own
+    # log shows. Retried once, and only for that message: anything else is a real failure and is
+    # reported with its output rather than as a bare exit code.
+    if ! "$root/wolkara/tools/install.sh" > "$SESSION/install.log" 2>&1; then
+        if grep -q "process identifier of the launched application could not be determined" "$SESSION/install.log"; then
+            say "the enrolment's process lookup raced the app's own exit; installing once more"
+            "$root/wolkara/tools/install.sh" > "$SESSION/install.log" 2>&1 || {
+                tail -20 "$SESSION/install.log"
+                die "install failed twice, and not on the race the first time"
+            }
+        else
+            tail -20 "$SESSION/install.log"
+            die "install failed; the last lines of the install are above"
+        fi
+    fi
     # install.sh ends by enrolling, and enrolling starts the app so that it can do the
     # protected import - so the moment it returns, something is running again. Left
     # alone that is the app the user ends up watching, and 'launch' refuses because
@@ -422,6 +440,21 @@ record_baseline() {
     printf '%s\n' "$(state_value guest_starts)" > "$STARTS_BASELINE"
 }
 
+# Why a launch failed, in the words that matter. "Locked" is devicectl's own spelling and the one
+# worth translating: an operation against a locked iPad cannot work at all, and every measurement
+# taken afterwards is meaningless. The review outcome's Phase 4 asks for this by name, because a
+# whole evening of microphone measurements was taken on a device that could not have delivered audio.
+launch_failed() {
+    case "$1" in
+    *[Ll]ocked*)
+        die "the iPad is locked. Unlock it and run this again: a locked iPad cannot be launched
+       into, and nothing measured while it is locked is worth anything." ;;
+    *)
+        die "the launch failed:
+$(printf '%s\n' "$1" | sed 's/^/       /')" ;;
+    esac
+}
+
 cmd_launch() {
     local game=${1:-}
     # Never --terminate-existing: that is how a live session is killed from under
@@ -443,12 +476,13 @@ cmd_launch() {
     if [ "$game" = "--game" ]; then
         printf 'game\n' > "$LAUNCH_MODE"
         say "straight into the game: the launcher's own checks and repair are skipped"
-        xcrun devicectl device process launch --device "$DEVICE" "$BUNDLE" \
-            --local-game-startup >/dev/null 2>&1 || die "launch failed"
+        local gameOutput
+        gameOutput=$(xcrun devicectl device process launch --device "$DEVICE" "$BUNDLE" \
+            --local-game-startup 2>&1) || launch_failed "$gameOutput"
     else
         printf 'launcher\n' > "$LAUNCH_MODE"
-        xcrun devicectl device process launch --device "$DEVICE" "$BUNDLE" \
-            >/dev/null 2>&1 || die "launch failed"
+        local plainOutput
+        plainOutput=$(xcrun devicectl device process launch --device "$DEVICE" "$BUNDLE" 2>&1) || launch_failed "$plainOutput"
     fi
     say "launched"
 }

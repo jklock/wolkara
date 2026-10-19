@@ -45,12 +45,16 @@ NSNotificationName const AKAudioPushToTalkLeaseDidChangeNotification =
 
 #pragma mark - What the session is doing
 
+// What the session is doing, for a log line or a screen. The review outcome's Phase 2 asks for the
+// route, the sample rate, the channel count and whether input is available - the actual current
+// route, not the preferred one, because Apple's API distinguishes them and a preference is not
+// proof of anything.
 - (NSString *)describeSession {
     AVAudioSession *session = AVAudioSession.sharedInstance;
     NSString *route = session.currentRoute.inputs.firstObject.portType ?: @"no input";
-    return [NSString stringWithFormat:@"%@/%@ %@ %.0fHz in=%d",
+    return [NSString stringWithFormat:@"%@/%@ %@ %.0fHz %luch in=%d",
             session.category, session.mode, route, session.sampleRate,
-            (int)session.isInputAvailable];
+            (unsigned long)session.inputNumberOfChannels, (int)session.isInputAvailable];
 }
 
 // One line per transition, always the same shape, so that a session's whole history can be read
