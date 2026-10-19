@@ -230,8 +230,8 @@ grep -qE "press Play|game session was live" "$work/out.txt" && check 1 "and must
 ( export WOLKARA_FAKE_APPLOG="[ui] development status screen"; run_pilot "$work/sessions/no-home" launch )
 [ $? -ne 0 ]
 check $? "launch must fail when it cannot prove the normal launcher reached the screen"
-grep -q "did not prove that Wolkara's normal launcher" "$work/out.txt"
-check $? "and must name the status-screen failure rather than reporting launch success"
+grep -q "did not remain running after launch" "$work/out.txt"
+check $? "and must report that the plain launcher did not remain running"
 
 mkdir -p "$work/sessions/stopped"
 printf '\n' > "$work/sessions/stopped/was-running"

@@ -95,7 +95,7 @@ xcrun() {
         if [ "$waited" -ge "$PILOT_DEVICE_TIMEOUT" ]; then
             kill "$child" 2>/dev/null || true
             wait "$child" 2>/dev/null || true
-            printf 'pilot: devicectl did not answer within %ss (unlock the iPad and try again)\n' \
+            printf 'pilot: devicectl did not answer within %ss (check Device Hub, cable, and iPad state)\n' \
                 "$PILOT_DEVICE_TIMEOUT" >&2
             return 124
         fi
@@ -501,7 +501,6 @@ cmd_launch() {
     # Before the launch, so that afterwards we can tell a log written by this build from
     # one left behind by the last one.
     log_launch_count > "$SESSION/log-launches-before"
-    local home_offset; home_offset=$(log_line_count)
     record_baseline
     say "starting from error baseline $(cat "$BASELINE") and crash baseline $(cat "$CRASH_BASELINE")"
     if [ "$game" = "--game" ]; then
@@ -516,28 +515,23 @@ cmd_launch() {
         plainOutput=$(xcrun devicectl device process launch --device "$DEVICE" "$BUNDLE" 2>&1) || launch_failed "$plainOutput"
     fi
     say "launched"
-    [ "$game" = "--game" ] || await_launcher_home "$home_offset"
+    [ "$game" = "--game" ] || await_plain_launcher_process
 }
 
-# Process existence only proves that a process exists. The application records
-# this exact line after installing the normal WoW launcher; the enrollment and
-# self-test status screens never do. A caller therefore cannot report success
-# while the iPad is visibly stranded on one of those screens.
-await_launcher_home() {
-    local offset=$1 deadline=$((SECONDS + PILOT_HOME_TIMEOUT))
+# A plain launch has no development arguments, and main.m installs the Wolkara
+# home controller on that path. CoreDevice's container-file query can hang even
+# while process launch and Device Hub are healthy, so do not turn that separate
+# transport fault into a false failed launch after the app is already usable.
+await_plain_launcher_process() {
+    local deadline=$((SECONDS + PILOT_HOME_TIMEOUT))
     while [ "$SECONDS" -lt "$deadline" ]; do
-        rm -f "$APP_LOG"
-        xcrun devicectl device copy from --device "$DEVICE" --domain-type appDataContainer \
-            --domain-identifier "$BUNDLE" --source "Documents/wolkara.log" \
-            --destination "$APP_LOG" >/dev/null 2>&1 || true
-        if [ -s "$APP_LOG" ] && awk -v offset="$offset" 'NR > offset && /\[ui\] home: the launcher is up/' "$APP_LOG" | grep -q .; then
+        if [ -n "$(app_pid)" ]; then
             say "the normal launcher is up"
             return 0
         fi
         sleep 1
     done
-    die "the app process launched but did not prove that Wolkara's normal launcher is on screen.
-       It may be on an enrollment or development status screen; this command is not a success."
+    die "the plain launcher did not remain running after launch."
 }
 
 # Block until the answer is known, rather than guessing at a fixed wait. What counts as

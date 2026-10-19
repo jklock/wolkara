@@ -16,7 +16,7 @@ while kill -0 "$child" 2>/dev/null; do
     if [ "$waited" -ge "$limit" ]; then
         kill "$child" 2>/dev/null || true
         wait "$child" 2>/dev/null || true
-        echo "install: devicectl did not answer within ${limit}s (unlock the iPad and retry)" >&2
+        echo "install: devicectl did not answer within ${limit}s (check Device Hub, cable, and iPad state)" >&2
         exit 124
     fi
     sleep 1

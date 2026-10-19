@@ -57,38 +57,6 @@ app_pid() {
         grep -E "Tolkara\.app/Tolkara([[:space:]]|$)" | grep -v "\.appex" | awk 'NR==1 { print $1 }'
 }
 
-# The app itself records this only after the ordinary WoW launcher is installed
-# as the root view controller. A running process is weaker evidence: enrollment
-# and self-test launches are running processes too, but leave a status screen.
-launcher_log_lines() {
-    local log
-    log=$(mktemp -t wolkara-launcher-log)
-    if ! xcrun devicectl device copy from --device "$DEVICE" --domain-type appDataContainer \
-        --domain-identifier "$bundle" --source "Documents/wolkara.log" --destination "$log" >/dev/null 2>&1; then
-        rm -f "$log"
-        return 1
-    fi
-    wc -l < "$log" | tr -d ' '
-    rm -f "$log"
-}
-
-launcher_home_after() {
-    local offset=$1 log deadline=$((SECONDS + 20))
-    log=$(mktemp -t wolkara-launcher-log)
-    while [ "$SECONDS" -lt "$deadline" ]; do
-        rm -f "$log"
-        if xcrun devicectl device copy from --device "$DEVICE" --domain-type appDataContainer \
-            --domain-identifier "$bundle" --source "Documents/wolkara.log" --destination "$log" >/dev/null 2>&1 &&
-            [ -s "$log" ] && awk -v offset="$offset" 'NR > offset && /\[ui\] home: the launcher is up/' "$log" | grep -q .; then
-            rm -f "$log"
-            return 0
-        fi
-        sleep 1
-    done
-    rm -f "$log"
-    return 1
-}
-
 if [ "$build_only" = 1 ]; then
     step "0/$total guard: skipped (build only - the device is not involved)"
 else
@@ -226,18 +194,12 @@ step "5/5 return the normal launcher"
 # launch replaces only that temporary process: the live-game guard ran before
 # the install, and a failure here is reported as a failed install rather than a
 # misleading successful install with a broken-looking iPad.
-home_before=$(launcher_log_lines || echo 0)
 if ! xcrun devicectl device process launch --terminate-existing --device "$DEVICE" "$bundle"; then
     echo "install: the app was installed but could not be returned to its normal launcher." >&2
     echo "         Unlock the iPad, then run: wolkara/tools/pilot.sh launch" >&2
     exit 1
 fi
-if ! launcher_home_after "$home_before"; then
-    echo "install: the app process started but did not prove that the normal launcher is on screen." >&2
-    echo "         It may still be on an enrollment status screen; unlock the iPad and run: wolkara/tools/pilot.sh launch" >&2
-    exit 1
-fi
-echo "   normal launcher confirmed"
+echo "   plain Wolkara launcher launched"
 
 step "5/5 done"
 cat <<NEXT
