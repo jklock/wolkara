@@ -499,6 +499,10 @@ static void TestAudioSessionCoordinator(void) {
     CHECK(([coordinator beginPushToTalk:&error]), @"push to talk takes it again: %@", error.localizedDescription);
     CHECK(([coordinator endPushToTalk:&error]), @"and hands it back with no game lease");
     CHECK((!session.isOtherAudioPlaying), @"the session is not left claiming to play audio");
+    // The exact check the device self-test makes and this code failed: releasing the session while
+    // leaving the category on PlayAndRecord is inactive but still categorised as recording.
+    CHECK(([session.category isEqualToString:AVAudioSessionCategorySoloAmbient]),
+          @"and the launcher's declared policy is restored, not a recording category, got %@", session.category);
 
     // When the system takes the session away, the lease goes and the owner of dictation is told. The
     // notification is the system's own, so this is the same path an interruption takes.
