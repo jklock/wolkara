@@ -255,8 +255,19 @@ app_pid() {
 # replaced.
 require_safe_to_install() {
     local force=${1:-}
-    [ "$force" = "--force" ] && return 0
     refresh_state
+    # A live game session is never ours to take away, and --force does not override this. Stopping,
+    # installing over or relaunching a running game does not restore it afterwards - nothing can, it
+    # is memory in the process that is being killed - so the device is left completely alone until
+    # its user closes the game. This is the first of the review outcome's operating rules and it is
+    # checked before anything else, including before the inspection guard, because the answer to
+    # "may I touch this" is already no when somebody is playing.
+    if [ "$(state_value session_live)" = "1" ]; then
+        die "a game session is live on the iPad right now.
+       Nothing here can put a running game back, so nothing here will touch it: close the game
+       yourself, then run this again. --force does not override this."
+    fi
+    [ "$force" = "--force" ] && return 0
     # Fail closed. A device that cannot be inspected might be mid-update, and the whole
     # point of this guard is that guessing wrong there damages the client's store.
     if [ "$(state_value inspection_ok)" != "1" ]; then
@@ -394,12 +405,14 @@ cmd_restore() {
         say "nothing was running when this session started, so it is left stopped."
         return 0
     fi
-    if [ "$(cat "$SESSION/was-live" 2>/dev/null)" = "1" ]; then
-        say "a game session was live when this started. The app is started again on its home"
-        say "screen, which is where an operation has to leave it; press Play to go back in."
-    else
-        say "the app was running when this started: starting it again, on its home screen"
-    fi
+    # The launcher, and only the launcher.
+    #
+    # A live game session is refused before anything is stopped - see require_safe_to_install - so
+    # there is never a game to put back. An earlier version of this said the app would be started
+    # again and the game resumed by pressing Play, which implied something this cannot do: the game's
+    # state is memory in the process that would have been killed. The review outcome calls that out
+    # and this says only what happens.
+    say "the app was running when this started: starting it again, on its home screen"
     cmd_launch
 }
 
