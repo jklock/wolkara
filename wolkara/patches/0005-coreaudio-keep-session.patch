@@ -8,19 +8,27 @@
 # Upstream: candidate (not submitted).
 #
 diff --git a/translation/CoreAudio/Hardware.m b/translation/CoreAudio/Hardware.m
-index 10de4b4..674a144 100644
+diff --git a/translation/CoreAudio/Hardware.m b/translation/CoreAudio/Hardware.m
+index 10de4b4..eba594f 100644
 --- a/translation/CoreAudio/Hardware.m
 +++ b/translation/CoreAudio/Hardware.m
-@@ -6,7 +6,37 @@
+@@ -6,7 +6,47 @@
  typedef UInt32 AudioDeviceID;
  typedef OSStatus (*HardwareListener)(UInt32,void *);
  static _Atomic(UInt32) defaultOutputDevice;
++// Push to talk takes the session for recording, and while it holds it nothing here may force
++// playback: doing that is what ended a running dictation mid-sentence. The app's coordinator posts
++// this by name - the same arrangement as the touch adapter's notification, because this file lives
++// in translation/ and cannot include the app's headers - and this adapter obeys it.
++static _Atomic(BOOL) pushToTalkHoldsTheSession;
++static NSString *const pushToTalkLeaseNotification=@"AKAudioSessionPushToTalkLeaseDidChange";
 +// The app declares the audio background mode, and iPadOS only honours it while
 +// the audio session is active: that is what keeps a running game alive (and its
 +// connection up) when the user switches to another app. Nothing here deactivates
 +// the session, so it stays active across the switch; these observers put it back
 +// only when something else took it away.
 +static void keepSession(void) {
++    if(pushToTalkHoldsTheSession) return;
 +    AVAudioSession *session=AVAudioSession.sharedInstance;NSError *error=nil;
 +    if(![session.category isEqualToString:AVAudioSessionCategoryPlayback] && ![session setCategory:AVAudioSessionCategoryPlayback error:&error]) {
 +        AKLog(@"audio session category failed: %@",error.localizedDescription);return;
@@ -41,6 +49,9 @@ index 10de4b4..674a144 100644
 +        }];
 +        [center addObserverForName:AVAudioSessionMediaServicesWereResetNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
 +            (void)note; keepSession();
++        }];
++        [center addObserverForName:pushToTalkLeaseNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
++            pushToTalkHoldsTheSession=[note.userInfo[@"active"] boolValue];
 +        }];
 +    });
 +}

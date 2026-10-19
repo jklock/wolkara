@@ -98,6 +98,8 @@ wolkara/Controller/ControllerWindow.h launcher/Controller/ControllerWindow.h add
 wolkara/Controller/ControllerWindow.m launcher/Controller/ControllerWindow.m add
 #
 # Voice: what you say, turned into text in the game, and its tests
+wolkara/Voice/AudioSessionCoordinator.h launcher/Voice/AudioSessionCoordinator.h add
+wolkara/Voice/AudioSessionCoordinator.m launcher/Voice/AudioSessionCoordinator.m add
 wolkara/Voice/Dictation.h launcher/Voice/Dictation.h add
 wolkara/Voice/Dictation.m launcher/Voice/Dictation.m add
 wolkara/Voice/VoiceSettings.h launcher/Voice/VoiceSettings.h add

@@ -164,6 +164,30 @@ else
     ok "the root carries no platform path"
 fi
 
+# A new layer file that has not been added to git never reaches the prepared tree: the overlay map is
+# generated from git's tracked files, so the file is not in the map, and the build then fails with a
+# missing header rather than with the real problem. This happened while the audio session coordinator
+# was added, and the check above could not catch it because the map and the check ignored the same
+# file. The review outcome's Phase 4 asks for the tooling to fail on its own mistakes.
+untracked=$(git ls-files --others --exclude-standard wolkara | head -5)
+if [ -z "$untracked" ]; then
+    ok "every layer file is tracked, so the overlay map sees all of them"
+else
+    bad "untracked files under wolkara/ will not reach the build (git add them first):"
+    printf '     %s\n' $untracked
+fi
+
+# One owner of the audio session. The review outcome's Phase 1: everything else asks the coordinator.
+# A second caller of these is how the session ended up somewhere nobody asked for - dictation taking
+# it for recording while the CoreAudio adapter forced playback underneath.
+mutators=$(git grep -l -e 'setCategory:' -e 'setActive:' -e 'setPreferredInput:' -- wolkara 2>/dev/null | grep -E '\.(m|h)$' | grep -v "AudioSessionCoordinator" | grep -v "/tests/" | head -5)
+if [ -z "$mutators" ]; then
+    ok "the audio session has one owner"
+else
+    bad "only Voice/AudioSessionCoordinator may mutate the audio session:"
+    printf '     %s\n' $mutators
+fi
+
 if [ "$fail" -eq 0 ]; then
     echo "check_layers: OK"
 else
