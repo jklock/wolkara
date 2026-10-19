@@ -8,6 +8,13 @@
 NSNotificationName const AKAudioPushToTalkLeaseDidChangeNotification =
     @"AKAudioSessionPushToTalkLeaseDidChange";
 
+// A key that says "this thread is already inside a transition". It exists because the coordinator's own
+// work calls the platform's session code, which asks the adapter for the output name, which asks the
+// coordinator for the game's lease again - and dispatch_sync on a serial queue from inside that queue is
+// a deadlock. That deadlock hung the app so that SIGTERM never landed, and the install timed out waiting
+// for it to stop. Re-entry runs inline; everything else is serialised as before.
+static char const AKAudioCoordinatorQueueKey;
+
 @implementation AKAudioSessionCoordinator {
     // One transition at a time. The session's own API is asynchronous underneath, and two
     // transitions interleaving is exactly how a session ends up somewhere nobody asked for.
@@ -33,10 +40,17 @@ NSNotificationName const AKAudioPushToTalkLeaseDidChangeNotification =
 - (instancetype)init {
     if ((self = [super init])) {
         _transitions = dispatch_queue_create("wolkara.audio.session", DISPATCH_QUEUE_SERIAL);
+        dispatch_queue_set_specific(_transitions, &AKAudioCoordinatorQueueKey, (void *)&AKAudioCoordinatorQueueKey, NULL);
         _lease = AKAudioLeaseNone;
         _lastTransition = @"none yet";
     }
     return self;
+}
+
+// On the queue, or inline if this thread is already on it. See AKAudioCoordinatorQueueKey.
+- (void)onTheQueue:(void (^)(void))work {
+    if (dispatch_get_specific(&AKAudioCoordinatorQueueKey)) { work(); return; }
+    dispatch_sync(_transitions, work);
 }
 
 - (AKAudioLease)lease { return _lease; }
@@ -72,7 +86,7 @@ NSNotificationName const AKAudioPushToTalkLeaseDidChangeNotification =
 // the case, because setting the category is what interrupts other apps.
 - (BOOL)requestGamePlayback:(NSString *)why {
     __block BOOL ok = NO;
-    dispatch_sync(_transitions, ^{
+    [self onTheQueue:^{
         NSString *from = [self nameForLease:_lease];
         if (_lease == AKAudioLeasePushToTalk) {
             // Push to talk owns the session right now. The wish is recorded and honoured when the
@@ -88,12 +102,12 @@ NSNotificationName const AKAudioPushToTalkLeaseDidChangeNotification =
         _lease = AKAudioLeaseGame;
         ok = [self applyPlaybackForGame];
         [self logTransitionFrom:from to:@"game" result:ok error:nil];
-    });
+    }];
     return ok;
 }
 
 - (void)releaseGamePlayback {
-    dispatch_sync(_transitions, ^{
+    [self onTheQueue:^{
         _gameWantsPlayback = NO;
         if (_lease != AKAudioLeaseGame) return;
         NSString *from = [self nameForLease:_lease];
@@ -101,13 +115,13 @@ NSNotificationName const AKAudioPushToTalkLeaseDidChangeNotification =
         NSError *error = nil;
         BOOL ok = [self releaseSession:&error];
         [self logTransitionFrom:from to:@"idle" result:ok error:error];
-    });
+    }];
 }
 
 - (BOOL)beginPushToTalk:(NSError **)error {
     __block BOOL ok = NO;
     __block NSError *failure = nil;
-    dispatch_sync(_transitions, ^{
+    [self onTheQueue:^{
         NSString *from = [self nameForLease:_lease];
         AVAudioSession *session = AVAudioSession.sharedInstance;
         // PlayAndRecord, not Record: the game's audio has to stay audible while the user talks, and
@@ -137,7 +151,7 @@ NSNotificationName const AKAudioPushToTalkLeaseDidChangeNotification =
         [self startObserving];
         ok = YES;
         [self logTransitionFrom:from to:@"push-to-talk" result:YES error:nil];
-    });
+    }];
     if (!ok && error) *error = failure;
     if (ok) {
         [NSNotificationCenter.defaultCenter
@@ -150,7 +164,7 @@ NSNotificationName const AKAudioPushToTalkLeaseDidChangeNotification =
 - (BOOL)endPushToTalk:(NSError **)error {
     __block BOOL ok = NO;
     __block NSError *failure = nil;
-    dispatch_sync(_transitions, ^{
+    [self onTheQueue:^{
         if (!_pushToTalk) { ok = YES; return; }   // nothing to hand back, and no state claimed
         NSString *from = @"push-to-talk";
         _pushToTalk = NO;
@@ -167,7 +181,7 @@ NSNotificationName const AKAudioPushToTalkLeaseDidChangeNotification =
             ok = [self releaseSession:&failure];
             [self logTransitionFrom:from to:@"idle" result:ok error:failure];
         }
-    });
+    }];
     if (!ok && error) *error = failure;
     if (!_pushToTalk) {
         [NSNotificationCenter.defaultCenter
@@ -242,8 +256,8 @@ NSNotificationName const AKAudioPushToTalkLeaseDidChangeNotification =
 
 - (void)theSessionWasTaken:(NSString *)why {
     // Synchronous, from the main queue where the notification arrives: a lease that ends must have
-    // ended by the time the caller looks, and the serial queue is only ever entered from outside it.
-    dispatch_sync(_transitions, ^{
+    // ended by the time the caller looks. Inline if this is already the coordinator's own queue.
+    [self onTheQueue:^{
         if (!self->_pushToTalk) return;
         self->_pushToTalk = NO;
         self->_lease = AKAudioLeaseNone;
@@ -251,7 +265,7 @@ NSNotificationName const AKAudioPushToTalkLeaseDidChangeNotification =
         WKLog("audio", @"session: push to talk was ended by %@", why);
         void (^taken)(NSString *) = self.pushToTalkWasTaken;
         if (taken) dispatch_async(dispatch_get_main_queue(), ^{ taken(why); });
-    });
+    }];
     [NSNotificationCenter.defaultCenter
         postNotificationName:AKAudioPushToTalkLeaseDidChangeNotification
                       object:self userInfo:@{@"active": @NO}];
@@ -260,13 +274,24 @@ NSNotificationName const AKAudioPushToTalkLeaseDidChangeNotification =
 // An interruption ending is when the session can be taken again. The game's policy is restored only
 // if a game lease is held; nothing is forced while push to talk is recording.
 - (void)theInterruptionEnded {
-    dispatch_sync(_transitions, ^{
+    [self onTheQueue:^{
         if (self->_pushToTalk) return;
         if (self->_gameWantsPlayback) {
             BOOL ok = [self applyPlaybackForGame];
             [self logTransitionFrom:@"game" to:@"game" result:ok error:nil];
         }
-    });
+    }];
 }
 
 @end
+
+// The platform's CoreAudio adapter asks for the game's playback lease through this symbol.
+//
+// It cannot include this class's header - it lives in translation/ and is compiled into the same image
+// - so a C symbol is the boundary that works without either side knowing the other's layout. It is
+// called synchronously from whatever thread the adapter is on, and the coordinator decides: the adapter
+// never touches the session itself, so there is no flag for it to read, no notification to race, and no
+// window in which it can take the session from a running dictation. That window is what this replaced.
+BOOL TKWolkaraRequestGamePlayback(void) {
+    return [[AKAudioSessionCoordinator shared] requestGamePlayback:@"the CoreAudio adapter asked"];
+}
