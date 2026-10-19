@@ -47,6 +47,31 @@ step() { printf '\n== %s\n' "$*"; }
 total=5
 [ "$build_only" = 1 ] && total=2
 bundle=${TOLKARA_BUNDLE_ID:-local.tolkara.app}
+cleanup_needed=0
+
+# Once an install attempt may have started the app, the only acceptable exit
+# state is a plain Wolkara launcher. This trap intentionally does not use any
+# app-container query: CoreDevice can hang on enumeration while a direct launch
+# remains healthy, as Dadpad demonstrated on 2026-10-19.
+finalize_launcher() {
+    [ "$cleanup_needed" = 1 ] || return 0
+    echo "install: recovering the normal launcher after an incomplete install" >&2
+    if ! xcrun devicectl device process launch --terminate-existing --device "$DEVICE" "$bundle"; then
+        echo "install: recovery launch failed; Device Hub must be checked before retrying." >&2
+        return 1
+    fi
+    echo "install: recovery launched the normal Wolkara launcher" >&2
+}
+
+finish_install() {
+    local rc=$?
+    trap - EXIT
+    if [ "$build_only" != 1 ]; then
+        finalize_launcher || rc=1
+    fi
+    exit "$rc"
+}
+trap finish_install EXIT
 
 # The main app binary, not its extensions: the path of an extension is
 # .../Tolkara.app/PlugIns/<Name>.appex/<Name>, which does not contain Tolkara.app/Tolkara.
@@ -159,6 +184,10 @@ SHIM
 fi
 
 step "2/$total build (the platform's own script)"
+# From this point the platform installer may deploy and launch a development
+# process even when its own command later fails. The EXIT trap owns restoring
+# the visible app state in both the success and failure paths.
+[ "$build_only" = 1 ] || cleanup_needed=1
 tools/install.sh ${args[@]+"${args[@]}"}
 
 if [ "$build_only" = 1 ]; then
@@ -200,6 +229,7 @@ if ! xcrun devicectl device process launch --terminate-existing --device "$DEVIC
     exit 1
 fi
 echo "   plain Wolkara launcher launched"
+cleanup_needed=0
 
 step "5/5 done"
 cat <<NEXT

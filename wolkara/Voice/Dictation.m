@@ -52,6 +52,14 @@ double AKVoiceLoudestSample(void) { return AKLoudestSoFar; }
 - (BOOL)supportsOnDeviceRecognition { return _recognizer.supportsOnDeviceRecognition; }
 
 - (void)requestAuthorization:(void (^)(BOOL granted))completion {
+    // A push-to-talk hold starts on the first syllable. Re-requesting permission
+    // after it was already granted needlessly dispatches the real audio start to
+    // a later turn of the main queue, so a quick “hello” is captured as only its
+    // tail. Start immediately once iPadOS has already authorised this app.
+    if (SFSpeechRecognizer.authorizationStatus == SFSpeechRecognizerAuthorizationStatusAuthorized) {
+        completion(YES);
+        return;
+    }
     [SFSpeechRecognizer requestAuthorization:^(SFSpeechRecognizerAuthorizationStatus status) {
         dispatch_async(dispatch_get_main_queue(), ^{
             completion(status == SFSpeechRecognizerAuthorizationStatusAuthorized);

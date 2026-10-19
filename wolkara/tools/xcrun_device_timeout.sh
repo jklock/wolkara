@@ -8,8 +8,13 @@ if [ "${1:-}" != "devicectl" ]; then
     exec /usr/bin/xcrun "$@"
 fi
 
-limit=${WOLKARA_DEVICE_TIMEOUT:-8}
-/usr/bin/xcrun "$@" &
+# CoreDevice file enumeration can legitimately take longer than a launch. Thirty
+# seconds is bounded, but does not turn a slow connected device into a fake lock.
+# The override is intentionally available to the script tests; production always
+# defaults to the system xcrun.
+limit=${WOLKARA_DEVICE_TIMEOUT:-30}
+real_xcrun=${WOLKARA_REAL_XCRUN:-/usr/bin/xcrun}
+"$real_xcrun" "$@" &
 child=$!
 waited=0
 while kill -0 "$child" 2>/dev/null; do
