@@ -582,6 +582,23 @@ static void TestTheAdapterCannotTakeTheSessionFromPushToTalk(void) {
     [coordinator releaseGamePlayback];
 }
 
+#import <dlfcn.h>
+
+// The boundary itself. CoreAudio finds the host's hook with dlsym(RTLD_DEFAULT, ...), and nothing the
+// linker has stripped is findable - so the test above, which calls the function directly, is not enough
+// evidence on its own: that call is what kept the symbol alive in the test binary while the shipped app
+// had no such symbol at all. This asks the same way the adapter does.
+typedef BOOL (*TKWolkaraRequestGamePlaybackProc)(void);
+static void TestTheAdapterCanFindTheHostHook(void) {
+    TKWolkaraRequestGamePlaybackProc found =
+        (TKWolkaraRequestGamePlaybackProc)dlsym(RTLD_DEFAULT, "TKWolkaraRequestGamePlayback");
+    CHECK((found != NULL), @"the adapter can find the host playback hook by name");
+    if (!found) return;
+    BOOL answered = found();
+    CHECK((answered == YES || answered == NO), @"and answering does not disturb a session it does not own");
+    [AKAudioSessionCoordinator.shared releaseGamePlayback];
+}
+
 static void TestAudioSessionPolicy(void) {
     AKDictation *dictation = AKDictation.shared;
     AVAudioSession *session = AVAudioSession.sharedInstance;
@@ -1382,6 +1399,7 @@ static void TestConfigWriteFailure(void) {
     TestTriggerPatterns();
     TestAudioSessionCoordinator();
     TestTheAdapterCannotTakeTheSessionFromPushToTalk();
+    TestTheAdapterCanFindTheHostHook();
     TestAudioSessionPolicy();
     TestAFailedPutBackIsReported();
     TestScreenshotIsolation();
