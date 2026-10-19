@@ -179,7 +179,7 @@ static char const AKAudioCoordinatorQueueKey;
             [self logTransitionFrom:from to:@"game" result:ok error:failure];
         } else {
             _lease = AKAudioLeaseNone;
-            ok = [self releaseSession:&failure];
+            ok = [self applyLauncherPolicy:&failure];
             [self logTransitionFrom:from to:@"idle" result:ok error:failure];
         }
     }];
@@ -201,6 +201,25 @@ static char const AKAudioCoordinatorQueueKey;
                          mode:AVAudioSessionModeDefault
                       options:0 error:&error]) return NO;
     return [session setActive:YES error:&error];
+}
+
+// The launcher's policy: what the session is when nothing is running.
+//
+// Declared here rather than remembered from whatever was there before push to talk - the review outcome
+// is explicit that these are leases, not a replay of arbitrary session state. SoloAmbient is what the
+// app is on at launch, and it is what dictation must leave behind. Releasing the session while leaving
+// the category on PlayAndRecord is a session that is inactive but still categorised as recording, which
+// the device self-test correctly refuses to accept as "put back as it was" - and the test is the
+// acceptance criterion, so the code was the thing that was wrong.
+- (BOOL)applyLauncherPolicy:(NSError **)error {
+    NSError *failure = nil;
+    if (![AVAudioSession.sharedInstance setCategory:AVAudioSessionCategorySoloAmbient
+                                               mode:AVAudioSessionModeDefault
+                                            options:0 error:&failure]) {
+        if (error) *error = failure;
+        return NO;
+    }
+    return [self releaseSession:error];
 }
 
 // Releasing rather than forcing: with NotifyOthersOnDeactivation the system tells whatever was
