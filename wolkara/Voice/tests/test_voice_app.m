@@ -830,6 +830,74 @@ static void TestTypingIntoTheGame(void) {
     [AKDictation setGameTextTarget:nil];
 }
 
+// Every setting the user can change has to survive the file. This is the review outcome's Phase 3
+// inventory, and the list is the test's own on purpose: a setting that nobody adds here is a setting
+// that quietly stops persisting, which is what happened to the voice layer's button choice - it was
+// in the defaults database and in nothing else.
+static void TestEverySettingRoundTrips(void) {
+    NSArray<NSString *> *userFacing = @[@"WoWProduct", @"WoWRegion", @"WoWLocale",
+                                        @"AKVoiceEnabled", @"AKVoiceMode", @"AKVoiceAutoSubmit",
+                                        @"AKVoiceTrailingSpace", @"AKVoiceCustomWords",
+                                        @"AKVoiceTakeButtonFromGame"];
+    TKWolkaraConfig *config = TKWolkaraConfig.shared;
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+
+    for (NSString *key in userFacing)
+        CHECK(([TKWolkaraConfig ownsKey:key]), @"%@ is a key the config owns, so it can be written", key);
+
+    id regionWas = [defaults objectForKey:@"WoWRegion"];
+    id buttonWas = [defaults objectForKey:@"AKVoiceTakeButtonFromGame"];
+    id voiceWas = [defaults objectForKey:@"AKVoiceEnabled"];
+
+    [defaults setObject:@"us" forKey:@"WoWRegion"];
+    [defaults setBool:NO forKey:@"AKVoiceTakeButtonFromGame"];
+    [defaults setBool:NO forKey:@"AKVoiceEnabled"];
+    [config save];
+
+    // Change them in the database only, then read the file back over them: what survives is what
+    // the file holds, which is the only thing that crosses an export, an import or an update.
+    [defaults setObject:@"eu" forKey:@"WoWRegion"];
+    [defaults setBool:YES forKey:@"AKVoiceTakeButtonFromGame"];
+    [defaults setBool:YES forKey:@"AKVoiceEnabled"];
+    [config reloadFromFile];
+    CHECK(([[defaults stringForKey:@"WoWRegion"] isEqualToString:@"us"]), @"a choice is restored from the file");
+    CHECK((![defaults boolForKey:@"AKVoiceTakeButtonFromGame"]), @"the voice layer's button choice round-trips");
+    CHECK((![defaults boolForKey:@"AKVoiceEnabled"]), @"and the voice switch round-trips");
+
+    if (regionWas) [defaults setObject:regionWas forKey:@"WoWRegion"]; else [defaults removeObjectForKey:@"WoWRegion"];
+    if (buttonWas) [defaults setObject:buttonWas forKey:@"AKVoiceTakeButtonFromGame"]; else [defaults removeObjectForKey:@"AKVoiceTakeButtonFromGame"];
+    if (voiceWas) [defaults setObject:voiceWas forKey:@"AKVoiceEnabled"]; else [defaults removeObjectForKey:@"AKVoiceEnabled"];
+    [config save];
+}
+
+// The write keeps a recovery copy of the file before it replaces it, and if that copy cannot be made
+// the write must stop with the file exactly as it was. The version before this deleted the old copy
+// first and ignored whether the new one worked, so a failed copy destroyed the only recoverable file
+// and the replacement went ahead anyway - which is what the review outcome's Phase 3 calls out.
+static void TestAFailedRecoveryCopyStopsTheWrite(void) {
+    TKWolkaraConfig *config = TKWolkaraConfig.shared;
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    NSFileManager *files = NSFileManager.defaultManager;
+
+    [config save];
+    NSData *before = [NSData dataWithContentsOfFile:config.path];
+    CHECK((before.length > 0), @"there is a file to protect");
+
+    // Unreadable, so it cannot be copied. The app runs as its own user in the simulator, so this is
+    // a real refusal rather than a permission the process happens to hold.
+    [files setAttributes:@{NSFilePosixPermissions: @0000} ofItemAtPath:config.path error:NULL];
+    id regionWas = [defaults objectForKey:@"WoWRegion"];
+    [defaults setObject:@"kr" forKey:@"WoWRegion"];
+    [config save];
+    [files setAttributes:@{NSFilePosixPermissions: @0644} ofItemAtPath:config.path error:NULL];
+
+    NSData *after = [NSData dataWithContentsOfFile:config.path];
+    CHECK(([before isEqualToData:after]), @"a failed recovery copy leaves the file exactly as it was");
+
+    if (regionWas) [defaults setObject:regionWas forKey:@"WoWRegion"];
+    [config save];
+}
+
 static void TestConfigCorpus(void) {
     NSString *problem = nil;
     NSDictionary *file = @{@"version": @1, @"settings": @{@"WoWRegion": @"eu", @"AKVoiceMode": @1}};
@@ -1285,6 +1353,8 @@ static void TestConfigWriteFailure(void) {
     TestVoiceScreens(self.window);
     TestPageLayout(self.window);
     TestConfigCorpus();
+    TestEverySettingRoundTrips();
+    TestAFailedRecoveryCopyStopsTheWrite();
     TestConfigRecovery();
     TestConfigOversized();
     TestConfigRecursion();

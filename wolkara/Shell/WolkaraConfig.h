@@ -46,6 +46,10 @@ NS_ASSUME_NONNULL_BEGIN
 // without going near the singleton or the disk. Returns the settings that may be
 // applied - never nil, and never a value that failed a check - and fills `problem` with
 // a description of what was refused.
+/// Whether this key is one the config owns: in the schema, or a controller mapping. A setting that
+/// is not owned cannot be written to the file at all, so this is the first thing an inventory asks.
++ (BOOL)ownsKey:(NSString *)key;
+
 + (NSDictionary<NSString *, id> *)validatedSettingsFromFile:(nullable NSDictionary *)file
                                                     problem:(NSString *_Nullable *_Nullable)problem;
 

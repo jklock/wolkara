@@ -23,7 +23,12 @@
 static NSArray<NSString *> *TKWolkaraConfigKeys(void) {
     return @[@"WoWProduct", @"WoWRegion", @"WoWLocale",
              @"AKVoiceEnabled", @"AKVoiceMode", @"AKVoiceAutoSubmit",
-             @"AKVoiceTrailingSpace", @"AKVoiceCustomWords"];
+             @"AKVoiceTrailingSpace", @"AKVoiceCustomWords",
+             // The voice layer's choice about whether the game keeps the button. It lived only in
+             // the defaults database, so it did not survive an export and import - which is what
+             // the review outcome's Phase 3 is about: a setting the user can change belongs in the
+             // file, in the schema, and in the tests that prove it round-trips.
+             @"AKVoiceTakeButtonFromGame"];
 }
 
 // One mapping per controller, so the key carries an identity we cannot know in advance.
@@ -90,6 +95,7 @@ static NSDictionary<NSString *, NSDictionary *> *TKWolkaraConfigSchema(void) {
             @"AKVoiceAutoSubmit": @{@"kind": @"bool"},
             @"AKVoiceTrailingSpace": @{@"kind": @"bool"},
             @"AKVoiceCustomWords": @{@"kind": @"words"},
+            @"AKVoiceTakeButtonFromGame": @{@"kind": @"bool"},
         };
     });
     return schema;
@@ -414,10 +420,29 @@ static NSDictionary<NSString *, NSDictionary *> *TKWolkaraConfigSchema(void) {
     }
     NSURL *destination = [NSURL fileURLWithPath:self.path];
     if ([files fileExistsAtPath:self.path]) {
-        // The previous file is kept as .bak before it is replaced: that is what the
-        // recovery path above reads.
+        // The previous file becomes the recovery copy *before* it is replaced, and that copy is
+        // checked. The version before this one deleted the old backup first and ignored whether the
+        // new copy worked, so a failed copy left the file with no recovery copy at all and the
+        // replacement went ahead - which is what the review outcome's Phase 3 calls out. The new
+        // copy is made beside the old one and only takes its place once it exists.
+        NSString *pending = [self.backupPath stringByAppendingPathExtension:@"pending"];
+        [files removeItemAtPath:pending error:NULL];
+        NSError *copyError = nil;
+        if (![files copyItemAtPath:self.path toPath:pending error:&copyError]) {
+            WKLog("config", @"could not keep a recovery copy (%@); the file is unchanged",
+                  copyError.localizedDescription ?: @"no reason given");
+            [files removeItemAtPath:temporary error:NULL];
+            @synchronized (self) { _writing = NO; }
+            return;
+        }
         [files removeItemAtPath:self.backupPath error:NULL];
-        [files copyItemAtPath:self.path toPath:self.backupPath error:NULL];
+        if (![files moveItemAtPath:pending toPath:self.backupPath error:NULL]) {
+            WKLog("config", @"could not put the recovery copy in place; the file is unchanged");
+            [files removeItemAtPath:pending error:NULL];
+            [files removeItemAtPath:temporary error:NULL];
+            @synchronized (self) { _writing = NO; }
+            return;
+        }
         NSError *replaceError = nil;
         if (![files replaceItemAtURL:destination
                        withItemAtURL:[NSURL fileURLWithPath:temporary]
