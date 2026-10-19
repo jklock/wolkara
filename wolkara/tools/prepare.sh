@@ -42,5 +42,12 @@ git archive HEAD:platform | tar -x -C "$dest" || {
 # else's tolkara tree: one implementation, so the two can never drift apart.
 bash wolkara/tools/apply.sh "$dest"
 
+# And the project is generated *after* the overlay, never before. The overlay carries new layer files
+# into the tree, and a project generated from a tree that did not have them yet never compiles them: the
+# file is present, the build succeeds, and every call into it resolves to nil at runtime. That is what
+# happened with the audio session coordinator - the app shipped without it, with no linker error, and
+# the only symptom was that its calls did nothing.
+(cd "$dest" && bash tools/generate.sh)
+
 pinned=$(git rev-parse --short upstream/main 2>/dev/null || echo unknown)
 echo "prepare: $dest ready (platform $pinned)"
