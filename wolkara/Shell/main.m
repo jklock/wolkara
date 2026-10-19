@@ -242,52 +242,6 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
 // session. The device build failed on the first version of this that tried, which is how the
 // line was corrected: what can be read is the category, the mode and whether it is a
 // recording one.
-// One second of audio through AVAudioRecorder, with the loudest sample logged.
-//
-// This exists because the app could not otherwise tell a silent microphone from its own audio path
-// failing: every measurement inside the dictation path goes through AVAudioEngine, so an engine that
-// receives nothing and a microphone that delivers nothing look the same. A recorder is a different
-// implementation of the same session and it writes a file, so what it heard is a fact. It runs only
-// when --mic-probe is passed, and the app's normal path is untouched by it.
-static void AKRecordOneSecondAndLogThePeak(void) {
-    NSError *error = nil;
-    AVAudioSession *session = AVAudioSession.sharedInstance;
-    [session setCategory:AVAudioSessionCategoryRecord mode:AVAudioSessionModeDefault options:0 error:&error];
-    [session setActive:YES error:&error];
-    WKLog("micprobe", @"category=%@ input-available=%d route=%@", session.category,
-          (int)session.isInputAvailable, session.currentRoute.inputs.firstObject.portType ?: @"none");
-    NSString *path = [NSTemporaryDirectory() stringByAppendingPathComponent:@"mic-probe.caf"];
-    NSDictionary *settings = @{ AVFormatIDKey: @(kAudioFormatLinearPCM),
-                                AVSampleRateKey: @48000.0,
-                                AVNumberOfChannelsKey: @1,
-                                AVLinearPCMBitDepthKey: @32,
-                                AVLinearPCMIsFloatKey: @YES };
-    AVAudioRecorder *recorder = [[AVAudioRecorder alloc] initWithURL:[NSURL fileURLWithPath:path]
-                                                            settings:settings error:&error];
-    if (!recorder || ![recorder recordForDuration:1.0]) {
-        WKLog("micprobe", @"could not start a recording: %@", error.localizedDescription ?: @"no reason given");
-        return;
-    }
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        [recorder stop];
-        NSError *readError = nil;
-        AVAudioFile *file = [[AVAudioFile alloc] initForReading:[NSURL fileURLWithPath:path] error:&readError];
-        AVAudioPCMBuffer *buffer = [[AVAudioPCMBuffer alloc] initWithPCMFormat:file.processingFormat
-                                                                frameCapacity:(AVAudioFrameCount)file.length];
-        [file readIntoBuffer:buffer error:NULL];
-        float peak = 0;
-        if (buffer.floatChannelData && buffer.frameLength > 0) {
-            for (AVAudioFrameCount frame = 0; frame < buffer.frameLength; frame++) {
-                float value = buffer.floatChannelData[0][frame];
-                if (value < 0) value = -value;
-                if (value > peak) peak = value;
-            }
-        }
-        WKLog("micprobe", @"recorder heard %lu frame(s), peak %.4f%@",
-              (unsigned long)buffer.frameLength, peak, readError ? @" (unreadable)" : @"");
-    });
-}
-
 static NSString *AKAudioStateDescription(void) {
     AVAudioSession *session = AVAudioSession.sharedInstance;
     NSString *category = [session.category stringByReplacingOccurrencesOfString:@"AVAudioSessionCategory" withString:@""];
@@ -405,15 +359,6 @@ static NSString *AKAudioStateDescription(void) {
     // the UI can reach this. See SelfTest.h for why it exists.
     NSString *selfTest=AKSelfTestRequestedFromArguments(arguments);
     if (selfTest) dispatch_async(dispatch_get_main_queue(), ^{ AKRunSelfTest(selfTest); });
-    // A one-second recording, asked for by name on the command line, so that the microphone itself
-    // can be measured rather than argued about. Dictation uses AVAudioEngine; this uses
-    // AVAudioRecorder, which is a different implementation of the same session - so silence here
-    // means the device is not delivering audio to this app at all, and a room's noise floor here
-    // means the engine is where the fault is. It runs only when asked for, and nothing in the app's
-    // normal path is touched by it.
-    if ([arguments containsObject:@"--mic-probe"]) {
-        dispatch_async(dispatch_get_main_queue(), ^{ AKRecordOneSecondAndLogThePeak(); });
-    }
     // Normal Wolkara launches use the route included in this build. Development
     // arguments retain the original explicit mode selection.
     NSString *source=nil;

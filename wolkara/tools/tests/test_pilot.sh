@@ -74,6 +74,7 @@ case "$args" in
     [ -n "$dest" ] || exit 1
     case "$source" in
     *.ips) printf '%s' "${WOLKARA_FAKE_IPS:-}" > "$dest";;
+    *native-guest.log) printf '%s' "${WOLKARA_FAKE_GUESTLOG:-guest log line}" > "$dest";;
     *) printf 'guest log line\n' > "$dest";;
     esac
     exit 0;;
@@ -122,6 +123,19 @@ listing_without_errors() {
     cat <<JSON
 {"result":{"files":[
  {"name":"Documents","relativePath":"Documents","metadata":{"lastModDate":"2026-10-16T10:00:00.000Z"},"resources":{"isDirectory":true}}
+]}}
+JSON
+}
+
+# A device with a game session live: the app running, and a guest log written just now. The state
+# that makes every mutating command refuse, and that the stub's guest-log copy fills with a PASS.
+listing_with_a_live_session() {
+    local now
+    now=$(date -u '+%Y-%m-%dT%H:%M:%S.000Z')
+    cat <<JSON
+{"result":{"files":[
+ {"name":"Documents","relativePath":"Documents","metadata":{"lastModDate":"$now"},"resources":{"isDirectory":true}},
+ {"name":"Documents/native-guest.log","relativePath":"Documents/native-guest.log","metadata":{"lastModDate":"$now"},"resources":{"isDirectory":false}}
 ]}}
 JSON
 }
@@ -190,8 +204,9 @@ run_pilot "$work/sessions/found" restore
 check $? "restore must start the app again when the session recorded one running"
 grep -q "home" "$work/out.txt"
 check $? "and must leave the app on its home screen, saying what it found"
-grep -q "press Play" "$work/out.txt"
-check $? "naming what to do about the game that was live"
+# And it must not claim to put a game session back. Nothing can: the state is memory in the process
+# that a stop kills. The review outcome calls this out, so the check is that the claim is absent.
+grep -qE "press Play|game session was live" "$work/out.txt" && check 1 "and must not claim a game session can be restored"
 
 mkdir -p "$work/sessions/stopped"
 printf '\n' > "$work/sessions/stopped/was-running"
@@ -208,6 +223,55 @@ grep -q "no record of anything running" "$work/out.txt"
 check $? "and must say it has no record rather than guessing"
 
 export WOLKARA_FAKE_PROCESSES="  1234   /private/var/containers/Bundle/Application/AAA/Tolkara.app/Tolkara"
+
+# A live game session is never touched. This is the first operating rule in the review outcome, and
+# the proof it asks for: every command that stops, installs over or relaunches the app refuses, and
+# does nothing at all while refusing. A running game's state is memory in the process that would be
+# killed, so no command here can put it back, and none of them may try.
+export WOLKARA_FAKE_LISTING="$(listing_with_a_live_session)"
+export WOLKARA_FAKE_GUESTLOG=$'startup_return=PASS\n'
+run_pilot "$work/sessions/live" state
+grep -q "a game session is live" "$work/out.txt"
+check $? "the fixture really is a live game session"
+run_pilot "$work/sessions/live" install
+[ $? -ne 0 ]
+check $? "install must refuse while a game session is live"
+grep -q "game session is live" "$work/out.txt"
+check $? "and must say that is why"
+if grep -qE "launching|stopped" "$work/out.txt"; then
+    check 1 "and must not have touched the app"
+    echo "--- install printed: ---"; sed 's/^/    /' "$work/out.txt"; echo "--- end ---"
+fi
+run_pilot "$work/sessions/live" stop
+[ $? -ne 0 ]
+check $? "stop must refuse while a game session is live"
+if grep -qE "launching|stopped" "$work/out.txt"; then
+    check 1 "and must not have touched the app"
+    echo "--- stop printed: ---"; sed 's/^/    /' "$work/out.txt"; echo "--- end ---"
+fi
+run_pilot "$work/sessions/live" cycle
+[ $? -ne 0 ]
+check $? "cycle must refuse while a game session is live"
+if grep -qE "launching|stopped" "$work/out.txt"; then
+    check 1 "and must not have touched the app"
+    echo "--- cycle printed: ---"; sed 's/^/    /' "$work/out.txt"; echo "--- end ---"
+fi
+run_pilot "$work/sessions/live" selftest voice
+[ $? -ne 0 ]
+check $? "selftest must refuse while a game session is live"
+if grep -qE "launching|stopped" "$work/out.txt"; then
+    check 1 "and must not have touched the app"
+    echo "--- selftest printed: ---"; sed 's/^/    /' "$work/out.txt"; echo "--- end ---"
+fi
+unset WOLKARA_FAKE_GUESTLOG
+export WOLKARA_FAKE_LISTING="$(listing_without_errors)"
+
+# And with no game live, the same commands still work: the guard must not have broken the ordinary
+# path. This is the check that keeps the refusal honest.
+run_pilot "$work/sessions/quiet" stop --dry-run
+check $? "with nothing live, stop still works"
+grep -q "dry run" "$work/out.txt"
+check $? "and says what it would do"
 
 # Each run keeps its own work files.
 run_pilot "$work/sessions/one" state

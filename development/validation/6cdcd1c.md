@@ -1,3 +1,6 @@
+> HISTORICAL: this record predates 28c7706 and is not release evidence for the current
+> branch. See development/REPORT_OUTCOME.md for the plan and the release gate.
+
 # Validation: 6cdcd1c
 
 - Commit: `6cdcd1cfd3d746e2feeb18cc94ff86e98e0016b3` (branch `controller`)
