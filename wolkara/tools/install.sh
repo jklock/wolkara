@@ -6,6 +6,7 @@
 #   2. build     through the platform's own install script
 #   3. enroll    the platform's own enroll.sh, which the install prints as its next step
 #   4. verify    the app really is on the device afterwards
+#   5. home      relaunch the normal Wolkara launcher and prove it reached home
 #
 # --build-only stops after step 2 and leaves the iPad alone, so a compile error costs
 # nothing: without it, the app has already been stopped by the time the compiler speaks.
@@ -54,6 +55,38 @@ app_pid() {
     # nothing would report "nothing running" for a live game - the case this guard is for.
     xcrun devicectl device info processes --device "$DEVICE" 2>/dev/null |
         grep -E "Tolkara\.app/Tolkara([[:space:]]|$)" | grep -v "\.appex" | awk 'NR==1 { print $1 }'
+}
+
+# The app itself records this only after the ordinary WoW launcher is installed
+# as the root view controller. A running process is weaker evidence: enrollment
+# and self-test launches are running processes too, but leave a status screen.
+launcher_log_lines() {
+    local log
+    log=$(mktemp -t wolkara-launcher-log)
+    if ! xcrun devicectl device copy from --device "$DEVICE" --domain-type appDataContainer \
+        --domain-identifier "$bundle" --source "Documents/wolkara.log" --destination "$log" >/dev/null 2>&1; then
+        rm -f "$log"
+        return 1
+    fi
+    wc -l < "$log" | tr -d ' '
+    rm -f "$log"
+}
+
+launcher_home_after() {
+    local offset=$1 log deadline=$((SECONDS + 20))
+    log=$(mktemp -t wolkara-launcher-log)
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        rm -f "$log"
+        if xcrun devicectl device copy from --device "$DEVICE" --domain-type appDataContainer \
+            --domain-identifier "$bundle" --source "Documents/wolkara.log" --destination "$log" >/dev/null 2>&1 &&
+            [ -s "$log" ] && awk -v offset="$offset" 'NR > offset && /\[ui\] home: the launcher is up/' "$log" | grep -q .; then
+            rm -f "$log"
+            return 0
+        fi
+        sleep 1
+    done
+    rm -f "$log"
+    return 1
 }
 
 if [ "$build_only" = 1 ]; then
@@ -106,6 +139,17 @@ step "1/$total prepare build/platform"
 wolkara/tools/prepare.sh
 
 cd build/platform
+
+# The platform installer and enrollment helper invoke xcrun themselves. Put a
+# bounded devicectl shim in front of them so a locked iPad cannot strand the app
+# on an enrollment status screen indefinitely. Xcode and every non-device
+# command still execute through the real xcrun unchanged.
+if [ "$build_only" != 1 ]; then
+    device_shim=$(mktemp -d -t wolkara-device-timeout)
+    ln -s "$ROOT/wolkara/tools/xcrun_device_timeout.sh" "$device_shim/xcrun"
+    PATH="$device_shim:$PATH"
+    export PATH
+fi
 
 # The platform's script asks xcodebuild for `-derivedDataPath build/device` and installs
 # from `build/device/Build/Products/...`. A machine-wide Xcode build location overrides
@@ -175,6 +219,25 @@ else
     echo "   NOT INSTALLED: the device does not list $bundle" >&2
     exit 1
 fi
+
+step "5/5 return the normal launcher"
+# Enrollment deliberately uses development arguments and therefore displays a
+# status screen. It is never an acceptable final state for an install. This
+# launch replaces only that temporary process: the live-game guard ran before
+# the install, and a failure here is reported as a failed install rather than a
+# misleading successful install with a broken-looking iPad.
+home_before=$(launcher_log_lines || echo 0)
+if ! xcrun devicectl device process launch --terminate-existing --device "$DEVICE" "$bundle"; then
+    echo "install: the app was installed but could not be returned to its normal launcher." >&2
+    echo "         Unlock the iPad, then run: wolkara/tools/pilot.sh launch" >&2
+    exit 1
+fi
+if ! launcher_home_after "$home_before"; then
+    echo "install: the app process started but did not prove that the normal launcher is on screen." >&2
+    echo "         It may still be on an enrollment status screen; unlock the iPad and run: wolkara/tools/pilot.sh launch" >&2
+    exit 1
+fi
+echo "   normal launcher confirmed"
 
 step "5/5 done"
 cat <<NEXT
