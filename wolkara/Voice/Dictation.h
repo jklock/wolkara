@@ -44,6 +44,11 @@ typedef NS_ENUM(NSInteger, AKDictationState) {
 /// with "No speech detected", and both look like a working app from every other angle.
 double AKVoiceLoudestSample(void);
 
+/// The same peak as a level in dBFS. Silence meters at about -120, a room at about -50 to -70.
+/// A check written as "greater than zero" passes on silence, because -120 dBFS is 0.000001 linear;
+/// this exists so the check can be a threshold that digital silence cannot satisfy.
+double AKVoiceLoudestDecibels(void);
+
 #pragma mark - The two seams
 
 @protocol AKDictationSpeech <NSObject>
