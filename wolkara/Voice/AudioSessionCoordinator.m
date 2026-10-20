@@ -63,6 +63,15 @@ static char const AKAudioCoordinatorQueueKey;
         case AVAudioSessionRecordPermissionGranted: mic = @"granted"; break;
     }
     WKLog("audio", @"microphone permission: %@", mic);
+    // How to ask, when asking is needed. Requesting from here was tried and removed: in a process with
+    // no user interface - the voice test harness is one - the request never completes and the whole
+    // suite hangs, which is a worse failure than the one it was meant to prevent. The permission this
+    // app needs is granted; if it is ever refused, the honest answer is to say so rather than to block
+    // whatever thread asked.
+    if (AVAudioSession.sharedInstance.recordPermission != AVAudioSessionRecordPermissionGranted) {
+        WKLog("audio", @"microphone permission: NOT granted - Settings > Privacy & Security > Microphone "
+                        "must allow this app before dictation can hear anything");
+    }
 }
 
 // On the queue, or inline if this thread is already on it. See AKAudioCoordinatorQueueKey.
