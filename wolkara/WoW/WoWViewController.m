@@ -50,7 +50,7 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     NSLayoutConstraint *_leftWidth;
     UILabel *_stateLabel, *_detailLabel, *_versionLabel, *_startupLabel, *_compatibilityLabel;
     UIButton *_editionButton, *_preferencesButton, *_addonsButton, *_addonsDirectoryButton,
-        *_voiceButton, *_voiceTestButton, *_primaryButton;
+        *_voiceButton, *_voiceTestButton, *_permissionsButton, *_primaryButton;
     UIView *_markView;
     NSLayoutConstraint *_markCap;
     UIBarButtonItem *_refreshItem;
@@ -155,10 +155,15 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     [_voiceButton setTitle:@"Key / Button Configuration" forState:UIControlStateNormal];
     _voiceTestButton=[self button:@"wow.voice.test" action:@selector(testVoice)];
     [_voiceTestButton setTitle:@"Test Voice" forState:UIControlStateNormal];
+    // Straight to this app's own page in Settings, which is where the Microphone and Speech Recognition
+    // switches live. Available before the game is installed, because it is a setting and not a game
+    // action - and it is the only place those switches can be changed.
+    _permissionsButton=[self button:@"wow.permissions" action:@selector(openPermissions)];
+    [_permissionsButton setTitle:@"Permissions (Microphone, Speech)" forState:UIControlStateNormal];
     _compatibilityLabel=Label(12,UIFontWeightRegular,Muted());
     UIStackView *left=Stack(@[_markView,editionHeading,_editionButton,_preferencesButton,
         addonsHeading,_addonsButton,_addonsDirectoryButton,
-        voiceHeading,_voiceButton,_voiceTestButton,_compatibilityLabel],12);
+        voiceHeading,_voiceButton,_voiceTestButton,_permissionsButton,_compatibilityLabel],12);
     [left setCustomSpacing:24 afterView:_markView];
     [left setCustomSpacing:24 afterView:_preferencesButton];
     [left setCustomSpacing:24 afterView:_addonsDirectoryButton];
@@ -395,6 +400,10 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     [self configureButton:_voiceTestButton title:@"Test Voice" filled:NO];
     _voiceTestButton.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;
     _voiceTestButton.enabled=_voiceButton.enabled;
+    [self configureButton:_permissionsButton title:@"Permissions (Microphone, Speech)" filled:NO];
+    _permissionsButton.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;
+    // Never disabled: opening Settings is always allowed, even while the game is busy.
+    _permissionsButton.enabled=YES;
     _compatibilityLabel.text=([_product[@"id"] isEqual:@"wow"] || [_product[@"id"] isEqual:@"wow_beta"] || [_product[@"id"] isEqual:@"wow_classic"])?
         @"Compatibility with this edition is not yet verified.":
         @"";
@@ -569,6 +578,25 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
 // button the user mapped, so it can be tried without starting the game.
 - (void)testVoice {
     [self presentPage:[AKVoiceTestViewController new]];
+}
+
+// This app's own page in Settings: the Microphone and Speech Recognition switches for Wolkara.
+//
+// iOS gives an app no way to grant, reset or re-prompt for its own privacy permission - the decision
+// belongs to the person using the device. This project has been bitten by exactly that: tccd answers
+// "allowed" and then fails to issue the microphone sandbox extension to the installed binary, so audio
+// never arrives while the permission reads granted. The one supported remedy is the person changing it
+// in Settings, so the launcher takes them to that exact page instead of describing where it is.
+- (void)openPermissions {
+    NSURL *url=[NSURL URLWithString:UIApplicationOpenSettingsURLString];
+    UIApplication *app=UIApplication.sharedApplication;
+    if(!url || ![app canOpenURL:url]) {
+        WKLog("host", @"permissions: this system will not open the app's settings page");
+        return;
+    }
+    [app openURL:url options:@{} completionHandler:^(BOOL opened) {
+        WKLog("host", @"permissions: opened this app's settings page: %@", opened?@"yes":@"no");
+    }];
 }
 
 // The game's add-on folder, in the file browser. The picker is the documented way
