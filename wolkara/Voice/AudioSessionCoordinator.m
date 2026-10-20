@@ -246,12 +246,15 @@ static char const AKAudioCoordinatorQueueKey;
 // acceptance criterion, so the code was the thing that was wrong.
 - (BOOL)applyLauncherPolicy:(NSError **)error {
     NSError *failure = nil;
-    // The session is released before the category is changed. Dictation now records, and releasing the
-    // input before asking for an output-only category is the order that cannot leave a microphone open;
-    // the other order asks for the switch while the input is still running. This is ordering chosen for
-    // safety, not a measured fix - the failed transitions in the voice suite are the pre-existing
-    // "the session was taken from us" line, which reports the loss on purpose and is present before and
-    // after this change.
+    // The session is released before the category is changed. Dictation records, and releasing the input
+    // before asking for an output-only category is the order that cannot leave a microphone open; the
+    // other order asks for the switch while the input is still running.
+    //
+    // Leaving the session active instead - what the build that worked on 2026-10-17 at 13:34 did, before
+    // the microphone stopped being held open between dictations - was tried and measured on 2026-10-20
+    // and did not restore audio: three bare-recorder captures in one process, straight after activation,
+    // with the session never released, and after a release and fresh activation, all measured -120.0
+    // dBFS. So the held session is not the mechanism, and this keeps the order that is safe.
     if (![self releaseSession:&failure]) {
         if (error) *error = failure;
         return NO;

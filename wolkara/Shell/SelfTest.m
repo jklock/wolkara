@@ -11,12 +11,14 @@
 #import "../Input/InputRouter.h"
 #import "../Input/Trigger.h"
 #import "../Voice/Dictation.h"
+#import "../Voice/AudioSessionCoordinator.h"
 #import "../Voice/VoiceSettings.h"
 #import <AVFoundation/AVFoundation.h>
 #import <Speech/Speech.h>
 
 NSString *const AKSelfTestInput = @"input";
 NSString *const AKSelfTestVoice = @"voice";
+NSString *const AKSelfTestMic = @"mic";
 
 #pragma mark - Recording what happened
 
@@ -382,6 +384,91 @@ static void AKSelfTestRunVoice(AKSelfTestRecorder *recorder) {
     dictation.problemHandler = previous;
 }
 
+#pragma mark - A bare recorder
+
+// A bare recorder, with none of this app's audio code in the path.
+//
+// The coordinator has been in the path of every measurement made during this fault, so a test that
+// asks the coordinator for the session cannot tell whether the coordinator is why the microphone
+// arrives silent. This takes the session by hand, the way the documentation does it, and records with
+// nothing between the microphone and AVFoundation. It runs only under --selftest=mic and cannot be
+// reached from the UI; check_layers.sh names it as its single exemption for that reason.
+// One capture with nothing but AVFoundation in the path, returning its peak in dBFS.
+static float AKSelfTestRecordOnce(NSDictionary *settings, NSString *label, AVAudioSession *session) {
+    NSError *error = nil;
+    NSURL *url = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:
+        [NSString stringWithFormat:@"wolkara-mic-%@.wav", label]]];
+    [[NSFileManager defaultManager] removeItemAtURL:url error:NULL];
+    AVAudioRecorder *bare = [[AVAudioRecorder alloc] initWithURL:url settings:settings error:&error];
+    if (!bare) {
+        WKLog("selftest", @"mic: %@ could not be created: %@", label, error.localizedDescription);
+        return -160.0f;
+    }
+    bare.meteringEnabled = YES;
+    if (![bare record]) {
+        WKLog("selftest", @"mic: %@ would not start", label);
+        return -160.0f;
+    }
+    AKSelfTestSleep(1.2);
+    [bare updateMeters];
+    float decibels = [bare peakPowerForChannel:0];
+    NSTimeInterval seconds = bare.currentTime;
+    [bare stop];
+    WKLog("selftest", @"mic: %@ captured %.2fs, peak %.1f dBFS (session %@)",
+          label, seconds, decibels, session.category);
+    return decibels;
+}
+
+static void AKSelfTestRunMic(AKSelfTestRecorder *recorder) {
+    AVAudioSession *session = AVAudioSession.sharedInstance;
+    NSError *error = nil;
+
+    WKLog("selftest", @"mic: permission=%ld input_available=%d other_audio=%d category=%@",
+          (long)session.recordPermission, (int)session.isInputAvailable,
+          (int)session.isOtherAudioPlaying, session.category);
+    [recorder check:(session.recordPermission == AVAudioSessionRecordPermissionGranted)
+                  _:@"the microphone permission is granted"];
+
+    [recorder check:[session setCategory:AVAudioSessionCategoryRecord
+                                    mode:AVAudioSessionModeDefault
+                                 options:0 error:&error]
+                  _:[NSString stringWithFormat:@"the record category is taken: %@", error.localizedDescription]];
+    error = nil;
+    [recorder check:[session setActive:YES error:&error]
+                  _:[NSString stringWithFormat:@"and the session activates: %@", error.localizedDescription]];
+    [recorder check:(session.isInputAvailable) _:@"input is available after activation"];
+
+    NSDictionary *settings = @{
+        AVFormatIDKey: @(kAudioFormatLinearPCM),
+        AVSampleRateKey: @(48000.0),
+        AVNumberOfChannelsKey: @(1),
+        AVLinearPCMBitDepthKey: @(32),
+        AVLinearPCMIsFloatKey: @YES,
+        AVLinearPCMIsBigEndianKey: @NO,
+    };
+
+    // Three captures in one process, differing only in whether the session was ever released:
+    //   1. straight after activation             - the state every dictation is in since 2026-10-17 13:34
+    //   2. again, with the session never released - the state the working build left behind
+    //   3. after a release and a fresh activation - to show it is the release and not the first use
+    float cold = AKSelfTestRecordOnce(settings, @"after-activation", session);
+    float warm = AKSelfTestRecordOnce(settings, @"session-never-released", session);
+    [session setActive:NO error:NULL];
+    AKSelfTestSleep(0.4);
+    [session setCategory:AVAudioSessionCategoryRecord mode:AVAudioSessionModeDefault options:0 error:NULL];
+    [session setActive:YES error:NULL];
+    AKSelfTestSleep(0.4);
+    float reopened = AKSelfTestRecordOnce(settings, @"after-release", session);
+
+    WKLog("selftest", @"mic: cold %.1f dBFS, warm %.1f dBFS, reopened %.1f dBFS", cold, warm, reopened);
+    [recorder check:(cold > -70.0 || warm > -70.0 || reopened > -70.0) _:[NSString stringWithFormat:
+        @"a bare recorder hears the microphone (cold %.1f, warm %.1f, reopened %.1f dBFS)",
+        cold, warm, reopened]];
+
+    error = nil;
+    [session setActive:NO error:&error];
+}
+
 #pragma mark - Entry
 
 static void AKSelfTestLogVerdict(AKSelfTestRecorder *recorder, NSString *name) {
@@ -403,6 +490,14 @@ void AKRunSelfTest(NSString *name) {
         // is nothing to wait for and nothing is held up while they run.
         AKSelfTestOnMain(^{ AKSelfTestRunInput(recorder); });
         AKSelfTestLogVerdict(recorder, name);
+        return;
+    }
+    if ([name isEqualToString:AKSelfTestMic]) {
+        // Off the main queue: it sleeps for a second and a half and must not block the app.
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+            AKSelfTestRunMic(recorder);
+            AKSelfTestLogVerdict(recorder, name);
+        });
         return;
     }
     if ([name isEqualToString:AKSelfTestVoice]) {
