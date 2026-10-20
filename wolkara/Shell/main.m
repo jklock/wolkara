@@ -250,6 +250,43 @@ static NSString *AKAudioStateDescription(void) {
     return [NSString stringWithFormat:@"%@/%@ mic=%d", category, session.mode, (int)recording];
 }
 
+// Apple's documented first step, and this app has never taken it.
+//
+// Until now the microphone was only ever asked for as a side effect of activating a recording session.
+// That is how a permission ends up *recorded* as granted while the process is not actually authorised
+// to capture: the session still activates, the input still reports available, and every sample comes
+// back as zero. Asking explicitly, once, here - where there is a user in front of a UI to answer the
+// prompt - is the step that puts the permission and the process in agreement.
+//
+// It lives here rather than in the dictation object because the dictation object is what the voice test
+// harness drives, and a prompt request there never returns in a process with no UI to show it.
+- (void)askForTheMicrophoneOnce {
+    static BOOL asked = NO;
+    if (asked) return;
+    asked = YES;
+    AVAudioSession *session = AVAudioSession.sharedInstance;
+    switch (session.recordPermission) {
+    case AVAudioSessionRecordPermissionGranted:
+        WKLog("audio", @"microphone permission: already granted, nothing to ask");
+        return;
+    case AVAudioSessionRecordPermissionDenied:
+        WKLog("audio", @"microphone permission: refused; Settings > Privacy & Security > Microphone must allow this app");
+        return;
+    case AVAudioSessionRecordPermissionUndetermined:
+        break;
+    }
+    WKLog("audio", @"microphone permission: asking, because it has never been asked");
+    if (@available(iOS 17.0, *)) {
+        [AVAudioApplication requestRecordPermissionWithCompletionHandler:^(BOOL granted) {
+            WKLog("audio", @"microphone permission: %@ after asking", granted ? @"granted" : @"refused");
+        }];
+    } else {
+        [session requestRecordPermission:^(BOOL granted) {
+            WKLog("audio", @"microphone permission: %@ after asking", granted ? @"granted" : @"refused");
+        }];
+    }
+}
+
 - (void)sceneDidBecomeActive:(UIScene *)scene {
     (void)scene;
     // What state everything is in when the app is allowed to act again, so "nothing is left
@@ -258,6 +295,7 @@ static NSString *AKAudioStateDescription(void) {
     WKLog("host", @"foreground: dictation=%ld listening=%d learning=%d audio=%@",
           (long)AKDictation.shared.state, (int)AKDictation.shared.listening,
           (int)AKInputRouter.shared.learning, AKAudioStateDescription());
+    [self askForTheMicrophoneOnce];
     [self reserveExecutableMemory];
 }
 
