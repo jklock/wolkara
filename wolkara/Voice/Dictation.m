@@ -121,6 +121,29 @@ double AKVoiceLoudestSample(void) { return AKLoudestSoFar; }
         AVLinearPCMIsBigEndianKey: @NO,
     };
     NSError *error = nil;
+
+    // Warm the capture before the real one starts.
+    //
+    // The one time dictation produced words, the microphone was still open from the press before, so the
+    // capture began against a session that had already been running. Every attempt since has started
+    // cold and delivered nothing at all - not quiet audio, but no audio: the recording left on the device
+    // held zero audio bytes while this code reported "recorded 1.53s". So the microphone is opened and
+    // closed once, for a fraction of a second, and only then is the capture the user is speaking into
+    // started. That reproduces the only state this app has ever worked in.
+    NSURL *warmup = [NSURL fileURLWithPath:
+                     [NSTemporaryDirectory() stringByAppendingPathComponent:@"wolkara-warmup.wav"]];
+    [[NSFileManager defaultManager] removeItemAtURL:warmup error:NULL];
+    AVAudioRecorder *warmer = [[AVAudioRecorder alloc] initWithURL:warmup settings:settings error:NULL];
+    if ([warmer record]) {
+        [NSThread sleepForTimeInterval:0.15];
+        [warmer stop];
+        WKLog("voice", @"dictation: warmed the capture for 150ms before starting the real one");
+    } else {
+        WKLog("voice", @"dictation: the warm-up capture would not start");
+    }
+    warmer = nil;
+    [[NSFileManager defaultManager] removeItemAtURL:warmup error:NULL];
+
     _recorder = [[AVAudioRecorder alloc] initWithURL:_recording settings:settings error:&error];
     if (!_recorder) {
         [self cancel];
