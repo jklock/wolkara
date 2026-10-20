@@ -7,6 +7,7 @@
 
 #import <AVFAudio/AVFAudio.h>
 #import <Speech/Speech.h>
+#import <UIKit/UIKit.h>
 #include <math.h>
 
 // kVK_Return, and the character the game expects for it. Taken from the accessory row,
@@ -136,10 +137,12 @@ double AKVoiceLoudestSample(void) { return AKLoudestSoFar; }
         if (_handler) _handler(@"", NO, refused);
         return;
     }
-    WKLog("voice", @"dictation: recorder started, %.0fHz %lu channel(s), %@; the session is %@",
+    WKLog("voice", @"dictation: recorder started, %.0fHz %lu channel(s), %@; the session is %@; app %@",
           _recorder.format.sampleRate, (unsigned long)_recorder.format.channelCount,
           _recorder.format.isStandard ? @"standard float32" : @"NOT standard",
-          AVAudioSession.sharedInstance.category);
+          AVAudioSession.sharedInstance.category,
+          UIApplication.sharedApplication.applicationState == UIApplicationStateActive ? @"active"
+              : (UIApplication.sharedApplication.applicationState == UIApplicationStateInactive ? @"inactive" : @"background"));
 }
 
 - (void)finish {
@@ -176,9 +179,11 @@ double AKVoiceLoudestSample(void) { return AKLoudestSoFar; }
     _recorder = nil;
     AKLoudestDecibels = (double)decibels;
     AKLoudestSoFar = (decibels <= -160.0f) ? 0.0 : pow(10.0, (double)decibels / 20.0);
-    WKLog("voice", @"dictation: recorded %.2fs, peak %.1f dBFS (%.5f linear), session %@, other audio playing %d",
+    WKLog("voice", @"dictation: recorded %.2fs, peak %.1f dBFS (%.5f linear), session %@, other audio playing %d, app %@",
           seconds, decibels, AKLoudestSoFar, AVAudioSession.sharedInstance.category,
-          (int)AVAudioSession.sharedInstance.isOtherAudioPlaying);
+          (int)AVAudioSession.sharedInstance.isOtherAudioPlaying,
+          UIApplication.sharedApplication.applicationState == UIApplicationStateActive ? @"active"
+              : (UIApplication.sharedApplication.applicationState == UIApplicationStateInactive ? @"inactive" : @"background"));
 }
 
 - (void)recogniseRecording {
