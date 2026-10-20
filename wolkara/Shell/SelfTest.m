@@ -438,12 +438,14 @@ static void AKSelfTestRunMic(AKSelfTestRecorder *recorder) {
                   _:[NSString stringWithFormat:@"and the session activates: %@", error.localizedDescription]];
     [recorder check:(session.isInputAvailable) _:@"input is available after activation"];
 
+    // 16-bit integer LPCM: the same settings the dictation path uses, and for the same reason - 32-bit
+    // float gives a recorder that starts, reports success, and writes a file with no audio in it.
     NSDictionary *settings = @{
         AVFormatIDKey: @(kAudioFormatLinearPCM),
         AVSampleRateKey: @(48000.0),
         AVNumberOfChannelsKey: @(1),
-        AVLinearPCMBitDepthKey: @(32),
-        AVLinearPCMIsFloatKey: @YES,
+        AVLinearPCMBitDepthKey: @(16),
+        AVLinearPCMIsFloatKey: @NO,
         AVLinearPCMIsBigEndianKey: @NO,
     };
 
