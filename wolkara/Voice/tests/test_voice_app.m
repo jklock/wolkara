@@ -467,20 +467,21 @@ static void TestAudioSessionCoordinator(void) {
     // Nothing is claimed at the start, and push to talk is not active.
     CHECK((!coordinator.pushToTalkActive), @"push to talk is not active before anything asks");
 
-    // Taking the session for push to talk: the declared policy is PlayAndRecord, so that the game's
-    // audio stays audible while the user speaks. Record would silence it.
+    // Taking the session for push to talk: the policy is Record, which is what this feature shipped
+    // with and what transcribed speech. PlayAndRecord with DefaultToSpeaker put capture behind the
+    // speakerphone's echo cancellation and every sample came back exactly 0.0, measured on the device.
     NSError *error = nil;
     CHECK(([coordinator beginPushToTalk:&error]), @"push to talk takes the session: %@", error.localizedDescription);
     CHECK((coordinator.pushToTalkActive), @"and the coordinator says so");
-    CHECK(([session.category isEqualToString:AVAudioSessionCategoryPlayAndRecord]),
-          @"the declared policy is PlayAndRecord, got %@", session.category);
+    CHECK(([session.category isEqualToString:AVAudioSessionCategoryRecord]),
+          @"dictation records, got %@", session.category);
     CHECK(([session.mode isEqualToString:AVAudioSessionModeDefault]),
           @"dictation uses the unprocessed Default input mode, got %@", session.mode);
 
     // And the game asking for playback while it is held must not take the session away: this is the
     // fault that ended a running dictation, and the coordinator must refuse it rather than obey.
     CHECK(([coordinator requestGamePlayback:@"the guest asked"]), @"the game's request is answered");
-    CHECK(([session.category isEqualToString:AVAudioSessionCategoryPlayAndRecord]),
+    CHECK(([session.category isEqualToString:AVAudioSessionCategoryRecord]),
           @"but not by taking the session from push to talk, got %@", session.category);
 
     // Handing it back with a game lease held restores the declared game policy - Playback - rather
@@ -578,7 +579,7 @@ static void TestTheAdapterCannotTakeTheSessionFromPushToTalk(void) {
     dispatch_group_wait(group, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5 * NSEC_PER_SEC)));
     Pump(0.1);
 
-    CHECK(([session.category isEqualToString:AVAudioSessionCategoryPlayAndRecord]),
+    CHECK(([session.category isEqualToString:AVAudioSessionCategoryRecord]),
           @"the adapter cannot take the session from push to talk, got %@", session.category);
     CHECK((coordinator.pushToTalkActive), @"and push to talk still holds the lease");
 
@@ -624,8 +625,8 @@ static void TestAudioSessionPolicy(void) {
 
     [dictation begin];
     CHECK((dictation.state == AKDictationStateListening), @"the real bridge starts a session");
-    CHECK(([session.category isEqualToString:AVAudioSessionCategoryPlayAndRecord]),
-          @"and takes the session without silencing the game, got %@", session.category);
+    CHECK(([session.category isEqualToString:AVAudioSessionCategoryRecord]),
+          @"and records rather than playing the game, which is what transcribes speech, got %@", session.category);
 
     [dictation end];
     [speech say:@"done" final:YES];

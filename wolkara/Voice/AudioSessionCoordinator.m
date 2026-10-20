@@ -142,29 +142,30 @@ static char const AKAudioCoordinatorQueueKey;
     [self onTheQueue:^{
         NSString *from = [self nameForLease:_lease];
         AVAudioSession *session = AVAudioSession.sharedInstance;
-        // PlayAndRecord, not Record: the game's audio has to stay audible while the user talks, and
-        // Record silences everything else. This is the review outcome's declared policy.
+        // Record, which is what this feature shipped with and what worked. It was changed to
+        // PlayAndRecord with DefaultToSpeaker and AllowBluetooth so that the game stayed audible while
+        // the user talked. That change is the only capture-side difference between the version that
+        // transcribed speech and the one where every sample is exactly 0.0 - the speakerphone path puts
+        // capture behind echo cancellation, and this is an input-only engine, not a call. A microphone
+        // that delivers digital silence is worth far more than game audio for the two seconds a
+        // dictation lasts, and the game's playback is restored the moment the hold ends.
         //
-        // Dictation consumes the captured signal itself. VoiceChat enables the system's bidirectional
-        // voice-processing path, which is for a VoIP render/capture graph, not this input-only engine.
-        // It clipped live speech on Dadpad. Keep the normal PlayAndRecord policy with Default mode:
-        // simultaneous game output remains available and the input reaches Speech unmodified.
-        if (![session setCategory:AVAudioSessionCategoryPlayAndRecord
+        // Measured before this change, with everything else correct: permission granted,
+        // PlayAndRecord/Default on the built-in microphone at 48000Hz, the engine running, the tap
+        // firing with well-formed float32 buffers, and the loudest sample 0.00000 for the whole hold.
+        if (![session setCategory:AVAudioSessionCategoryRecord
                              mode:AVAudioSessionModeDefault
-                          options:AVAudioSessionCategoryOptionDefaultToSpeaker |
-                                  AVAudioSessionCategoryOptionAllowBluetooth
+                          options:0
                             error:&failure]) {
             [self logTransitionFrom:from to:@"push-to-talk" result:NO error:failure];
             return;
         }
-        // The built-in microphone, asked for as a preference and never treated as proof: the route
-        // is read back afterwards, and what it says is what is logged.
-        for (AVAudioSessionPortDescription *port in session.availableInputs) {
-            if ([port.portType isEqualToString:AVAudioSessionPortBuiltInMic]) {
-                [session setPreferredInput:port error:NULL];
-                break;
-            }
-        }
+        // No preferred input. The version that transcribed speech never set one, and setting it is the
+        // last capture-side difference left between that version and this one: it chooses a microphone
+        // port by name, where the system's own choice is what fed the working build. Measured with a
+        // preferred input set, on Record and on PlayAndRecord alike: every sample was exactly 0.0 while
+        // the route still reported the built-in microphone. If the input is silent for that reason, this
+        // is what removes it; the route is read back in the log either way, so nothing is assumed.
         if (![session setActive:YES error:&failure]) {
             [self logTransitionFrom:from to:@"push-to-talk" result:NO error:failure];
             return;
@@ -193,7 +194,8 @@ static char const AKAudioCoordinatorQueueKey;
         _pushToTalk = NO;
         AVAudioSession *session = AVAudioSession.sharedInstance;
         // The preference goes with the lease: it was asked for by push to talk, and leaving it
-        // behind would silently change where the game's own audio comes from.
+        // behind would silently change where the game's own audio comes from. Push to talk no longer
+        // sets one (see beginPushToTalk), and this still clears anything an earlier build left behind.
         [session setPreferredInput:nil error:NULL];
         if (_gameWantsPlayback) {
             _lease = AKAudioLeaseGame;
@@ -235,13 +237,23 @@ static char const AKAudioCoordinatorQueueKey;
 // acceptance criterion, so the code was the thing that was wrong.
 - (BOOL)applyLauncherPolicy:(NSError **)error {
     NSError *failure = nil;
+    // The session is released before the category is changed. Dictation now records, and releasing the
+    // input before asking for an output-only category is the order that cannot leave a microphone open;
+    // the other order asks for the switch while the input is still running. This is ordering chosen for
+    // safety, not a measured fix - the failed transitions in the voice suite are the pre-existing
+    // "the session was taken from us" line, which reports the loss on purpose and is present before and
+    // after this change.
+    if (![self releaseSession:&failure]) {
+        if (error) *error = failure;
+        return NO;
+    }
     if (![AVAudioSession.sharedInstance setCategory:AVAudioSessionCategorySoloAmbient
                                                mode:AVAudioSessionModeDefault
                                             options:0 error:&failure]) {
         if (error) *error = failure;
         return NO;
     }
-    return [self releaseSession:error];
+    return YES;
 }
 
 // Releasing rather than forcing: with NotifyOthersOnDeactivation the system tells whatever was
