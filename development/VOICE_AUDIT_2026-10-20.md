@@ -186,3 +186,51 @@ It is the reason this has gone in circles.
 - "The voice self-test proves the microphone works" - it never did. It cancelled before audio arrived.
 - "The audio session is provably correct" - it was provably correct in the properties being logged, and
   the property that mattered had not been logged.
+
+## 9. When it last worked, from the record
+
+`c1c1422`, **2026-10-17 13:34**, says in its own commit message that "the real recogniser **heard 17
+characters** and delivered them to the armed test screen". The next measurement of the microphone,
+`65741c6` at **13:52**, is titled "The microphone is permitted and the tap delivers nothing".
+
+So dictation worked at 13:34 and was silent by 13:52, and everything since has been investigated as if
+the audio code were at fault.
+
+The only other commit in that window is `131e868` (13:40), which touches `pilot.sh` alone - it records
+what was running before an install and restores it afterwards - and cannot silence a microphone.
+
+The change that altered the audio path in that window is `c1c1422` itself: the fix for the microphone
+being **left held open** between dictations. Before it the session stayed on `Record`, so each dictation
+inherited an input that was already running. That difference was tested on 2026-10-20 with three
+bare-recorder captures in one process:
+
+```
+after activation                 -120.0 dBFS
+session never released           -120.0 dBFS
+after release and reactivation   -120.0 dBFS
+```
+
+So a held session is **not** the mechanism, and the working build's advantage was not that it kept the
+input alive. Releasing the session was reverted rather than left in as an unproven change.
+
+## 10. What is left, after every in-process hypothesis has been measured and failed
+
+A bare `AVAudioRecorder`, taking the session by hand with none of the project's audio code in the path,
+still records digital silence. Permission is granted, the app is active, input is available, the session
+is in a recording category, no other app holds audio, the platform shims never run an audio unit, and
+the cold/warm difference is disproven.
+
+What remains is between the operating system and this process, and none of it is reachable from the
+app's code:
+
+1. **The app's microphone permission record is broken while still reporting `granted`.** This happens
+   after an app is installed over itself many times. A Settings toggle (off, then on) forces iOS to
+   re-establish it. Not yet done.
+2. **Re-signing between installs orphaned the permission.** Compare the installed build's signature and
+   provisioning profile across installs. Not yet done.
+3. **Something outside the app holds the input for this app only** - a stuck media server, or a
+   Continuity/Handoff capture. A restart clears the first. Not yet done.
+
+The measurements that would separate these need either the device's system log (a `sysdiagnose`, which
+requires an administrator password on this Mac) or a permission toggle, which only the device's owner
+can perform.

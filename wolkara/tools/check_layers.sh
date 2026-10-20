@@ -183,7 +183,14 @@ fi
 # `setMode:` is deliberately not in this first scan: the layer has its own -setMode: for the voice
 # mode, which has nothing to do with the audio session, and a gate that cries wolf gets turned off.
 # It is checked below, where the only code scanned is the platform's, and a setMode there is one.
-mutators=$(git grep -l -e 'setCategory:' -e 'setActive:' -e 'setPreferredInput:' -- wolkara 2>/dev/null | grep -E '\.(m|h)$' | grep -v "AudioSessionCoordinator" | grep -v "/tests/" | head -5)
+#
+# Shell/SelfTest.m is the single exemption, and it is named rather than pattern-matched. Its
+# --selftest=mic takes the session by hand on purpose: the coordinator has been in the path of every
+# measurement made during this fault, and a test that asks the coordinator for the session cannot tell
+# whether the coordinator is the reason the microphone arrives silent. The test is unreachable from the
+# UI and runs only when the app is launched with --selftest=mic, so it cannot become a second owner in
+# the app's own operation.
+mutators=$(git grep -l -e 'setCategory:' -e 'setActive:' -e 'setPreferredInput:' -- wolkara 2>/dev/null | grep -E '\.(m|h)$' | grep -v "AudioSessionCoordinator" | grep -v "/tests/" | grep -v "Shell/SelfTest.m" | head -5)
 if [ -z "$mutators" ]; then
     ok "the audio session has one owner"
 else

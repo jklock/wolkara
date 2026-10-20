@@ -24,6 +24,8 @@ NS_ASSUME_NONNULL_BEGIN
 // like a pass.
 extern NSString *const AKSelfTestInput;
 extern NSString *const AKSelfTestVoice;
+/// A bare recorder, opened the way Apple documents it, with none of the app's audio code in the path.
+extern NSString *const AKSelfTestMic;
 
 // Runs one self-test and logs the verdict the matrix greps:
 //   selftest: <name> PASS <passed>/<total> checks (<what was exercised>)
