@@ -112,12 +112,19 @@ double AKVoiceLoudestSample(void) { return AKLoudestSoFar; }
     _recording = [NSURL fileURLWithPath:
                   [NSTemporaryDirectory() stringByAppendingPathComponent:@"wolkara-dictation.wav"]];
     [[NSFileManager defaultManager] removeItemAtURL:_recording error:NULL];
+    // 16-bit integer LPCM, not 32-bit float.
+    //
+    // The float settings were mine, and they are the reason every recording this app has made is 4 KB:
+    // a header and no audio frames. `record` returns success and `currentTime` advances, so nothing
+    // looked wrong, but AVAudioRecorder does not reliably write float LPCM to a file on iOS. 16-bit
+    // integer is what every documented example uses, and a recorder that cannot write looks exactly
+    // like a microphone that cannot hear.
     NSDictionary *settings = @{
         AVFormatIDKey: @(kAudioFormatLinearPCM),
         AVSampleRateKey: @(48000.0),
         AVNumberOfChannelsKey: @(1),
-        AVLinearPCMBitDepthKey: @(32),
-        AVLinearPCMIsFloatKey: @YES,
+        AVLinearPCMBitDepthKey: @(16),
+        AVLinearPCMIsFloatKey: @NO,
         AVLinearPCMIsBigEndianKey: @NO,
     };
     NSError *error = nil;
