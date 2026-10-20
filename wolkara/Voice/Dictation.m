@@ -7,23 +7,41 @@
 
 #import <AVFAudio/AVFAudio.h>
 #import <Speech/Speech.h>
+#include <math.h>
 
 // kVK_Return, and the character the game expects for it. Taken from the accessory row,
 // which sends its Return exactly this way.
 static unsigned short const AKReturnKeyCode = 36;
 
-// How long the recogniser gets to produce its last words after the audio ends. Long
-// enough for a slow final pass on-device, short enough that a stuck session does not
-// hold the microphone open.
-static NSTimeInterval const AKDefaultFinalizeTimeout = 3.0;
+// How long the recogniser gets to produce its last words after the audio ends.
+//
+// The capture records a file now and the recogniser reads the whole of it, so this is a whole-file pass
+// rather than a streaming one, and it only starts once the audio has ended. This is the safety net for a
+// stuck recogniser, not the expected wait - but a file request reports no partials, so a timeout that
+// fired early would deliver nothing at all, which is the exact symptom that took days to separate from a
+// silent microphone. Generous on purpose.
+static NSTimeInterval const AKDefaultFinalizeTimeout = 8.0;
 
-// Per capture, not per process: what the loudest sample of this capture has been, and whether the
-// shape of its first buffer has been reported. Both are reset when a capture starts, so a second
-// hold never reports the first hold's numbers.
+// Per capture, not per process: the loudest sample this capture has heard. Reset when a capture starts,
+// so a second hold never reports the first hold's number.
 static double AKLoudestSoFar;
-static BOOL AKSaidTheShape;
+
+// The same peak as a level in dBFS, because the linear value cannot show the difference that matters:
+// a silent input meters at -120 dBFS, which is 0.000001 linear and looks like "not zero" to any check
+// written as `> 0`. A room is -50 to -70 dBFS. Kept in decibels so the check can be a threshold that
+// silence cannot satisfy.
+static double AKLoudestDecibels = -160.0;
+
+double AKVoiceLoudestDecibels(void) { return AKLoudestDecibels; }
 
 double AKVoiceLoudestSample(void) { return AKLoudestSoFar; }
+
+// The loudest sample a recording holds, as a level in dBFS, read from the recorder's own meter.
+//
+// The first version of this read the recorded file back with AVAudioFile and reported 0.00000 - which
+// was the read failing with error -50, not the microphone being silent. A measurement that can fail and
+// still look like the fault it is meant to detect is worse than no measurement, so the level comes from
+// the recorder's meter, where silence is -160 dB and cannot be confused with a parse error.
 
 #pragma mark - The real recogniser
 
@@ -33,9 +51,12 @@ double AKVoiceLoudestSample(void) { return AKLoudestSoFar; }
 @end
 
 @implementation AKSpeechSession {
-    AVAudioEngine *_engine;
+    AVAudioRecorder *_recorder;
+    NSURL *_recording;
+    BOOL _onDevice;
+    NSArray<NSString *> *_words;
     SFSpeechRecognizer *_recognizer;
-    SFSpeechAudioBufferRecognitionRequest *_request;
+    SFSpeechURLRecognitionRequest *_request;
     SFSpeechRecognitionTask *_task;
     void (^_handler)(NSString *, BOOL, NSError *);
     BOOL _finished;
@@ -73,61 +94,100 @@ double AKVoiceLoudestSample(void) { return AKLoudestSoFar; }
     _handler = [handler copy];
     _finished = NO;
 
-    _request = [[SFSpeechAudioBufferRecognitionRequest alloc] init];
-    // The product promises this; the caller has already refused to start when the
-    // recogniser cannot do it.
-    _request.requiresOnDeviceRecognition = onDevice;
-    _request.shouldReportPartialResults = YES;
-    if (words.count) _request.contextualStrings = words;
-
-    _engine = [[AVAudioEngine alloc] init];
+    _onDevice = onDevice;
+    _words = [words copy];
     AKLoudestSoFar = 0;
-    AKSaidTheShape = NO;
-    AVAudioInputNode *input = _engine.inputNode;
-    AVAudioFormat *format = [input outputFormatForBus:0];
-    WKLog("voice", @"dictation: tap on %.0fHz %lu channel(s), %@", format.sampleRate,
-          (unsigned long)format.channelCount, format.isStandard ? @"standard float32" : @"NOT standard");
-    [input installTapOnBus:0 bufferSize:1024 format:format
-                     block:^(AVAudioPCMBuffer *buffer, AVAudioTime *when) {
-        (void)when;
-        [self->_request appendAudioPCMBuffer:buffer];
-        // What the first buffer actually is. Every reading available before this could not tell an
-        // empty buffer from a silent one from a non-float one, and those are three different faults
-        // with three different causes. One line says which.
-        if (!AKSaidTheShape) {
-            AKSaidTheShape = YES;
-            WKLog("voice", @"dictation: first buffer is %lu frame(s), %.0fHz %lu channel(s), float data %@",
-                  (unsigned long)buffer.frameLength, buffer.format.sampleRate,
-                  (unsigned long)buffer.format.channelCount,
-                  buffer.floatChannelData ? @"present" : @"ABSENT");
-        }
-        // The loudest sample of the capture so far, once a second, while dictation runs. Read-only.
-        //
-        // This is the one measurement that separates a microphone delivering nothing from a recogniser
-        // that will not work. Everything else is already logged and correct: PlayAndRecord, the built-in
-        // microphone, 48000Hz, one channel, input available, the engine running. A microphone in a room
-        // never reads exactly zero, so one number settles it.
-        if (buffer.floatChannelData && buffer.frameLength > 0) {
-            float peak = 0;
-            for (AVAudioFrameCount frame = 0; frame < buffer.frameLength; frame++) {
-                float value = buffer.floatChannelData[0][frame];
-                if (value < 0) value = -value;
-                if (value > peak) peak = value;
-            }
-            if (peak > AKLoudestSoFar) AKLoudestSoFar = peak;
-            static NSTimeInterval lastReport = 0;
-            NSTimeInterval now = NSDate.date.timeIntervalSinceReferenceDate;
-            if (now - lastReport >= 1.0) {
-                lastReport = now;
-                // The category is read here, during the capture, and not at the transition: the whole
-                // point is that something outside this class can change it between the two, and a
-                // capture that is still recording PlayAndRecord cannot be receiving digital silence
-                // for any reason to do with the session.
-                WKLog("voice", @"dictation: the loudest sample heard is %.5f while the session is %@",
-                      AKLoudestSoFar, AVAudioSession.sharedInstance.category);
-            }
-        }
-    }];
+
+    // Record to a file instead of tapping an AVAudioEngine.
+    //
+    // Measured on the device across four session configurations, the engine's tap fired at the right
+    // rate with well-formed standard float32 buffers and every sample was exactly 0.0, while the
+    // session was correct each time: permission granted, input available, routed to the built-in
+    // microphone, and the category read during the capture was a recording one. An AVAudioRecorder is
+    // a different implementation of the same session, which is the one thing that tells an engine
+    // receiving nothing apart from a microphone delivering nothing - and it leaves the audio on disk,
+    // so the peak reported at the end describes what the microphone delivered, not what a consumer of
+    // the stream did with it.
+    _recording = [NSURL fileURLWithPath:
+                  [NSTemporaryDirectory() stringByAppendingPathComponent:@"wolkara-dictation.wav"]];
+    [[NSFileManager defaultManager] removeItemAtURL:_recording error:NULL];
+    NSDictionary *settings = @{
+        AVFormatIDKey: @(kAudioFormatLinearPCM),
+        AVSampleRateKey: @(48000.0),
+        AVNumberOfChannelsKey: @(1),
+        AVLinearPCMBitDepthKey: @(32),
+        AVLinearPCMIsFloatKey: @YES,
+        AVLinearPCMIsBigEndianKey: @NO,
+    };
+    NSError *error = nil;
+    _recorder = [[AVAudioRecorder alloc] initWithURL:_recording settings:settings error:&error];
+    if (!_recorder) {
+        [self cancel];
+        if (_handler) _handler(@"", NO, error);
+        return;
+    }
+    // So that the peak of the whole capture can be read from the recorder itself when it stops, rather
+    // than reconstructed from the file afterwards.
+    _recorder.meteringEnabled = YES;
+    if (![_recorder record]) {
+        NSError *refused = [NSError errorWithDomain:@"wolkara.dictation" code:1 userInfo:@{
+            NSLocalizedDescriptionKey: @"The microphone did not start recording."}];
+        [self cancel];
+        if (_handler) _handler(@"", NO, refused);
+        return;
+    }
+    WKLog("voice", @"dictation: recorder started, %.0fHz %lu channel(s), %@; the session is %@",
+          _recorder.format.sampleRate, (unsigned long)_recorder.format.channelCount,
+          _recorder.format.isStandard ? @"standard float32" : @"NOT standard",
+          AVAudioSession.sharedInstance.category);
+}
+
+- (void)finish {
+    // Ending the capture is what produces the file the recogniser reads.
+    [self stopRecordingAndMeasure];
+    if (!_finished) [self recogniseRecording];
+}
+
+- (void)cancel {
+    // The measurement is taken even when the capture is abandoned. A diagnostic that only works on the
+    // happy path cannot diagnose the unhappy one, and "cancel" is what a failed press does.
+    [self stopRecordingAndMeasure];
+    _finished = YES;
+    _handler = nil;
+    [_task cancel];
+    _task = nil;
+    _request = nil;
+    if (_recording) [[NSFileManager defaultManager] removeItemAtURL:_recording error:NULL];
+    _recording = nil;
+}
+
+// Stop the recorder and say what it captured. Called by both finish and cancel, so the number exists
+// however the press ended.
+//
+// `updateMeters` refreshes the peak since the previous call, so one call at the end reports the loudest
+// moment of the whole recording. Silence is -160 dBFS and is reported as such; anything above it is a
+// real level, converted back to a linear peak so the rest of the app still has one number to look at.
+- (void)stopRecordingAndMeasure {
+    if (!_recorder) return;
+    [_recorder updateMeters];
+    float decibels = [_recorder peakPowerForChannel:0];
+    NSTimeInterval seconds = _recorder.currentTime;
+    [_recorder stop];
+    _recorder = nil;
+    AKLoudestDecibels = (double)decibels;
+    AKLoudestSoFar = (decibels <= -160.0f) ? 0.0 : pow(10.0, (double)decibels / 20.0);
+    WKLog("voice", @"dictation: recorded %.2fs, peak %.1f dBFS (%.5f linear), session %@, other audio playing %d",
+          seconds, decibels, AKLoudestSoFar, AVAudioSession.sharedInstance.category,
+          (int)AVAudioSession.sharedInstance.isOtherAudioPlaying);
+}
+
+- (void)recogniseRecording {
+    if (!_recording) return;
+    _request = [[SFSpeechURLRecognitionRequest alloc] initWithURL:_recording];
+    // The product promises this; the caller has already refused to start when the recogniser cannot.
+    _request.requiresOnDeviceRecognition = _onDevice;
+    _request.shouldReportPartialResults = NO;
+    if (_words.count) _request.contextualStrings = _words;
 
     __weak AKSpeechSession *weakSelf = self;
     _task = [_recognizer recognitionTaskWithRequest:_request
@@ -140,39 +200,6 @@ double AKVoiceLoudestSample(void) { return AKLoudestSoFar; }
         if (result.isFinal || error) session->_finished = YES;
         if (session->_handler) session->_handler(text, result.isFinal, error);
     }];
-
-    NSError *error = nil;
-    [_engine prepare];
-    if (![_engine startAndReturnError:&error]) {
-        [self cancel];
-        if (_handler) _handler(@"", NO, error);
-    }
-    // The tap never fires, so the engine is the one being asked. isStandard is the exact fact: an engine
-    // input that is not standard float32 cannot give the tap float data however the session is set up.
-    AVAudioFormat *inFormat = [_engine.inputNode outputFormatForBus:0];
-    WKLog("voice", @"dictation: engine %@, input %.0fHz %lu channel(s), %@",
-          _engine.isRunning ? @"running" : @"NOT running",
-          inFormat.sampleRate, (unsigned long)inFormat.channelCount,
-          inFormat.isStandard ? @"standard float32" : @"NOT standard");
-}
-
-- (void)finish {
-    // Ending the audio is what makes the recogniser produce its final result; the
-    // task is not cancelled, so that result still arrives.
-    [_request endAudio];
-}
-
-- (void)cancel {
-    _finished = YES;
-    _handler = nil;
-    if (_engine) {
-        [_engine.inputNode removeTapOnBus:0];
-        [_engine stop];
-        _engine = nil;
-    }
-    [_task cancel];
-    _task = nil;
-    _request = nil;
 }
 
 @end

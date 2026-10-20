@@ -324,17 +324,26 @@ static void AKSelfTestRunVoice(AKSelfTestRecorder *recorder) {
             // reaching us, and it is the difference between a recogniser that fails and a session that
             // was never wrong.
             AKSelfTestSleep(1.5);
-            double loudest = AKVoiceLoudestSample();
-            WKLog("selftest", @"selftest: held the microphone for 1.5 seconds; the loudest sample was %.5f while the session was %@",
-                  loudest, session.category);
-            [recorder check:(loudest > 0) _:[NSString stringWithFormat:@"the microphone delivers more than digital silence (loudest %.5f)", loudest]];
             [recorder check:AKSelfTestIsRecordingCategory(session.category) _:@"and it is still recording, not taken away mid-hold"];
+            NSString *categoryWhileHolding = session.category;
+            // The capture is stopped before the peak is read. The audio goes to a file and the number is
+            // read back from it, so it describes what the microphone delivered rather than what a
+            // consumer of the stream saw. Cancel measures as well as finish, because a diagnostic that
+            // only works on the happy path cannot diagnose the unhappy one.
             AKSelfTestOnMain(^{ [dictation cancel]; });
             AKSelfTestSleep(0.6);
+            double decibels = AKVoiceLoudestDecibels();
+            WKLog("selftest", @"selftest: held the microphone for 1.5 seconds; peak %.1f dBFS while the session was %@",
+                  decibels, categoryWhileHolding);
+            // -120 dBFS is what a silent input meters at, and it is 0.000001 linear - so a check for
+            // "greater than zero" passes on silence, which is what this test did before. A room measures
+            // -50 to -70 dBFS, so below -70 is the microphone not reaching the app.
+            [recorder check:(decibels > -70.0) _:[NSString stringWithFormat:
+                @"the microphone delivers more than digital silence (peak %.1f dBFS)", decibels]];
             [recorder check:(dictation.state == AKDictationStateIdle) _:@"cancelling ends the session"];
             [recorder check:(!dictation.listening) _:@"and closes the microphone"];
             [recorder check:[session.category isEqualToString:categoryBefore] _:@"and puts the audio session back as it was"];
-            detail = [NSString stringWithFormat:@"speech=authorized on-device=1, session=record-then-restored, loudest=%.5f", loudest];
+            detail = [NSString stringWithFormat:@"speech=authorized on-device=1, session=record-then-restored, peak=%.1f dBFS", decibels];
         } else {
             // It did not open. On a device where it does not, the app must either say why or be
             // visibly still waiting on the permission callback - doing neither, silently, is the
