@@ -82,7 +82,12 @@ mkdir -p "$ERRORS" "$CRASH_DIR"
 # is not a harmless delay: a self-test can then remain on its development status
 # screen and an install can strand the protected-enrollment screen. Bound every
 # device call and fail closed rather than leaving an unbounded process behind.
-PILOT_DEVICE_TIMEOUT=${PILOT_DEVICE_TIMEOUT:-30}
+# 30 seconds was not enough on this device. The app's container holds a 50.7 GB game, and listing it
+# takes longer than that; the bound fired, `files=failed`, and every install refused to run with a
+# message about an unlocked iPad - which is not what was wrong. The bound exists to stop an
+# unresponsive device hanging forever, not to time a large file listing. 180 keeps that protection and
+# stops failing a device that is merely big.
+PILOT_DEVICE_TIMEOUT=${PILOT_DEVICE_TIMEOUT:-180}
 PILOT_HOME_TIMEOUT=${PILOT_HOME_TIMEOUT:-20}
 xcrun() {
     if [ "${1:-}" != "devicectl" ]; then
