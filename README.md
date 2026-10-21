@@ -20,7 +20,9 @@ This project is not affiliated with or endorsed by Blizzard Entertainment.
 
 ## Try it with Xcode
 
-**Start here: [Build and run Wolkara](docs/GETTING_STARTED.md).**
+**Start here: [Build and run Wolkara](docs/GETTING_STARTED.md).** Once the app
+is installed, use the [in-app guide](docs/USING_WOLKARA.md) for the launcher,
+add-ons, voice, permissions, and recovery controls.
 
 The current route needs a Mac with Xcode, XcodeGen and Python 3, your own Apple
 developer signing with the required capabilities, Developer Mode on the device,
@@ -82,9 +84,9 @@ with the real recogniser - on-device only - and checks that the session is hande
 and keys. They do not prove the microphone delivered audio or that a person spoke: what they
 assert is the session state and the wiring. Those exist because a script cannot press a pad
 button or speak; a person is only needed for a real voice, a real pad and the game itself.
-Dictation was confirmed by the developer in both places on 2026-10-21 - on the home screen's
-**Test Voice** page and inside the running game at its login screen - and the device logs hold
-the evidence for both (see [`docs/VOICE.md`](docs/VOICE.md#verified-on-the-device)).
+Voice dictation was extensively validated by the user on the physical iPad on 2026-10-21, both
+on the home screen's **Test Voice** page and inside the running game. Device logs hold the
+recorded evidence for the exercised paths (see [`docs/VOICE.md`](docs/VOICE.md#verified-on-the-device)).
 Development and testing automation is welcome here: the
 ban in the policy below is on automating *the game*, not on testing this app.
 
