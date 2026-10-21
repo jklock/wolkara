@@ -4,10 +4,6 @@
 #import "TouchGamepadLayout.h"
 #import "TouchGamepad.h"
 #import "TouchHaptics.h"
-// NSApp, for leaving the game. The adapter is built into the AppKit dylib, so the guest's
-// own application object is in reach here - and it is the only thing that can end a guest
-// screen that has no quit of its own, such as the login screen.
-#import "AppKit.h"
 #import <objc/message.h>
 
 // Null until the app's shell says which keys are the user's; null means "nothing is owned",
@@ -356,11 +352,10 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
         // A way out of the game from any screen. Until this existed, a guest screen with no
         // quit of its own - the login screen is one - left the user with no control that
         // returned to Wolkara's launcher at all, and closing the app was the only exit
-        // (reported on Dadpad, 2026-10-21). It asks the guest to terminate, so the game runs
-        // its own save-and-quit path rather than being killed.
+        // (reported on Dadpad, 2026-10-21). It closes Wolkara, which ends the guest with it.
         _leaveButton=[self buttonWithSymbol:@"house" label:@"Leave the game" action:@selector(leaveGame)];
         _leaveButton.accessibilityIdentifier=@"wolkara.leaveGame";
-        _leaveButton.accessibilityHint=@"Asks the game to close and save. Wolkara ends with it; open Wolkara again to start it.";
+        _leaveButton.accessibilityHint=@"Closes Wolkara and the game; anything the game has not saved is lost. Open Wolkara again to start it.";
         // Said once at build time so a device run can be read back without a tap.
         AKLog(@"toolbar: leave game control on the toolbar (house; asks the guest to terminate)");
         _gamepadButton.accessibilityHint = @"Show touch controls when no physical controller is connected. Tap to turn off or restore automatic controls.";
@@ -476,43 +471,21 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
 // process, so Wolkara cannot put its launcher back afterwards - opening Wolkara again does.
 - (void)leaveGame {
     [self cancelTouches]; [self dismissKeyboard];
+    // One question, and no request to the guest.
+    //
+    // Asking the guest's own application object to terminate was tried first and is not kept.
+    // The client answered `NSTerminateCancel`, so the tap did nothing at all - the exact dead
+    // end this control exists to remove - and on the same run it faulted with EXC_BAD_ACCESS
+    // shortly afterwards (ERROR #132, Dadpad, 2026-10-21): a half-asked shutdown that is then
+    // cancelled is not a state to put a running client in for a UI convenience. Wolkara ends
+    // its own process instead, and says plainly what that costs.
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Leave the game?"
-        message:@"The game is asked to close and save its settings. If it will not close, you can still close Wolkara."
-        preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"Keep playing" style:UIAlertActionStyleCancel handler:nil]];
-    __weak AKTouchControls *weakSelf = self;
-    [alert addAction:[UIAlertAction actionWithTitle:@"Leave game" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
-        (void)action;
-        AKLog(@"leave game: asking the guest to terminate");
-        if (!NSApp) {
-            AKLog(@"leave game: the guest has no application object; offering to close Wolkara");
-            [weakSelf offerToCloseWolkara];
-            return;
-        }
-        [NSApp terminate:nil];
-        // A guest is allowed to refuse. `applicationShouldTerminate:` answered NSTerminateCancel
-        // when this control was first tried on Dadpad (2026-10-21), so the tap did nothing and
-        // the user was still inside the game - the exact dead end this control exists to remove.
-        // If this process is still here a moment later, say so and offer the only exit left.
-        // When the guest does quit, its own termination path ends the process and this never runs.
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            AKLog(@"leave game: the guest is still running after the request to terminate");
-            [weakSelf offerToCloseWolkara];
-        });
-    }]];
-    [self.window.rootViewController presentViewController:alert animated:YES completion:nil];
-}
-// The second question, and the last way out: the guest would not close, so Wolkara is closed
-// instead. The shell does it, because the session and the Steam Cloud flush belong to it; this
-// only asks. Nothing in the guest's memory is touched and no state is saved on its behalf.
-- (void)offerToCloseWolkara {
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"The game did not close"
-        message:@"It refused to quit, so it may be busy. Closing Wolkara now loses anything the game has not saved."
+        message:@"The game will close without saving its settings, and Wolkara ends with it. Open Wolkara again to start the game."
         preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"Keep playing" style:UIAlertActionStyleCancel handler:nil]];
     [alert addAction:[UIAlertAction actionWithTitle:@"Close Wolkara" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
         (void)action;
-        AKLog(@"leave game: the user chose to close Wolkara after the guest refused to quit");
+        AKLog(@"leave game: the user chose to close Wolkara");
         [NSNotificationCenter.defaultCenter postNotificationName:AKTouchCloseAppNotification object:nil];
     }]];
     [self.window.rootViewController presentViewController:alert animated:YES completion:nil];
