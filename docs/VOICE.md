@@ -1,6 +1,7 @@
 # Voice: the settings, the modes, and what we match from Handy
 
-Status: implemented. Supersedes the ad-hoc "tap Share"
+Status: implemented and verified on the iPad - on the home screen and inside the
+running game. Supersedes the ad-hoc "tap Share"
 wiring, and sits on `docs/INPUT_TRIGGERS.md`, which is what makes the button part
 work on any controller.
 
@@ -59,21 +60,43 @@ made them the one part of the launcher that did not look like the launcher.
 The touch controls are the layer's `UIKeyInput`: their `insertText:` goes to their delegate,
 which turns the words into the guest's key events. They announce themselves to the shell
 (`AKTouchGameTextInputDidAppearNotification`), the shell hands that view to `AKDictation`, and
-the transcript is typed there and nowhere else. The draft editor is **not** announced: it is a
-`UITextView` that holds words for Replace and cannot reach the game at all.
+a transcript is typed there and nowhere else - into whatever field the game has focused. The
+draft editor is **not** the game's input: it is a `UITextView` that holds words for the
+keyboard's Replace button and cannot reach the game at all.
 
-That distinction was worth a crash. The announcement once named the draft editor, so the first
-sentence spoken inside the game - at the login screen, into the password field - aborted the
-app with `-[AKKeyboardTextView touchInsertText:]: unrecognized selector`. The Test Voice page
-never showed it, because a transcript handler was set there and the game's path was never
-taken; the home screen was fine for the same reason. Two things now make that impossible: the
-controls answer `touchInsertText:` and `touchSpecialKey:characters:` themselves, and dictation
-asks `respondsToSelector:` before sending, so a wrong target loses the words instead of
-killing a running game.
+The two channels stay separate on purpose. The system keyboard's own microphone writes into
+the draft and the user decides when Replace puts it into the field (`TOUCH_INPUT.md`). A
+mapped voice trigger writes straight into the field and presses Return only when auto-submit
+is on; nothing of ours appears for it.
 
-Measured on Dadpad, 2026-10-21: two dictations in the game, 21 characters each, 43 key events
-dequeued by the guest (21 down/up pairs plus Return), the session handed back to `game`, no
-crash report, the app still running.
+### The crash that made this explicit
+
+That announcement once named the draft editor, so the first sentence spoken inside the game -
+at the login screen, into the password field - aborted the app:
+
+```
+NSInvalidArgumentException: -[AKKeyboardTextView touchInsertText:]: unrecognized selector
+-[AKDictation typeIntoGame:] -> -[AKDictation deliver] ... _exit(1)
+```
+
+**Test Voice and the home screen never showed it**, because both set a transcript handler and
+the game's path was never taken; only a dictation inside a running game exercised it. Two
+things make the same mistake impossible now: the controls answer `touchInsertText:` and
+`touchSpecialKey:characters:` themselves, and `AKDictation` asks `respondsToSelector:` before
+either send - a wrong target loses the words instead of killing a running game.
+
+## Verified, on the device
+
+| Where | What was done | What the logs say |
+| --- | --- | --- |
+| Home screen, **Test Voice** | Options on an Xbox pad mapped, a sentence spoken, held and released | `dictation: heard 40 characters, for the test screen`; the session went back to idle and nothing was typed into a game |
+| In the game, login screen | the same trigger twice, into a focused field, auto-submit on | `heard 21 characters` and `sent Return` both times; the guest dequeued 43 key events on the first (21 down/up pairs plus Return) and the session went back to `game` |
+
+Measured on Dadpad (iPad Pro 12.9-inch, 5th generation), 2026-10-21, Developer service. No
+crash report was written and the app was still running afterwards. The self-test
+`--selftest=dictation-target` asks the registered target the same two questions and is what
+the device matrix can run without a person speaking; it reported `PASS 2/2 checks
+(AKTouchControls answers both selectors)` in the same run.
 
 ## The audio session, as a policy rather than a promise
 
