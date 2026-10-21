@@ -4,6 +4,10 @@
 #import "TouchGamepadLayout.h"
 #import "TouchGamepad.h"
 #import "TouchHaptics.h"
+// NSApp, for leaving the game. The adapter is built into the AppKit dylib, so the guest's
+// own application object is in reach here - and it is the only thing that can end a guest
+// screen that has no quit of its own, such as the login screen.
+#import "AppKit.h"
 #import <objc/message.h>
 
 // Null until the app's shell says which keys are the user's; null means "nothing is owned",
@@ -250,7 +254,7 @@ static BOOL hardwareKeyboardAttached(void) {
 @end
 
 @implementation AKTouchControls {
-    UIButton *_keyboardButton, *_trackpadButton, *_gamepadButton, *_settingsButton;
+    UIButton *_keyboardButton, *_trackpadButton, *_gamepadButton, *_settingsButton, *_leaveButton;
     UIButton *_insertDraftButton, *_clearDraftButton;
     UILabel *_composerLabel;
     BOOL _gamepadEnabled, _keyboardRequested, _systemKeyboardSeen;
@@ -344,6 +348,16 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
         _gamepadButton.accessibilityIdentifier = @"tolkara.gamepad";
         _settingsButton = [self buttonWithSymbol:@"gearshape" label:@"Touch control settings" action:@selector(showControlSettings)];
         _settingsButton.accessibilityIdentifier = @"wolkara.controlSettings";
+        // A way out of the game from any screen. Until this existed, a guest screen with no
+        // quit of its own - the login screen is one - left the user with no control that
+        // returned to Wolkara's launcher at all, and closing the app was the only exit
+        // (reported on Dadpad, 2026-10-21). It asks the guest to terminate, so the game runs
+        // its own save-and-quit path rather than being killed.
+        _leaveButton=[self buttonWithSymbol:@"house" label:@"Leave the game" action:@selector(leaveGame)];
+        _leaveButton.accessibilityIdentifier=@"wolkara.leaveGame";
+        _leaveButton.accessibilityHint=@"Asks the game to close and save. Wolkara ends with it; open Wolkara again to start it.";
+        // Said once at build time so a device run can be read back without a tap.
+        AKLog(@"toolbar: leave game control on the toolbar (house; asks the guest to terminate)");
         _gamepadButton.accessibilityHint = @"Show touch controls when no physical controller is connected. Tap to turn off or restore automatic controls.";
         NSNumber *gamepad = [NSUserDefaults.standardUserDefaults objectForKey:@"TKTouchGamepadEnabled"];
         _gamepadEnabled = gamepad ? gamepad.boolValue : YES;
@@ -381,7 +395,7 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
     (void)notification;
     AKGamepadLayout *layout = [[AKGamepadLayout alloc] initWithDefaults:NSUserDefaults.standardUserDefaults];
     _haptics.enabled = layout.hapticsEnabled;
-    for (UIButton *button in @[_trackpadButton, _keyboardButton, _gamepadButton, _settingsButton]) button.alpha = layout.opacity;
+    for (UIButton *button in @[_trackpadButton, _keyboardButton, _gamepadButton, _settingsButton, _leaveButton]) button.alpha = layout.opacity;
 }
 - (void)buttonTouchDown { [_haptics buttonPressed]; }
 
@@ -404,7 +418,7 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
         self.translatesAutoresizingMaskIntoConstraints = YES;
     }
     static unsigned logged;
-    CGFloat width = 200, height = 44;
+    CGFloat width = 252, height = 44;
     CGRect bounds = host.bounds;
     self.frame = CGRectMake(floor((bounds.size.width - width) / 2),
                             host.safeAreaInsets.top + 8, width, height);
@@ -424,6 +438,7 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
     _keyboardButton.frame = CGRectMake(52, 0, 44, 44);
     _gamepadButton.frame = CGRectMake(104, 0, 44, 44);
     _settingsButton.frame = CGRectMake(156, 0, 44, 44);
+    _leaveButton.frame = CGRectMake(208, 0, 44, 44);
 }
 - (void)setTrackpadEnabled:(BOOL)enabled {
     [self cancelTouches];
@@ -444,6 +459,29 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
     // host that may have no such thing.
     [_gamepad toggleSettings];
     if ([self.delegate respondsToSelector:@selector(touchControlSettings)]) [self.delegate touchControlSettings];
+}
+// Leaving the game from a screen that has no quit of its own.
+//
+// The guest is a real Cocoa application in this process: asking its own NSApp to terminate
+// runs its applicationShouldTerminate:/applicationWillTerminate: handlers first, which is how
+// the game saves its settings, and only then does the translated AppKit end the process. That
+// is the same path the game's own Exit item takes; nothing is killed and no memory is written.
+//
+// The confirmation says the rest plainly because there is no way around it: one guest per
+// process, so Wolkara cannot put its launcher back afterwards - opening Wolkara again does.
+- (void)leaveGame {
+    [self cancelTouches]; [self dismissKeyboard];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Leave the game?"
+        message:@"The game is asked to close and save its settings. Wolkara ends with it; open Wolkara again to start the game."
+        preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Keep playing" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Leave game" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
+        (void)action;
+        AKLog(@"leave game: asking the guest to terminate");
+        if (NSApp) [NSApp terminate:nil];
+        else AKLog(@"leave game: the guest has no application object; nothing sent");
+    }]];
+    [self.window.rootViewController presentViewController:alert animated:YES completion:nil];
 }
 - (void)setGamepadVisible:(BOOL)visible {
     _gamepadButton.tintColor = visible ? UIColor.systemCyanColor : UIColor.whiteColor;
@@ -523,7 +561,7 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
 // game. The platform's own test is what caught it.
 - (BOOL)pointInside:(CGPoint)point withEvent:(UIEvent *)event {
     (void)event;
-    for (UIView *control in @[_trackpadButton, _keyboardButton, _gamepadButton, _settingsButton, _composer]) {
+    for (UIView *control in @[_trackpadButton, _keyboardButton, _gamepadButton, _settingsButton, _leaveButton, _composer]) {
         if (control && !control.hidden && CGRectContainsPoint(control.frame, point)) return YES;
     }
     return NO;
