@@ -186,7 +186,7 @@ apply: applied 0013-host-key-boundary.patch
 apply: applied 0014-touch-controls-default.patch
 apply: applied 0015-finish-emulation-after-signing-comparison.patch
 apply: applied 0016-audiotoolbox-keep-session.patch
-apply: /Volumes/Storage/Projects/Wolkara/build/platform now carries the layer (16 patch(es), 100 file(s) overlaid)
+apply: /Volumes/Storage/Projects/wolkaraforever/build/platform now carries the layer (16 patch(es), 100 file(s) overlaid)
 prepare: build/platform ready (platform 00a8501)
 build/touch-gamepad-fixture/TouchGamepad.app: replacing existing signature
 2026-10-21 15:59:49.499 TouchGamepadFixture[51940:24085711] [TouchGamepad] Connection failed: Fixture (1)
@@ -215,7 +215,7 @@ apply: applied 0013-host-key-boundary.patch
 apply: applied 0014-touch-controls-default.patch
 apply: applied 0015-finish-emulation-after-signing-comparison.patch
 apply: applied 0016-audiotoolbox-keep-session.patch
-apply: /Volumes/Storage/Projects/Wolkara/build/platform now carries the layer (16 patch(es), 100 file(s) overlaid)
+apply: /Volumes/Storage/Projects/wolkaraforever/build/platform now carries the layer (16 patch(es), 100 file(s) overlaid)
 prepare: build/platform ready (platform 00a8501)
 PASS: local service recovery, sequential retries, terminal proof failure, deadlines, cancellation and stale callbacks
 PASS: initial connection reset permits retry; reset after SYN/ACK remains terminal; no native readiness
@@ -271,7 +271,7 @@ apply: applied 0013-host-key-boundary.patch
 apply: applied 0014-touch-controls-default.patch
 apply: applied 0015-finish-emulation-after-signing-comparison.patch
 apply: applied 0016-audiotoolbox-keep-session.patch
-apply: /Volumes/Storage/Projects/Wolkara/build/platform now carries the layer (16 patch(es), 100 file(s) overlaid)
+apply: /Volumes/Storage/Projects/wolkaraforever/build/platform now carries the layer (16 patch(es), 100 file(s) overlaid)
 prepare: build/platform ready (platform 00a8501)
 WoW manifest tests PASS (synthetic fixtures).
 WoW client tests PASS: verified staging, cache repair, patch invalidation, malformed metadata and failed transport.
@@ -307,7 +307,7 @@ apply: applied 0013-host-key-boundary.patch
 apply: applied 0014-touch-controls-default.patch
 apply: applied 0015-finish-emulation-after-signing-comparison.patch
 apply: applied 0016-audiotoolbox-keep-session.patch
-apply: /Volumes/Storage/Projects/Wolkara/build/platform now carries the layer (16 patch(es), 100 file(s) overlaid)
+apply: /Volumes/Storage/Projects/wolkaraforever/build/platform now carries the layer (16 patch(es), 100 file(s) overlaid)
 prepare: build/platform ready (platform 00a8501)
 
 == 2/2 build (the platform's own script)
