@@ -1,7 +1,7 @@
 # Voice: the settings, the modes, and what we match from Handy
 
-Status: implemented and verified on the iPad - on the home screen and inside the
-running game. Supersedes the ad-hoc "tap Share"
+Status: implemented and extensively user-validated on the physical iPad - on the home screen
+and inside the running game. Supersedes the ad-hoc "tap Share"
 wiring, and sits on `docs/INPUT_TRIGGERS.md`, which is what makes the button part
 work on any controller.
 
