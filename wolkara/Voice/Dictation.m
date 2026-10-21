@@ -544,9 +544,22 @@ static __weak UIView *AKGameTextTarget = nil;
         WKLog("voice", @"dictation: the game has not registered a text target; nothing typed");
         return NO;
     }
+    // Ask before sending, for the same reason the draft editor asks before inserting a
+    // dictation placeholder: an object that does not answer the selector aborts the app,
+    // and the target is announced by another module that this one cannot check at compile
+    // time. It happened - AKKeyboardTextView was announced instead of the view that can
+    // reach the guest, and the first spoken sentence killed the app on the device
+    // (2026-10-21). A target that cannot take text loses the words; it never kills a
+    // running game.
+    SEL selector = NSSelectorFromString(@"touchInsertText:");
+    if (![target respondsToSelector:selector]) {
+        WKLog("voice", @"dictation: the registered text target (%@) does not take text; nothing typed",
+              NSStringFromClass(target.class));
+        return NO;
+    }
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-    [target performSelector:NSSelectorFromString(@"touchInsertText:") withObject:text];
+    [target performSelector:selector withObject:text];
 #pragma clang diagnostic pop
     return YES;
 }
@@ -554,9 +567,15 @@ static __weak UIView *AKGameTextTarget = nil;
 - (void)sendReturn {
     UIView *target = AKDictation.gameTextTarget;
     if (!target) return;
+    SEL selector = NSSelectorFromString(@"touchSpecialKey:characters:");
+    if (![target respondsToSelector:selector]) {
+        WKLog("voice", @"dictation: the registered text target (%@) does not take keys; nothing sent",
+              NSStringFromClass(target.class));
+        return;
+    }
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-    [target performSelector:NSSelectorFromString(@"touchSpecialKey:characters:")
+    [target performSelector:selector
                  withObject:@(AKReturnKeyCode)
                  withObject:@"\r"];
 #pragma clang diagnostic pop

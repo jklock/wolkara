@@ -324,10 +324,15 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
         _haptics = [AKTouchHaptics new];
         _keyboardInput = [[AKKeyboardTextView alloc] initWithFrame:CGRectMake(0, 0, 1, 1) textContainer:nil];
         _keyboardInput.inputOwner = self;
-        // Announced, not reached for. This is the view that answers touchInsertText:,
-        // and it is the game's own text input, so it is what dictation types into.
+        // Announced, not reached for. The game's text input is this view, not the draft
+        // editor: this one is the layer's UIKeyInput, and its delegate is what posts the
+        // key events into the guest. The draft editor is a UITextView that holds words for
+        // Replace and cannot reach the game at all. Announcing the wrong one is not a
+        // cosmetic mistake - the first transcript sent to it aborted the app with
+        // "-[AKKeyboardTextView touchInsertText:]: unrecognized selector" (measured on
+        // Dadpad, 2026-10-21).
         [NSNotificationCenter.defaultCenter postNotificationName:AKTouchGameTextInputDidAppearNotification
-                                                        object:_keyboardInput];
+                                                        object:self];
         [self buildComposer];
         _keyboardButton = [self buttonWithSymbol:@"keyboard" label:@"Show keyboard" action:@selector(toggleKeyboard)];
         _keyboardButton.accessibilityIdentifier = @"tolkara.keyboard";
@@ -541,6 +546,17 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
 // Secure, so the system never offers to remember or spell-check what is typed at the game.
 - (BOOL)isSecureTextEntry { return YES; }
 - (void)insertText:(NSString *)text { [self.delegate touchInsertText:text]; }
+// Dictation types into whatever the controls announced as the game's text input, and it
+// asks for these two selectors when it does. They are the adapter's own converter - the
+// delegate turns text into key events and posts them to the guest - so this view says the
+// same thing to the same place, once, and does nothing else with the words.
+- (void)touchInsertText:(NSString *)text {
+    if ([self.delegate respondsToSelector:@selector(touchInsertText:)]) [self.delegate touchInsertText:text];
+}
+- (void)touchSpecialKey:(unsigned short)code characters:(NSString *)characters {
+    if ([self.delegate respondsToSelector:@selector(touchSpecialKey:characters:)])
+        [self.delegate touchSpecialKey:code characters:characters];
+}
 - (void)replaceGameText:(NSString *)text {
     // A host with no draft panel leaves this out; the button then does nothing
     // rather than crashing.
