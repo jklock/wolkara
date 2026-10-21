@@ -14,14 +14,14 @@ pull request; say what you tested, on what hardware, with which execution mode
 
 ## Voice dictation into the game (2026-10-21)
 
-On Dadpad (iPad Pro 12.9-inch, 5th generation, iPadOS 27), Developer service, with an Xbox
-Bluetooth pad mapped to Options as Hold to talk: the **Test Voice** page on the home screen
-delivered a transcript, and two further utterances were typed into the running game at its
-login screen - 21 characters each, Return sent by auto-submit, 43 key events dequeued by the
-guest, the audio session handed back to the game, no crash report, and the app still running.
-The app's own `dictation-target` self-test reported PASS 2/2. Not covered: microphone audio
-was not verified sample by sample, no other controller was tried, and the in-game test used
-the login screen rather than the game's chat box.
+The user extensively validated voice dictation on Dadpad (iPad Pro 12.9-inch, 5th generation,
+iPadOS 27) with Developer service and an Xbox Bluetooth pad mapped to Options as Hold to talk.
+The **Test Voice** page delivered a transcript, and utterances were typed into the running game:
+the recorded login-screen checks produced 21 characters each, sent Return by auto-submit,
+dequeued 43 guest key events, returned the audio session to the game, produced no crash report,
+and left the app running. The app's own `dictation-target` self-test also reported PASS 2/2.
+The recorded evidence covers the exercised iPad/controller configuration; it is not a claim
+about every controller model, game field, or device.
 
 ## Latest Wolkara gameplay report (2026-10-07)
 
