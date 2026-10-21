@@ -8,8 +8,7 @@
 - `launcher/`: the iPad app. `profiles/`: data-only descriptions of tested applications.
 - `tests/`: C, Objective-C, Swift and Python tests; `testguest/`: our synthetic guest fixture.
 - `wolkara/tools/`: the layer's scripts - prepare, the gate, and the wrappers that run the platform's own build, install, run and test scripts against the prepared tree. The platform's own tools are `platform/tools/` and run inside that tree. `docs/`: building guide and architecture.
-- `platform/`: upstream tolkara, vendored byte-identical to `upstream/main` and never edited by hand; `wolkara/`: our layer above it. Start at `development/README.md`.
-- `development/`: the split's own record - plan and status, clean-base audit, divergence inventory, operational notes. Update it when a phase moves.
+- `platform/`: upstream tolkara, vendored byte-identical to `upstream/main` and never edited by hand; `wolkara/`: our layer above it. Start at `docs/ARCHITECTURE.md`.
 - `build/` and `logs/` are ignored outputs. Third-party applications and assets are never committed.
 
 ## Build, Test, and Development Commands

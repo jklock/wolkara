@@ -64,13 +64,15 @@ A successful build alone does not prove that a signing profile permits startup.
 The short version of how to read the rest of this section: every claim here has a script behind
 it, and the script's own output is what is quoted. `wolkara/tools/validate.sh` runs the whole
 set - the layer gate, the unit and fixture suites, the device build, the install and launch on
-the iPad, and the device matrix - and writes one record per commit under
-`development/validation/`, naming the commit it tested and whether the tree was clean.
+the iPad, and the device matrix - and prints its record to the terminal. The per-commit records that
+used to be stored under `development/` have been removed, so a claim here rests on the script that
+produces it rather than on a stored log.
 
 The device matrix is 23 checks and includes the app's own self-tests, which the app runs on
 itself when launched with `--selftest=<name>`: `input` drives the real input router, settings
 store and published key set with synthetic presses, and `voice` opens a real dictation session
-with the real recogniser - on-device only - and checks that the session is handed back. Those
+with the real recogniser - on-device only - and checks that the session is handed back. It does not prove the microphone delivered audio: what
+it asserts is the session state, not the samples. Those
 exist because a script cannot press a pad button or speak; a person is only needed for a real
 voice, a real pad and the game itself. Development and testing automation is welcome here: the
 ban in the policy below is on automating *the game*, not on testing this app.

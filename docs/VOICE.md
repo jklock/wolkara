@@ -1,8 +1,13 @@
 # Voice: the settings, the modes, and what we match from Handy
 
-Status: design and first implementation. Supersedes the ad-hoc "tap Share"
+Status: implemented. Supersedes the ad-hoc "tap Share"
 wiring, and sits on `docs/INPUT_TRIGGERS.md`, which is what makes the button part
 work on any controller.
+
+The launcher also carries a Permissions row that opens this app's own page in Settings, where the
+Microphone and Speech Recognition switches live. Nothing inside the app can change those: iOS gives
+an app no way to grant or reset its own privacy permission, so the row exists to take you to the
+right page instead of describing where it is.
 
 ## The shape
 
