@@ -1,0 +1,30 @@
+Keep the signing comparison failure while running the remaining regression tests.
+
+The platform's host-dependent byte comparison exits before container, fixup, TLS,
+keyboard, drawing, event, crypto and cloud tests. A known-failure classification
+must not turn those unexecuted tests into a full-suite pass. Preserve the signer
+exit status and return it only after the rest of the suite has run. Any other
+failure still stops the suite normally.
+
+diff --git a/tools/test_emulation.sh b/tools/test_emulation.sh
+index 09a55c6..e9ac499 100755
+--- a/tools/test_emulation.sh
++++ b/tools/test_emulation.sh
+@@ -600,7 +600,9 @@ xcrun clang -fobjc-arc -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined
+     -framework Foundation -framework Metal tests/test_real_function.m -o build/emulation/test_real_function
+ build/emulation/test_real_function build/emulation/libakMetalFixture.dylib
+ python3 tests/test_shader_translation.py
+-python3 -m unittest tests.test_sign_guest_local
++# Preserve this host-dependent failure while testing everything after it.
++signing_rc=0
++python3 -m unittest tests.test_sign_guest_local || signing_rc=$?
+ python3 -m unittest tests.test_build_signed_container
+ 
+ "${CC[@]}" runtime/GuestMemory.c runtime/GuestImage.c runtime/GuestFixups.c tests/test_fixups.c -o build/emulation/test_fixups
+@@ -659,3 +661,6 @@ xcrun clang -fobjc-arc -fblocks -Wall -Wextra -Werror -O1 -g -fsanitize=address,
+     -Ilauncher/Cloud -framework Foundation launcher/Cloud/SteamCloudWire.m launcher/Cloud/SteamCloudSync.m \
+     launcher/Cloud/SteamCloudCoordinator.m -framework Security tests/test_steam_cloud.m -lz -o build/emulation/test_steam_cloud
+ build/emulation/test_steam_cloud
++
++echo PLATFORM_EMULATION_COMPLETE
++exit "$signing_rc"

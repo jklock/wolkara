@@ -4,6 +4,8 @@
 <dict>
 	<key>UIFileSharingEnabled</key>
 	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>CFBundleShortVersionString</key>
@@ -13,7 +15,9 @@
 	<key>TolkaraPreselectedExecutionMode</key>
 	<string>$(TOLKARA_MODE)</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Allow World of Warcraft in Wolkara to use the microphone for in-game voice chat.</string>
+	<string>Wolkara uses the microphone to turn what you say into text in the game's chat, and for in-game voice chat. Speech recognition runs on this iPad.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Turn what you say into text in the game. Recognition runs on this iPad.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

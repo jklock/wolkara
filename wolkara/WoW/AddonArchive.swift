@@ -24,6 +24,12 @@ final class TKAddonArchive: NSObject {
 
     @objc(extractArchiveAtURL:toDirectoryURL:error:)
     static func extract(archiveURL: URL, to directoryURL: URL, error output: NSErrorPointer) -> Bool {
+        let manager = FileManager.default
+        // The extractor owns only a new staging directory. Never remove or write
+        // through an existing directory (which could contain files or symlinks).
+        guard !manager.fileExists(atPath: directoryURL.path) else {
+            return failure("The extraction destination already exists.", output)
+        }
         let archive: Archive
         do { archive = try Archive(url: archiveURL, accessMode: .read) }
         catch { return failure("The selected file is not a supported ZIP archive.", output) }
@@ -32,17 +38,45 @@ final class TKAddonArchive: NSObject {
         var entries: [Entry] = []
         for entry in archive {
             guard entries.count < entryLimit else { return failure("The ZIP archive has too many entries.", output) }
-            guard entry.type != .symlink, safePath(entry.path), entry.uncompressedSize <= fileLimit else { return failure("The ZIP archive contains an unsafe entry.", output) }
+            // Nothing but a regular file or a directory is created. ZIPFoundation reports a
+            // unix entry whose mode says symlink as `.symlink`, and any other mode it cannot
+            // identify - a FIFO, a device node - as an ordinary `.file`, so what lands on
+            // disk is a regular file holding the entry's bytes. The fixture asserts that this
+            // is what happens; this guard is what keeps a type it does not name yet out of
+            // the tree.
+            guard entry.type == .file || entry.type == .directory else { return failure("The ZIP archive contains an unsafe entry.", output) }
+            guard safePath(entry.path), entry.uncompressedSize <= fileLimit else { return failure("The ZIP archive contains an unsafe entry.", output) }
             compressed += entry.compressedSize; expanded += entry.uncompressedSize
             guard compressed <= compressedLimit, expanded <= expandedLimit, paths.insert(entry.path.precomposedStringWithCanonicalMapping.lowercased()).inserted else { return failure("The ZIP archive exceeds limits or contains colliding paths.", output) }
             entries.append(entry)
         }
-        let manager = FileManager.default
+        var expandedForReal: UInt64 = 0
         do {
+            // First pass: decompress every entry to nothing, to measure what the archive
+            // really expands to. The sizes in a ZIP header are the archive's own claim about
+            // itself, and the checks above can only compare that claim with the limits - they
+            // are not a bound on what is written, because the compressed stream is read to its
+            // end, so one entry that declares ten bytes and inflates to ten gigabytes passes
+            // all of them. Measuring first also means a lying entry is refused before a byte
+            // of it is on disk, rather than written and then removed.
+            for entry in entries where entry.type == .file {
+                var fromThisEntry: UInt64 = 0
+                _ = try archive.extract(entry, bufferSize: 1 << 20, skipCRC32: true, consumer: { chunk in
+                    fromThisEntry += UInt64(chunk.count); expandedForReal += UInt64(chunk.count)
+                    guard fromThisEntry <= fileLimit, expandedForReal <= expandedLimit else {
+                        throw NSError(domain: "Wolkara.AddOns", code: 4, userInfo: [NSLocalizedDescriptionKey: "The ZIP archive expands past its declared size and past the limit."])
+                    }
+                })
+            }
             try manager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
             for entry in entries {
-                let destination = directoryURL.appendingPathComponent(entry.path)
-                _ = try archive.extract(entry, to: destination)
+                // The library's own writer is kept for the second pass, so the entry's
+                // attributes and its checksum are handled exactly as before.
+                let checksum = try archive.extract(entry, to: directoryURL.appendingPathComponent(entry.path))
+                guard checksum == entry.checksum else {
+                    throw NSError(domain: "Wolkara.AddOns", code: 2,
+                                  userInfo: [NSLocalizedDescriptionKey: "The ZIP archive failed its integrity check."])
+                }
             }
             return true
         } catch let caught {

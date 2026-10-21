@@ -1,0 +1,27 @@
+# Wolkara layer patch 0013 - AppKit: show every key that arrives, not only the
+# ones we forward
+#
+# Why: patch 0012 shows what the game receives, which cannot tell a press iPadOS
+# never delivered from one we chose not to forward. This logs at the boundary,
+# before any decision is made about the key, so a button that arrives as an
+# unknown usage is visible too. Off unless --inspect-controller is passed.
+#
+# Applies to: translation/AppKit/AppKit.m
+# Upstream: not for submission. Diagnostic for our own controller work.
+#
+diff --git a/translation/AppKit/AppKit.m b/translation/AppKit/AppKit.m
+--- a/translation/AppKit/AppKit.m
++++ b/translation/AppKit/AppKit.m
+@@ -629,6 +629,12 @@
+         NSEvent *e = [NSEvent new];
+         e.window = self.nsWindow; e.keyCode = AKKeyCode(k.keyCode); e.timestamp = p.timestamp;
+         BOOL isMod = k.keyCode >= 0xE0 && k.keyCode <= 0xE7;
++        // Logged before anything is decided about the key, so a press that never
++        // becomes an event is still visible: this is the boundary where iPadOS
++        // hands input to us, which is not the same as what we forward.
++        static BOOL hostTrace; static dispatch_once_t hostTraceOnce;
++        dispatch_once(&hostTraceOnce, ^{ hostTrace=[NSProcessInfo.processInfo.arguments containsObject:@"--inspect-controller"]; });
++        if(hostTrace) AKLog(@"host key %@ usage=%u mods=%lu",down?@"down":@"up",(unsigned)k.keyCode,(unsigned long)k.modifierFlags);
+         // A modifier key's own press and release set and clear it; other keys carry UIKit's state.
+         if (isMod) _mods = AKModifiersAfterKey(_mods, k.keyCode, down);
+         else [self reconcileModifiers:AKMods(k.modifierFlags)];

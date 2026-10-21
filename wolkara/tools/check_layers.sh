@@ -75,7 +75,7 @@ else
                   # line: a file that reaches the build no other way must be named there.
                   grep -q "$f" "$map" || echo "$f"
               done < <(git ls-files 'wolkara/*' | grep -v -e '^wolkara/patches/' -e '^wolkara/tools/' \
-                                              -e '^wolkara/README.md' -e '^wolkara/overlay.map' | head -50) | head -5)
+                                              -e '^wolkara/README.md' -e '^wolkara/overlay.map') | head -5)
     if [ -n "$orphans" ]; then
         bad "layer files that the overlay does not carry (regenerate wolkara/tools/overlay_map.sh):"
         printf '     %s\n' $orphans
@@ -91,14 +91,32 @@ else
     else
         ok "every overlayed file exists in the layer"
     fi
+    # The map is generated, so it must equal what the generator produces now. Without
+    # this, a map edited by hand passes the orphan check while a whole module's entries
+    # quietly stop existing - which is exactly what happened to Controller, Voice and
+    # Input before this check was added.
+    generated=$(mktemp)
+    if wolkara/tools/overlay_map.sh "$generated" > /dev/null 2>&1 && [ -s "$generated" ] &&
+       diff -q "$map" "$generated" > /dev/null 2>&1; then
+        ok "wolkara/overlay.map is what wolkara/tools/overlay_map.sh generates"
+    else
+        bad "wolkara/overlay.map is stale: regenerate it with wolkara/tools/overlay_map.sh"
+        diff "$map" "$generated" 2>/dev/null | head -12 | sed 's/^/     /'
+    fi
+    rm -f "$generated"
     # prepare.sh has the final say: it refuses a 'replace' without a platform file and
     # an 'add' that collides with a path upstream now has. Running it here proves the
-    # overlay still matches the pin without touching the map.
-    if bash wolkara/tools/prepare.sh > /dev/null 2>&1; then
+    # overlay still matches the pin without touching the map. Its output is kept, not
+    # discarded: on 2026-10-16 this check failed once and passed on the next run with
+    # nothing to show for it, and a gate that cannot say why it refused is no gate.
+    prepared=$(mktemp)
+    if bash wolkara/tools/prepare.sh > "$prepared" 2>&1; then
         ok "prepare.sh accepts the overlay against the pinned platform"
     else
         bad "prepare.sh refused the overlay: it no longer matches the pinned platform"
+        tail -12 "$prepared" | sed 's/^/     /'
     fi
+    rm -f "$prepared"
 fi
 
 # 5. Every replacement must really be ours. A file we never changed must not take a
@@ -144,6 +162,61 @@ if [ -n "$dupes" ]; then
     printf '     %s\n' $dupes
 else
     ok "the root carries no platform path"
+fi
+
+# A new layer file that has not been added to git never reaches the prepared tree: the overlay map is
+# generated from git's tracked files, so the file is not in the map, and the build then fails with a
+# missing header rather than with the real problem. This happened while the audio session coordinator
+# was added, and the check above could not catch it because the map and the check ignored the same
+# file. The review outcome's Phase 4 asks for the tooling to fail on its own mistakes.
+untracked=$(git ls-files --others --exclude-standard wolkara | head -5)
+if [ -z "$untracked" ]; then
+    ok "every layer file is tracked, so the overlay map sees all of them"
+else
+    bad "untracked files under wolkara/ will not reach the build (git add them first):"
+    printf '     %s\n' $untracked
+fi
+
+# One owner of the audio session. The review outcome's Phase 1: everything else asks the coordinator.
+# A second caller of these is how the session ended up somewhere nobody asked for - dictation taking
+# it for recording while the CoreAudio adapter forced playback underneath.
+# `setMode:` is deliberately not in this first scan: the layer has its own -setMode: for the voice
+# mode, which has nothing to do with the audio session, and a gate that cries wolf gets turned off.
+# It is checked below, where the only code scanned is the platform's, and a setMode there is one.
+#
+# Shell/SelfTest.m is the single exemption, and it is named rather than pattern-matched. Its
+# --selftest=mic takes the session by hand on purpose: the coordinator has been in the path of every
+# measurement made during this fault, and a test that asks the coordinator for the session cannot tell
+# whether the coordinator is the reason the microphone arrives silent. The test is unreachable from the
+# UI and runs only when the app is launched with --selftest=mic, so it cannot become a second owner in
+# the app's own operation.
+mutators=$(git grep -l -e 'setCategory:' -e 'setActive:' -e 'setPreferredInput:' -- wolkara 2>/dev/null | grep -E '\.(m|h)$' | grep -v "AudioSessionCoordinator" | grep -v "/tests/" | grep -v "Shell/SelfTest.m" | head -5)
+if [ -z "$mutators" ]; then
+    ok "the audio session has one owner"
+else
+    bad "only Voice/AudioSessionCoordinator may mutate the audio session:"
+    printf '     %s\n' $mutators
+fi
+
+# The scan above only sees wolkara/*.m and *.h, and the session's second owner was in the CoreAudio
+# patch: a unified diff, so a grep for source files walked straight past it and "the audio session has
+# one owner" passed while the adapter still forced the category. The patch's added lines and the file
+# prepare.sh generates from them are both checked now - the review outcome's Phase 1 asks for the gate
+# to look at what is built, not only at the layer's sources.
+patchMutators=$(grep -hE "^\+.*(setCategory:|setActive:|setMode:|setPreferredInput:)" wolkara/patches/*.patch 2>/dev/null | head -3)
+# Every prepared platform file that has ever taken the session, not only the first one found. The
+# second owner was AudioToolbox, and a gate that watches one file passes for as long as the leak is in
+# the other - which is exactly how it was missed.
+preparedMutators=$(for prepared in build/platform/translation/CoreAudio/Hardware.m \
+                                build/platform/translation/AudioToolbox/Output.m; do
+    [ -f "$prepared" ] || continue
+    grep -hE "setCategory:|setActive:|setMode:|setPreferredInput:" "$prepared" 2>/dev/null | head -3
+done)
+if [ -z "$patchMutators" ] && [ -z "$preparedMutators" ]; then
+    ok "no patch and no prepared platform file mutates the audio session"
+else
+    bad "the audio session has more than one owner (patch or prepared tree):"
+    printf '     %s\n' $patchMutators $preparedMutators
 fi
 
 if [ "$fail" -eq 0 ]; then

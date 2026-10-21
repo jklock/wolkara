@@ -215,7 +215,7 @@ same as differing now - see "The measured delta set" below for what actually dif
 | `launcher/Info.plist` | layer | Branded plist with `UIBackgroundModes: [audio]` and the microphone string |
 | `tools/generate.sh`, `tools/install.sh`, `tools/package_ipa.sh`, `tools/test_touch_controls_ui.sh` | layer | The layer's own wrapper scripts under `wolkara/tools/` |
 | `translation/AppKit/ldflags` | layer | The AKFont alias is a build setting for the target that compiles the adapter, not a platform change: the platform's own generic builds carry no AKFont and fail to link if it is aliased there |
-| `LICENSE` | layer | Our notice; the platform's stays under `platform/` |
+| `LICENSE`, `NOTICE.md` | layer | Our licence and notice, and only from 2026-10-16: they reach the app as `Wolkara-LICENSE` and `Wolkara-NOTICE.md`, because the prepared tree already has upstream's files under the bare names and both sets have to ship. The app had been showing upstream's documents under our attribution - see `development/NOTES.md` |
 | `tests/test_fixups.c` | patch | Follows the runtime delta |
 
 ## Ours only: 64 additions, by module
