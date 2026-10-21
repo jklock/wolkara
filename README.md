@@ -55,8 +55,9 @@ A successful build alone does not prove that a signing profile permits startup.
 - Physical controller support and an on-screen controller when none is connected,
   with an inspector that reports what a pad has and what it does.
 - A **Leave game** button on the on-screen toolbar, so a game screen with no quit
-  of its own - the login screen is one - is not a dead end: it asks the game to
-  close and save through its own termination path.
+  of its own - the login screen is one - is not a dead end. It closes Wolkara
+  after a five-second countdown page that says what to do next; the next launch
+  has Play working again.
 - Movable touch controls, opacity and size settings, an alignment grid and haptics.
 - The licences the app is obliged to ship, composed into About and reported in
   the app's own log.

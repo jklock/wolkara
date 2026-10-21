@@ -225,9 +225,9 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
 // session owns, say so, and end. Nothing in the guest is touched.
 - (void)closeAfterGuestRefusedToQuit:(NSNotification *)note {
     (void)note;
-    WKLog("host", @"the guest refused to quit; closing Wolkara because the user chose to");
+    WKLog("host", @"the user chose to leave the game; closing Wolkara after the countdown");
     [self.steamCloud flush];
-    exit(0);
+    [self showClosingPage:@"Leaving the game"];
 }
 
 // What the adapter needs to know, and the only thing it can be told: which keys are the
@@ -984,15 +984,92 @@ static NSString *AKAudioStateDescription(void) {
 // container: Local signing's validated page container, or nil for the
 // Developer-service/debugger path. Callers choose it; this only applies it.
 - (void)resumeCloudPreparedNativeGame { [self runNativeGame:self.cloudFullStartup app:self.cloudApp container:self.cloudContainer]; }
+// The page a session ends on, and the countdown before Wolkara takes itself away.
+//
+// One guest per process, so after the game ends this process can never start another; the
+// next tap on Wolkara is what makes Play work again. Saying that on the screen, over whatever
+// the guest left behind, with the mark and the number falling, is the whole point: the app
+// leaves by itself and the user is told what to do rather than left on a launcher whose Play
+// does nothing.
+- (void)showClosingPage:(NSString *)reason {
+    static UIWindow *closing;
+    if (closing) return;
+    UIWindowScene *scene = self.window.windowScene;
+    if (!scene) {
+        for (UIScene *candidate in UIApplication.sharedApplication.connectedScenes)
+            if ([candidate isKindOfClass:UIWindowScene.class]) { scene=(UIWindowScene *)candidate; break; }
+    }
+    if (!scene) { exit(0); }
+    closing = [[UIWindow alloc] initWithWindowScene:scene];
+    closing.windowLevel = UIWindowLevelAlert + 1;
+    UIView *root = [UIView new];
+    root.backgroundColor = [UIColor colorWithRed:0.025 green:0.045 blue:0.075 alpha:1];
+    closing.rootViewController = [UIViewController new];
+    closing.rootViewController.view.backgroundColor = root.backgroundColor;
+
+    UIImage *mark = [UIImage imageNamed:@"WolkaraLogo"];
+    UIImageView *logo = [[UIImageView alloc] initWithImage:mark];
+    logo.contentMode = UIViewContentModeScaleAspectFit;
+    logo.accessibilityLabel = @"Wolkara";
+
+    UILabel *title = [UILabel new];
+    title.text = reason;
+    title.numberOfLines = 0;
+    title.textAlignment = NSTextAlignmentCenter;
+    title.textColor = UIColor.whiteColor;
+    title.font = [UIFont systemFontOfSize:28 weight:UIFontWeightBold];
+
+    UILabel *instructions = [UILabel new];
+    instructions.text = @"Wolkara closes when this reaches zero, and opening it again brings this page back with Play ready.";
+    instructions.numberOfLines = 0;
+    instructions.textAlignment = NSTextAlignmentCenter;
+    instructions.textColor = [UIColor colorWithRed:0.66 green:0.72 blue:0.78 alpha:1];
+    instructions.font = [UIFont systemFontOfSize:17 weight:UIFontWeightRegular];
+
+    UILabel *countdown = [UILabel new];
+    countdown.text = @"5";
+    countdown.textAlignment = NSTextAlignmentCenter;
+    countdown.textColor = [UIColor colorWithRed:0.88 green:0.73 blue:0.43 alpha:1];
+    countdown.font = [UIFont systemFontOfSize:96 weight:UIFontWeightThin];
+    countdown.accessibilityIdentifier = @"wolkara.closing.countdown";
+
+    UIStackView *column = [[UIStackView alloc] initWithArrangedSubviews:@[logo, title, instructions, countdown]];
+    column.axis = UILayoutConstraintAxisVertical;
+    column.alignment = UIStackViewAlignmentCenter;
+    column.spacing = 24;
+    column.translatesAutoresizingMaskIntoConstraints = NO;
+    [closing.rootViewController.view addSubview:column];
+    NSLayoutConstraint *logoHeight = [logo.heightAnchor constraintEqualToConstant:120];
+    logoHeight.priority = 999;
+    [NSLayoutConstraint activateConstraints:@[
+        [column.centerYAnchor constraintEqualToAnchor:closing.rootViewController.view.centerYAnchor],
+        [column.leadingAnchor constraintGreaterThanOrEqualToAnchor:closing.rootViewController.view.safeAreaLayoutGuide.leadingAnchor constant:32],
+        [column.trailingAnchor constraintLessThanOrEqualToAnchor:closing.rootViewController.view.safeAreaLayoutGuide.trailingAnchor constant:-32],
+        [column.widthAnchor constraintLessThanOrEqualToConstant:560],
+        [logo.widthAnchor constraintEqualToAnchor:column.widthAnchor],
+        logoHeight,
+        [instructions.widthAnchor constraintEqualToAnchor:column.widthAnchor],
+    ]];
+    [closing makeKeyAndVisible];
+    WKLog("host", @"%@; closing in 5", reason);
+
+    __block NSInteger remaining = 5;
+    NSTimer *ticker = [NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *timer) {
+        remaining--;
+        countdown.text = [NSString stringWithFormat:@"%ld", (long)MAX(remaining, 0)];
+        WKLog("host", @"closing in %ld", (long)MAX(remaining, 0));
+        if (remaining <= 0) { [timer invalidate]; exit(0); }
+    }];
+    [NSRunLoop.mainRunLoop addTimer:ticker forMode:NSRunLoopCommonModes];
+}
 // A library launch that never got as far as running the guest cannot be retried in this
-// process either: Play is inert once a session has been used. Say why in the log and end the
-// process, so the next tap on Wolkara is a fresh launch with the game startable again. The
-// failure message is left on screen long enough to be read first.
+// process either: Play is inert once a session has been used. Say why in the log and put the
+// closing page up, so the next tap on Wolkara is a fresh launch with the game startable again.
 - (void)endSessionThatCannotStartAgain:(NSString *)why log:(FILE *)log {
     if (!self.uiSession) return;
     fprintf(log, "[host] %s; ending this process so the next launch can start the game\n", why.UTF8String);
     fflush(log);
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ exit(0); });
+    [self showClosingPage:@"The game did not start"];
 }
 - (void)runNativeGame:(BOOL)fullStartup app:(TKApp *)app container:(NSString *)container {
     if (!self.cloudPrepared && [TKSteamCloudCoordinator configuredProfile:app.profile documents:TKDocumentsPath(@"")]) {
@@ -1128,7 +1205,7 @@ static NSString *AKAudioStateDescription(void) {
         [self.steamCloud flush];
         fprintf(log,"[host] %s: the session is over; ending this process so the next launch can start the game\n",
                 ok ? "guest closed" : "the guest did not start"); fflush(log);
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC),dispatch_get_main_queue(),^{ exit(0); });
+        [self showClosingPage:[app.name stringByAppendingString:@" has closed"]];
     }
     // Runtime callbacks retain this log for the life of the guest.
 }
