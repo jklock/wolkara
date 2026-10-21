@@ -1,9 +1,14 @@
 #import "WoWViewController.h"
 #import "Client.h"
 #import "AddonManager.h"
+#import "../Voice/VoiceViewController.h"
+#import "../Voice/VoiceTestViewController.h"
+#import "../App/WolkaraLog.h"
+#import "../App/WolkaraTheme.h"
 #import "Installation.h"
 #import "Updater.h"
 #import "../App/LaunchProgressView.h"
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 static UIColor *Gold(void) { return [UIColor colorWithRed:0.88 green:0.73 blue:0.43 alpha:1]; }
 static UIColor *Muted(void) { return [UIColor colorWithRed:0.66 green:0.72 blue:0.78 alpha:1]; }
@@ -19,6 +24,9 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     stack.axis=UILayoutConstraintAxisVertical; stack.spacing=spacing; return stack;
 }
 
+@interface TKWoWViewController () <UIDocumentPickerDelegate>
+@end
+
 @implementation TKWoWViewController {
     TKAppLibrary *_library;
     TKWoWClient *_client;
@@ -29,6 +37,9 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     NSDate *_checkedAt;
     NSUInteger _generation;
     BOOL _busy, _updating, _updateError, _starting;
+    // The game files are read once, when the launcher first appears. Not on every
+    // appearance: leaving a popup used to send us straight back to the network.
+    BOOL _checkedThisLaunch;
     NSString *_startupFailure;
     UILabel *_updatesLabel;
     NSString *_updatePhase;
@@ -38,7 +49,10 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     UIStackView *_columns;
     NSLayoutConstraint *_leftWidth;
     UILabel *_stateLabel, *_detailLabel, *_versionLabel, *_startupLabel, *_compatibilityLabel;
-    UIButton *_editionButton, *_preferencesButton, *_addonsButton, *_primaryButton;
+    UIButton *_editionButton, *_preferencesButton, *_addonsButton, *_addonsDirectoryButton,
+        *_voiceButton, *_voiceTestButton, *_permissionsButton, *_primaryButton;
+    UIView *_markView;
+    NSLayoutConstraint *_markCap;
     UIBarButtonItem *_refreshItem;
     UIActivityIndicatorView *_activity;
 }
@@ -60,6 +74,51 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     [button addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];
     return button;
 }
+// The page's own section heading: the small uppercase label the edition line
+// always used, now naming each group of rows.
+- (UILabel *)heading:(NSString *)text {
+    UILabel *label=Label(11,UIFontWeightSemibold,Muted());
+    label.text=text.uppercaseString;
+    return label;
+}
+// The layer's mark, where the wordmark used to sit. It is drawn at the column's
+// own width, so it grows and shrinks with the window, with one cap: it may never
+// take more than a third of the height, so a short window still shows the rows
+// below it. The aspect constraint is optional for that reason — when the cap
+// applies, the picture letterboxes rather than fighting the column's width.
+//
+// The cap spans this view and the controller's, so it can only be activated once
+// the two share an ancestor. Here the picture is still unattached, and UIKit
+// raises "no common ancestor" for exactly that — which aborts the app at launch,
+// measured on 2026-10-16. The cap is therefore kept and switched on from
+// -viewDidLayoutSubviews, by which time the column has been added to the scroll
+// view.
+- (UIView *)markView {
+    UIImage *image=[UIImage imageNamed:@"WolkaraLogo"];
+    if (image) {
+        UIImageView *view=[[UIImageView alloc] initWithImage:image];
+        view.contentMode=UIViewContentModeScaleAspectFit;
+        view.accessibilityIdentifier=@"wow.logo";
+        view.accessibilityLabel=@"Wolkara";
+        // The picture's own pixel size is far larger than the column, so its
+        // intrinsic size must not be allowed to argue with the constraints below.
+        [view setContentHuggingPriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisVertical];
+        [view setContentCompressionResistancePriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisVertical];
+        NSLayoutConstraint *aspect=[view.widthAnchor constraintEqualToAnchor:view.heightAnchor
+            multiplier:image.size.width/image.size.height];
+        aspect.priority=999;
+        aspect.active=YES;
+        _markCap=[view.heightAnchor constraintLessThanOrEqualToAnchor:self.view.heightAnchor
+            multiplier:0.30];
+        return view;
+    }
+    // No artwork in this build: say the name rather than show an empty gap.
+    UILabel *label=Label(37,UIFontWeightBold,Gold()); label.text=@"WOLKARA";
+    UIFontDescriptor *serif=[[UIFont systemFontOfSize:37 weight:UIFontWeightBold].fontDescriptor fontDescriptorWithDesign:UIFontDescriptorSystemDesignSerif];
+    if (serif) label.font=[[UIFontMetrics metricsForTextStyle:UIFontTextStyleLargeTitle] scaledFontForFont:[UIFont fontWithDescriptor:serif size:37]];
+    label.accessibilityIdentifier=@"wow.title";
+    return label;
+}
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.overrideUserInterfaceStyle=UIUserInterfaceStyleDark;
@@ -80,18 +139,34 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     _refreshItem.accessibilityIdentifier=@"wow.refresh";
     self.navigationItem.leftBarButtonItem=_refreshItem;
 
-    UILabel *title=Label(37,UIFontWeightBold,Gold()); title.text=@"WOLKARA";
-    UIFontDescriptor *serif=[[UIFont systemFontOfSize:37 weight:UIFontWeightBold].fontDescriptor fontDescriptorWithDesign:UIFontDescriptorSystemDesignSerif];
-    if (serif) title.font=[[UIFontMetrics metricsForTextStyle:UIFontTextStyleLargeTitle] scaledFontForFont:[UIFont fontWithDescriptor:serif size:37]];
-    title.accessibilityIdentifier=@"wow.title";
-    UILabel *editionLabel=Label(11,UIFontWeightSemibold,Muted()); editionLabel.text=@"GAME EDITION";
+    // Three groups, in the order the page is read: the edition, the add-ons, and
+    // voice. The mark takes the wordmark's place at the top of the column.
+    _markView=[self markView];
+    UILabel *editionHeading=[self heading:@"Game edition"];
     _editionButton=[self button:@"wow.edition" action:@selector(chooseEdition)];
     _preferencesButton=[self button:@"wow.preferences" action:@selector(preferences)];
+    UILabel *addonsHeading=[self heading:@"Add-ons"];
     _addonsButton=[self button:@"wow.addons.manage" action:@selector(manageAddons)];
-    [_addonsButton setTitle:@"Add-ons / Manage" forState:UIControlStateNormal];
+    [_addonsButton setTitle:@"Addon Manager" forState:UIControlStateNormal];
+    _addonsDirectoryButton=[self button:@"wow.addons.directory" action:@selector(openAddonDirectory)];
+    [_addonsDirectoryButton setTitle:@"Open Add-on Directory" forState:UIControlStateNormal];
+    UILabel *voiceHeading=[self heading:@"Voice manager"];
+    _voiceButton=[self button:@"wow.voice" action:@selector(manageVoice)];
+    [_voiceButton setTitle:@"Key / Button Configuration" forState:UIControlStateNormal];
+    _voiceTestButton=[self button:@"wow.voice.test" action:@selector(testVoice)];
+    [_voiceTestButton setTitle:@"Test Voice" forState:UIControlStateNormal];
+    // Straight to this app's own page in Settings, which is where the Microphone and Speech Recognition
+    // switches live. Available before the game is installed, because it is a setting and not a game
+    // action - and it is the only place those switches can be changed.
+    _permissionsButton=[self button:@"wow.permissions" action:@selector(openPermissions)];
+    [_permissionsButton setTitle:@"Permissions (Microphone, Speech)" forState:UIControlStateNormal];
     _compatibilityLabel=Label(12,UIFontWeightRegular,Muted());
-    UIStackView *left=Stack(@[title,editionLabel,_editionButton,_preferencesButton,_addonsButton,_compatibilityLabel],12);
-    [left setCustomSpacing:24 afterView:title];
+    UIStackView *left=Stack(@[_markView,editionHeading,_editionButton,_preferencesButton,
+        addonsHeading,_addonsButton,_addonsDirectoryButton,
+        voiceHeading,_voiceButton,_voiceTestButton,_permissionsButton,_compatibilityLabel],12);
+    [left setCustomSpacing:24 afterView:_markView];
+    [left setCustomSpacing:24 afterView:_preferencesButton];
+    [left setCustomSpacing:24 afterView:_addonsDirectoryButton];
 
     _activity=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
     _activity.color=Gold(); _activity.hidesWhenStopped=YES;
@@ -161,16 +236,33 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
     _background.frame=self.view.bounds;
+    // The mark's height cap was made in -markView, before the picture had a
+    // superview. Now it does, so the two ends have an ancestor and it can be
+    // switched on; once only, because switching it on lays out again.
+    if (_markCap && !_markCap.active) _markCap.active=YES;
     BOOL horizontal=self.view.bounds.size.width>=700 && !UIContentSizeCategoryIsAccessibilityCategory(self.traitCollection.preferredContentSizeCategory);
     _leftWidth.active=horizontal;
     _columns.axis=horizontal?UILayoutConstraintAxisHorizontal:UILayoutConstraintAxisVertical;
     _columns.alignment=horizontal?UIStackViewAlignmentTop:UIStackViewAlignmentFill;
 }
-- (void)viewDidAppear:(BOOL)animated { [super viewDidAppear:animated]; if (!_busy && !_sessionUsed && !_starting) [self refresh]; }
+- (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+    // Once per launch, and not again. This used to run on every appearance, so
+    // closing the add-on or the voice popup sent the launcher back for a full
+    // manifest check and the home page sat busy again - every single time, for a
+    // page the user had only looked at. The refresh button and Try again still ask
+    // for a check on purpose, and that is now the only way to get a second one.
+    if (_checkedThisLaunch || _busy || _sessionUsed || _starting) return;
+    _checkedThisLaunch=YES;
+    WKLog("ui", @"home: first appearance, checking the game files");
+    [self refresh];
+}
 - (void)viewDidDisappear:(BOOL)animated { [super viewDidDisappear:animated]; [self cancel]; }
 - (void)foreground:(NSNotification *)note {
     (void)note;
-    if (self.isViewLoaded && self.view.window && self.navigationController.topViewController==self && !_busy && !_sessionUsed && !_starting) [self refresh];
+    // Deliberately no check here. Coming back to the app is not a reason to re-read
+    // every manifest, and the check above has already happened for this launch.
+    WKLog("ui", @"home: back in front");
 }
 - (void)background:(NSNotification *)note { (void)note; [self cancel]; }
 - (void)cancel { [_client cancel]; _client=nil; _generation++; _busy=NO; }
@@ -183,7 +275,12 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     [NSUserDefaults.standardUserDefaults setObject:product[@"id"] forKey:@"WoWProduct"];
     [self refresh];
 }
-- (void)refresh { [self checkForUpdatesAndLaunch:NO]; }
+- (void)refresh {
+    // Asked for on purpose: the refresh button, Try again, or a changed edition.
+    // The check that happens by itself runs once per launch; see -viewDidAppear:.
+    WKLog("wow", @"a check was asked for");
+    [self checkForUpdatesAndLaunch:NO];
+}
 - (void)checkForUpdatesAndLaunch:(BOOL)launch { [self checkForUpdatesAndLaunch:launch install:NO]; }
 - (void)checkForUpdatesAndLaunch:(BOOL)launch install:(BOOL)install {
     if (_starting || _sessionUsed) return;
@@ -197,6 +294,7 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     [self cancel]; _plan=nil; _installation=nil; _error=nil; _checkedAt=nil; _startupFailure=nil;
     _updating=NO; _updateError=NO; _updatePhase=nil; _updateDone=0; _updateTotal=0;
     _client=[TKWoWClient new]; _busy=YES; [self render];
+    WKLog("wow", @"checking %@ %@/%@ install=%d launch=%d", _product[@"id"], _region, _locale, install, launch);
     TKWoWClient *client=_client; NSUInteger generation=_generation;
     NSDictionary *product=_product; NSString *region=_region, *locale=_locale;
     static dispatch_queue_t queue; static dispatch_once_t once;
@@ -252,6 +350,7 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
             if (generation!=self->_generation) return;
             self->_plan=plan; self->_installation=installation; self->_error=error;
             self->_checkedAt=plan?NSDate.date:nil; self->_busy=NO; self->_updating=NO; self->_updateError=updateAttempted && error; [self render];
+            WKLog("wow", @"checked: state=%ld error=%@", (long)installation.state, error.localizedDescription ?: @"none");
             // Returning from the background or changing edition invalidates this request.
             if (launch && !error && !client.cancelled && installation.state==TKWoWInstallationReady && installation.app && !self->_sessionUsed &&
                 self.view.window && self.navigationController.topViewController==self && self.startApp) self.startApp(installation.app);
@@ -288,9 +387,23 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     _editionButton.backgroundColor=[UIColor colorWithWhite:1 alpha:0.055]; _editionButton.layer.cornerRadius=10;
     [self configureButton:_preferencesButton title:[NSString stringWithFormat:@"%@  ·  %@  ▾",_region.uppercaseString,[_locale isEqual:@"esES"]?@"Spanish":@"English"] filled:NO];
     _preferencesButton.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;
-    [self configureButton:_addonsButton title:_installation.app?@"Add-ons / Manage":@"Add-ons / Manage (install game first)" filled:NO];
+    [self configureButton:_addonsButton title:_installation.app?@"Addon Manager":@"Addon Manager (install game first)" filled:NO];
     _addonsButton.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;
     _addonsButton.enabled=_installation.app && !_busy && !_starting && !_sessionUsed;
+    [self configureButton:_addonsDirectoryButton title:_installation.app?@"Open Add-on Directory":@"Open Add-on Directory (install game first)" filled:NO];
+    _addonsDirectoryButton.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;
+    _addonsDirectoryButton.enabled=_addonsButton.enabled;
+    [self configureButton:_voiceButton title:@"Key / Button Configuration" filled:NO];
+    _voiceButton.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;
+    // Available before the game is installed: it is a setting, not a game action.
+    _voiceButton.enabled=!_busy && !_starting;
+    [self configureButton:_voiceTestButton title:@"Test Voice" filled:NO];
+    _voiceTestButton.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;
+    _voiceTestButton.enabled=_voiceButton.enabled;
+    [self configureButton:_permissionsButton title:@"Permissions (Microphone, Speech)" filled:NO];
+    _permissionsButton.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;
+    // Never disabled: opening Settings is always allowed, even while the game is busy.
+    _permissionsButton.enabled=YES;
     _compatibilityLabel.text=([_product[@"id"] isEqual:@"wow"] || [_product[@"id"] isEqual:@"wow_beta"] || [_product[@"id"] isEqual:@"wow_classic"])?
         @"Compatibility with this edition is not yet verified.":
         @"";
@@ -387,6 +500,19 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
         _startupLabel.text=@"This build cannot start the game. See Diagnostics and logs."; break;
     }
 }
+// The launcher's own pages open over it rather than being pushed away to. The
+// columns behind stay where they are, closing one puts the user back on the page
+// they left instead of animating them through a stack, and nothing about the home
+// page has to be rebuilt for having visited a setting - which is also why the
+// game files are not re-read when one closes. See -viewDidAppear:.
+- (void)presentPage:(UIViewController *)page {
+    UINavigationController *frame=[[UINavigationController alloc] initWithRootViewController:page];
+    frame.modalPresentationStyle=UIModalPresentationPageSheet;
+    frame.overrideUserInterfaceStyle=UIUserInterfaceStyleDark;
+    frame.navigationBar.tintColor=WKGold();
+    WKLog("ui", @"opening %@ over the home page", NSStringFromClass(page.class));
+    [self presentViewController:frame animated:YES completion:nil];
+}
 - (void)presentSheet:(UIAlertController *)sheet anchor:(UIView *)anchor {
     [sheet addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
     if (anchor) { sheet.popoverPresentationController.sourceView=anchor; sheet.popoverPresentationController.sourceRect=anchor.bounds; }
@@ -442,14 +568,81 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     }]];
     [self presentSheet:sheet anchor:nil];
 }
-- (void)manageAddons {
-    NSError *error=nil; NSString *directory=[_library workingDirectoryForApp:_installation.app error:&error];
-    if (!directory) {
-        UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Add-ons unavailable" message:error.localizedDescription preferredStyle:UIAlertControllerStyleAlert];
-        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]]; [self presentViewController:alert animated:YES completion:nil]; return;
+// Everything about dictation lives on its own screen: the button, the mode, and
+// what happens to the words afterwards.
+- (void)manageVoice {
+    [self presentPage:[AKVoiceViewController new]];
+}
+
+// The same settings, exercised: a box the transcript lands in, driven by the
+// button the user mapped, so it can be tried without starting the game.
+- (void)testVoice {
+    [self presentPage:[AKVoiceTestViewController new]];
+}
+
+// This app's own page in Settings: the Microphone and Speech Recognition switches for Wolkara.
+//
+// iOS gives an app no way to grant, reset or re-prompt for its own privacy permission - the decision
+// belongs to the person using the device. This project has been bitten by exactly that: tccd answers
+// "allowed" and then fails to issue the microphone sandbox extension to the installed binary, so audio
+// never arrives while the permission reads granted. The one supported remedy is the person changing it
+// in Settings, so the launcher takes them to that exact page instead of describing where it is.
+- (void)openPermissions {
+    NSURL *url=[NSURL URLWithString:UIApplicationOpenSettingsURLString];
+    UIApplication *app=UIApplication.sharedApplication;
+    if(!url || ![app canOpenURL:url]) {
+        WKLog("host", @"permissions: this system will not open the app's settings page");
+        return;
     }
-    TKWoWAddonManagerViewController *manager=[[TKWoWAddonManagerViewController alloc] initWithAddOnsDirectory:[directory stringByAppendingPathComponent:@"Interface/AddOns"] edition:_product[@"name"]];
-    [self.navigationController pushViewController:manager animated:YES];
+    [app openURL:url options:@{} completionHandler:^(BOOL opened) {
+        WKLog("host", @"permissions: opened this app's settings page: %@", opened?@"yes":@"no");
+    }];
+}
+
+// The game's add-on folder, in the file browser. The picker is the documented way
+// to start Files at a directory; an alert with a path would be a worse answer to
+// the same request, because the user came here to put files in it.
+- (void)openAddonDirectory {
+    NSError *error=nil;
+    NSString *addons=[self addOnsDirectoryWithError:&error];
+    if (!addons) { [self presentAddonsUnavailable:error]; return; }
+    // The game makes this folder on its first run. Until then there is nothing to
+    // open, so make it rather than refuse.
+    NSFileManager *files=NSFileManager.defaultManager;
+    if (![files fileExistsAtPath:addons]) {
+        [files createDirectoryAtPath:addons withIntermediateDirectories:YES attributes:nil error:&error];
+        if (![files fileExistsAtPath:addons]) { [self presentAddonsUnavailable:error]; return; }
+    }
+    UIDocumentPickerViewController *picker=[[UIDocumentPickerViewController alloc]
+        initForOpeningContentTypes:@[UTTypeFolder]];
+    picker.directoryURL=[NSURL fileURLWithPath:addons isDirectory:YES];
+    picker.allowsMultipleSelection=NO;
+    picker.delegate=self;
+    [self presentViewController:picker animated:YES completion:nil];
+}
+// Nothing to take from the picker: the folder was opened so the user can put files
+// in it with the browser's own controls, and the game reads the list from disk.
+- (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
+    (void)controller; (void)urls;
+}
+- (void)presentAddonsUnavailable:(nullable NSError *)error {
+    UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Add-ons unavailable"
+        message:error.localizedDescription?:@"The game's folder could not be opened."
+        preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+- (nullable NSString *)addOnsDirectoryWithError:(NSError **)error {
+    NSString *directory=[_library workingDirectoryForApp:_installation.app error:error];
+    return directory?[directory stringByAppendingPathComponent:@"Interface/AddOns"]:nil;
+}
+
+- (void)manageAddons {
+    NSError *error=nil;
+    NSString *addons=[self addOnsDirectoryWithError:&error];
+    if (!addons) { [self presentAddonsUnavailable:error]; return; }
+    TKWoWAddonManagerViewController *manager=[[TKWoWAddonManagerViewController alloc] initWithAddOnsDirectory:addons edition:_product[@"name"]];
+    [self presentPage:manager];
 }
 - (UILabel *)startupStatusLabel { [self loadViewIfNeeded]; return _detailLabel; }
 - (void)beginStartup {
@@ -473,10 +666,19 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     text.font=[UIFont preferredFontForTextStyle:UIFontTextStyleBody]; text.adjustsFontForContentSizeCategory=YES;
     text.textContainerInset=UIEdgeInsetsMake(20,20,20,20);
     NSMutableString *credits=[@"Wolkara — an independent World of Warcraft launcher built on Tolkara. Not affiliated with or endorsed by Blizzard Entertainment. World of Warcraft belongs to Blizzard Entertainment.\n\n" mutableCopy];
-    for (NSString *name in @[@"LICENSE",@"NOTICE.md"]) {
+    // Four documents, and which is which matters. This app is a fork that ships upstream's
+    // code, so it carries its own licence and notice and it keeps theirs; they are told
+    // apart by name, which is why ours are prefixed in the bundle. The first version
+    // listed two names and quietly showed whatever it found, which was upstream's
+    // documents under our attribution - and when nothing matched it showed nothing at
+    // all, silently. The list itself lives beside the log line that reports it, so the two
+    // cannot disagree, and a missing document says so on the page.
+    for (NSArray<NSString *> *document in WKBundledDocuments()) {
+        NSString *name=document[1];
         NSString *path=[NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:name];
         NSString *notice=[NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:NULL];
-        if (notice) [credits appendFormat:@"%@\n%@\n\n",name,notice];
+        if (notice) [credits appendFormat:@"\n\n———— %@ ————\n%@\n",document[0],notice];
+        else [credits appendFormat:@"\n\n———— %@ ————\n%@ is missing from this build.\n",document[0],name];
     }
     text.text=credits; controller.view=text;
     [self.navigationController pushViewController:controller animated:YES];

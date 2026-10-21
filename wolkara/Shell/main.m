@@ -2,17 +2,30 @@
 // starts them through the translation runtime in the user's chosen execution
 // mode, and offers development checks in a separate Diagnostics menu.
 #import <UIKit/UIKit.h>
+// AVAudioSession, because the keep-alive for a running game is an active audio session and
+// the one thing this device can prove without a voice is what that session is set to.
+#import <AVFoundation/AVFoundation.h>
 #import "AppLibrary.h"
 #import "Diagnostics.h"
 #import "DiagnosticsViewController.h"
 #import "ExecutionMode.h"
 #import "LibraryViewController.h"
+#import "../Controller/ControllerInspector.h"
+#import "../Controller/ControllerWindow.h"
+#import "../Input/InputRouter.h"
+#import "../Voice/Dictation.h"
+#import "../Voice/VoiceSettings.h"
 #import "../WoW/CASC.h"
 #import "../WoW/WoWViewController.h"
 #import "LaunchProgressView.h"
 #import "NativeGuest.h"
 #import "SignedFileProbe.h"
 #import "StartupActivity.h"
+#import "WolkaraConfig.h"
+#import "WolkaraLog.h"
+// The checks the app can run on itself, on a device, for the two things a script cannot do:
+// press a pad button and speak. See SelfTest.h.
+#import "SelfTest.h"
 #import "../Cloud/SteamCloudCoordinator.h"
 #include "HostDiagnostics.h"
 #include <errno.h>
@@ -24,6 +37,14 @@
 #import "LocalAuthorization.h"
 #import "Tolkara-Swift.h"
 #endif
+
+// The names, not the constants: the adapter is compiled into a signed dylib that this app
+// does not link against, so a constant it defines cannot be referenced from here. These are
+// AKTouchOwnedKeyUsagesDidChangeNotification and AKTouchOwnedKeyUsagesKey in
+// wolkara/Touch/TouchControls.h, and the wording is part of the contract between the two -
+// the same arrangement as AKTouchGameTextInputDidAppear below.
+static NSString *const AKOwnedKeysNotification = @"AKTouchOwnedKeyUsagesDidChange";
+static NSString *const AKOwnedKeysUserInfoKey = @"usages";
 
 @interface AKHostSceneDelegate : UIResponder <UIWindowSceneDelegate, TKLibraryViewControllerDelegate>
 @property(nonatomic, strong) UIWindow *window;
@@ -188,14 +209,194 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
        ng_arena_reserved() || !hd_debugger_attached() || !CanStartApps()) return;
     ng_reserve_arena(NULL);
 }
+// The touch adapter posts this when it has created the game's own text view. That view
+// is the only thing dictation will type into, so it is registered here - where both the
+// adapter's announcement and the voice module are in scope - rather than searched for.
+- (void)gameTextInputAppeared:(NSNotification *)note {
+    UIView *view = [note.object isKindOfClass:UIView.class] ? note.object : nil;
+    [AKDictation setGameTextTarget:view];
+    WKLog("voice", @"the game's text input is up; dictation will type into it");
+}
+
+// What the adapter needs to know, and the only thing it can be told: which keys are the
+// user's, so the guest does not see them. Sent on every change to the settings - a mapping,
+// the switch, or voice going off - because each of those changes the answer.
+- (void)publishOwnedKeys:(NSNotification *)note {
+    (void)note;
+    NSSet<NSNumber *> *usages = [AKVoiceSettings.shared ownedKeyUsages];
+    [NSNotificationCenter.defaultCenter postNotificationName:AKOwnedKeysNotification
+                                                     object:nil
+                                                   userInfo:@{AKOwnedKeysUserInfoKey: usages}];
+    WKLog("voice", @"the user's keys: %lu published to the adapter", (unsigned long)usages.count);
+}
+
+// What the app's own audio session is set to, for the same reason the dictation flags are
+// printed: the keep-alive for a running game is an audio session set for playback, and what a
+// dictation session must never leave behind is a recording one. Nothing on this device proved
+// either until this was logged. `mic=1` is a session this app is recording on; that is the one
+// the matrix refuses to see.
+//
+// The activation state is deliberately not in the line: iOS does not let AVAudioSession be
+// asked whether the session is active - which is the same limitation `Dictation.m` names when
+// it says its restore path puts the category back and does not claim to have restored the
+// session. The device build failed on the first version of this that tried, which is how the
+// line was corrected: what can be read is the category, the mode and whether it is a
+// recording one.
+static NSString *AKAudioStateDescription(void) {
+    AVAudioSession *session = AVAudioSession.sharedInstance;
+    NSString *category = [session.category stringByReplacingOccurrencesOfString:@"AVAudioSessionCategory" withString:@""];
+    BOOL recording = [session.category isEqualToString:AVAudioSessionCategoryRecord] ||
+                     [session.category isEqualToString:AVAudioSessionCategoryPlayAndRecord];
+    return [NSString stringWithFormat:@"%@/%@ mic=%d", category, session.mode, (int)recording];
+}
+
+// Apple's documented first step, and this app has never taken it.
+//
+// Until now the microphone was only ever asked for as a side effect of activating a recording session.
+// That is how a permission ends up *recorded* as granted while the process is not actually authorised
+// to capture: the session still activates, the input still reports available, and every sample comes
+// back as zero. Asking explicitly, once, here - where there is a user in front of a UI to answer the
+// prompt - is the step that puts the permission and the process in agreement.
+//
+// It lives here rather than in the dictation object because the dictation object is what the voice test
+// harness drives, and a prompt request there never returns in a process with no UI to show it.
+- (void)askForTheMicrophoneOnce {
+    static BOOL asked = NO;
+    if (asked) return;
+    asked = YES;
+    AVAudioSession *session = AVAudioSession.sharedInstance;
+    switch (session.recordPermission) {
+    case AVAudioSessionRecordPermissionGranted:
+        WKLog("audio", @"microphone permission: already granted, nothing to ask");
+        return;
+    case AVAudioSessionRecordPermissionDenied:
+        WKLog("audio", @"microphone permission: refused; Settings > Privacy & Security > Microphone must allow this app");
+        return;
+    case AVAudioSessionRecordPermissionUndetermined:
+        break;
+    }
+    WKLog("audio", @"microphone permission: asking, because it has never been asked");
+    if (@available(iOS 17.0, *)) {
+        [AVAudioApplication requestRecordPermissionWithCompletionHandler:^(BOOL granted) {
+            WKLog("audio", @"microphone permission: %@ after asking", granted ? @"granted" : @"refused");
+        }];
+    } else {
+        [session requestRecordPermission:^(BOOL granted) {
+            WKLog("audio", @"microphone permission: %@ after asking", granted ? @"granted" : @"refused");
+        }];
+    }
+}
+
 - (void)sceneDidBecomeActive:(UIScene *)scene {
-    (void)scene; [self reserveExecutableMemory];
+    (void)scene;
+    // What state everything is in when the app is allowed to act again, so "nothing is left
+    // running" is a fact in the log rather than an assumption. The device matrix reads these
+    // lines back off the iPad after backgrounding it for real.
+    WKLog("host", @"foreground: dictation=%ld listening=%d learning=%d audio=%@",
+          (long)AKDictation.shared.state, (int)AKDictation.shared.listening,
+          (int)AKInputRouter.shared.learning, AKAudioStateDescription());
+    [self askForTheMicrophoneOnce];
+    [self reserveExecutableMemory];
+}
+
+// Both of these can arrive, in either order, depending on why the app went away, so both are
+// handled rather than one being trusted to imply the other.
+- (void)sceneWillResignActive:(UIScene *)scene {
+    (void)scene;
+    [self leftTheForeground:@"resigning active"];
+}
+- (void)sceneDidEnterBackground:(UIScene *)scene {
+    (void)scene;
+    [self leftTheForeground:@"in the background"];
+}
+
+- (void)leftTheForeground:(NSString *)why {
+    // The microphone is closed here, rather than left to the dictation's own background
+    // observer, for two reasons - and the audit found the second. An app that resigns active
+    // without ever entering the background still has an open microphone, and the sentence
+    // below used to be printed while the microphone was still open: a record that claimed
+    // something had happened before it had. Ending it first makes both the sentence and the
+    // state printed underneath it true, and the state is printed *after* the close.
+    if (AKDictation.shared.listening) {
+        [AKDictation.shared cancel];
+        WKLog("host", @"the microphone was open when the app went away; it has been closed");
+    }
+    // The app-level record of the transition. The audio session is in it because the
+    // keep-alive for a running game is an active session, and because "nothing was left
+    // recording" is a claim the device can now check without anyone speaking.
+    WKLog("host", @"%@: dictation=%ld listening=%d learning=%d audio=%@",
+          why, (long)AKDictation.shared.state, (int)AKDictation.shared.listening,
+          (int)AKInputRouter.shared.learning, AKAudioStateDescription());
+    // The router does this itself on the same notification. Doing it here as well costs
+    // nothing and means the shell does not depend on that observer existing.
+    [AKInputRouter.shared cancelLearning];
 }
 - (void)scene:(UIScene *)scene willConnectToSession:(UISceneSession *)s options:(UISceneConnectionOptions *)o {
     static BOOL started;
     if (started) return;
     started = YES;
+    // The user's choices, read back from the config file before anything asks for
+    // one: the edition, the language, the mapped button and the dictionary are all
+    // restored here rather than re-entered after an update. See WolkaraConfig.h.
+    NSDictionary *saved=[NSFileManager.defaultManager attributesOfItemAtPath:TKWolkaraConfig.shared.path error:NULL];
+    WKLog("config", @"%@ is %@", TKWolkaraConfig.shared.path,
+          saved ? [NSString stringWithFormat:@"%llu bytes", saved.fileSize] : @"not there yet");
+    [TKWolkaraConfig.shared load];
     NSArray<NSString *> *arguments=NSProcessInfo.processInfo.arguments;
+    // Wolkara: report what the controller has and what it does, so pad input is
+    // measured rather than assumed. It reads only, and never consumes an input.
+    // See docs/CONTROLLER_INPUT.md.
+    [AKControllerInspector.shared begin];
+    // Any button, on any controller, starts and stops dictation - but only the button
+    // the user mapped, and only while they have the feature switched on. The router
+    // asks the settings for the trigger and gets nil unless both are true, so there is
+    // no path here that acts on an input nobody chose. See docs/INPUT_TRIGGERS.md.
+    AKInputRouter.shared.onTrigger = ^(AKTrigger *trigger, AKInputEvent *event) {
+        (void)event;
+        WKLog("voice", @"input trigger pressed: %@", [trigger summary]);
+        [AKDictation.shared toggle];
+    };
+    AKInputRouter.shared.onTriggerBegan = ^(AKTrigger *trigger, AKInputEvent *event) {
+        (void)event;
+        WKLog("voice", @"input trigger began: %@", [trigger summary]);
+        [AKDictation.shared begin];
+    };
+    AKInputRouter.shared.onTriggerEnded = ^(AKTrigger *trigger, AKInputEvent *event) {
+        (void)event;
+        WKLog("voice", @"input trigger ended: %@", [trigger summary]);
+        [AKDictation.shared end];
+    };    // Something the user needs to know about the microphone: a refused permission, a
+    // device that cannot recognise speech on its own, a session that would not start.
+    AKDictation.shared.problemHandler = ^(NSString *message) {
+        WKLog("voice", @"dictation problem: %@", message);
+    };
+    // The game's own text view announces itself when the touch adapter creates it, and
+    // that is what dictation types into. By name rather than by constant: the adapter
+    // lives in translation/AppKit and this file in launcher/App, and neither can include
+    // the other without spelling out the prepared tree's layout. The constant is
+    // AKTouchGameTextInputDidAppearNotification in wolkara/Touch/TouchControls.h.
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(gameTextInputAppeared:)
+                                               name:@"AKTouchGameTextInputDidAppear" object:nil];
+    // Tell the adapter which keys are the user's, so it can swallow them before the guest
+    // sees them. Every change to the settings re-publishes: a mapping, the switch on the page
+    // and switching voice off all change the answer. Published rather than asked because the
+    // adapter is a dylib - it cannot call in here, and it must not have to.
+    [NSNotificationCenter.defaultCenter addObserver:self
+                                           selector:@selector(publishOwnedKeys:)
+                                               name:AKVoiceSettingsDidChangeNotification
+                                             object:nil];
+    [self publishOwnedKeys:nil];
+    [AKInputRouter.shared begin];
+    if([arguments containsObject:@"--inspect-controller"]) {
+        [AKControllerInspector.shared showPanel:YES];
+        WKLog("host", @"controller inspector panel on");
+    }
+    // A self-test asked for on the command line. It runs once this method has returned, so the
+    // scene is up and the run loop is turning - the dictation checks pump it. The verdict is
+    // written to the app's own log, which is where the device matrix reads it, and nothing in
+    // the UI can reach this. See SelfTest.h for why it exists.
+    NSString *selfTest=AKSelfTestRequestedFromArguments(arguments);
+    if (selfTest) dispatch_async(dispatch_get_main_queue(), ^{ AKRunSelfTest(selfTest); });
     // Normal Wolkara launches use the route included in this build. Development
     // arguments retain the original explicit mode selection.
     NSString *source=nil;
@@ -205,11 +406,11 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
             [NSBundle.mainBundle objectForInfoDictionaryKey:TKExecutionModePreselectionKey],&source);
     else { self.executionMode=TKExecutionModeNone;source=saveProblem; }
     self.executionModeSource=source;
-    fprintf(stderr,"[host] execution mode=%s source=%s\n",ModeIdentifier(self.executionMode),source.UTF8String);
+    WKLog("host", @"execution mode=%s source=%@", ModeIdentifier(self.executionMode), source ?: @"none");
     // Any Local signing launch makes the container folder, so a fresh install
     // can receive containers (tools/install.sh launches once if needed).
     if (self.executionMode==TKExecutionModeLocalSigning) PrepareLocalSigningFolder();
-    self.window = [[UIWindow alloc] initWithWindowScene:(UIWindowScene *)scene];
+    self.window = [[AKControllerWindow alloc] initWithWindowScene:(UIWindowScene *)scene];
     [self reserveExecutableMemory];
     self.library = OpenLibrary();
 #if TOLKARA_INTEGRATED_AUTH
@@ -246,10 +447,14 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
         self.navigation=[[UINavigationController alloc] initWithRootViewController:self.wowController];
         self.window.rootViewController=self.navigation;
         [self.window makeKeyAndVisible];
+        WKLog("ui", @"home: the launcher is up (mode=%s source=%@)",
+              ModeIdentifier(self.executionMode), self.executionModeSource ?: @"none");
         // The public home has one startup route and no execution-mode chooser.
         return;
     }
     self.window.rootViewController = [self statusController];
+    WKLog("ui", @"not a plain launch: the status screen, not the home page (arguments=%@)",
+          [arguments componentsJoinedByString:@" "]);
     // Development runs can prepare for minutes before a guest starts; Auto-Lock must not end them.
     UIApplication.sharedApplication.idleTimerDisabled=YES;
     self.status.text = @"Preparing original guest executable…";
@@ -791,6 +996,10 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     setvbuf(stdout, NULL, _IOLBF, 0);
     for (NSString *argument in arguments) if ([argument hasPrefix:@"--probe-run-id="]) fprintf(log,"%s\n",argument.UTF8String);
     fprintf(log,"[host] execution mode=%s source=%s\n",ModeIdentifier(self.executionMode),self.executionModeSource.UTF8String);
+    // The controller inspector starts before this log exists, and AKLog writes
+    // to stderr, so its first report went nowhere. Report again now that the
+    // log is attached: this is the inventory, and everything pressed follows it.
+    [AKControllerInspector.shared logInventories];
     NSString *map = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"Guest/libraries.json"];
     NSError *error=nil;
     NSString *path=app ? [self.library executablePathForApp:app error:&error] : nil;
@@ -1184,5 +1393,10 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
 @end
 
 int main(int argc, char *argv[]) {
+    // Before anything else, including before the first line that could go wrong:
+    // from here on, an uncaught exception or a fatal signal leaves its reason in
+    // Documents/wolkara.log as well as in the system crash report. See
+    // WolkaraLog.h for why stderr alone was not enough.
+    WKLogStart();
     @autoreleasepool { return UIApplicationMain(argc, argv, nil, NSStringFromClass(AKHostAppDelegate.class)); }
 }

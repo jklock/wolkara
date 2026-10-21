@@ -6,6 +6,29 @@
 #import "TouchHaptics.h"
 #import <objc/message.h>
 
+// Null until the app's shell says which keys are the user's; null means "nothing is owned",
+// which is the behaviour without the feature and what a fixture that links only the adapter
+// gets.
+BOOL (*AKTouchKeyIsTakenForVoice)(unsigned short usage) = NULL;
+
+NSNotificationName const AKTouchOwnedKeyUsagesDidChangeNotification = @"AKTouchOwnedKeyUsagesDidChange";
+NSString *const AKTouchOwnedKeyUsagesKey = @"usages";
+
+// The usages the user has taken, kept here because this file is where the answer is needed:
+// the adapter asks about a key it is about to post to the guest.
+static NSSet<NSNumber *> *AKTouchOwnedKeyUsages = nil;
+
+static BOOL AKTouchUsageIsTaken(unsigned short usage) {
+    return [AKTouchOwnedKeyUsages containsObject:@(usage)];
+}
+
+// Posted when the game's own text view exists, with that view as the object. Dictation
+// types into it and nowhere else; the alternative - searching every window in every
+// scene for something that answers a private selector - is not a thing to do while a
+// game is running. Shell/main.m is the observer, because it is what knows about both
+// this adapter and the voice module.
+NSNotificationName const AKTouchGameTextInputDidAppearNotification = @"AKTouchGameTextInputDidAppear";
+
 NSNotificationName const AKTouchKeyboardRequestNotification = @"AKTouchKeyboardRequestNotification";
 // The keys the launcher's and the platform's switches read. The trackpad string
 // is the one the platform already stored, so an existing choice carries over.
@@ -241,6 +264,27 @@ static BOOL hardwareKeyboardAttached(void) {
     BOOL _tookOwnPlace;
 }
 
+// This dylib is loaded by name, so nothing here can be called by the shell at link time. The
+// one channel is the notification that says which keys the user has taken, where it is
+// received - and the pointer is set here, because until it arrives nothing is owned and every
+// key goes to the game.
++ (void)load {
+    [NSNotificationCenter.defaultCenter addObserverForName:AKTouchOwnedKeyUsagesDidChangeNotification
+                                                    object:nil
+                                                     queue:NSOperationQueue.mainQueue
+                                                usingBlock:^(NSNotification *note) {
+        id usages = note.userInfo[AKTouchOwnedKeyUsagesKey];
+        if ([usages isKindOfClass:NSSet.class]) AKTouchOwnedKeyUsages = [usages copy];
+        else if ([usages isKindOfClass:NSArray.class]) AKTouchOwnedKeyUsages = [NSSet setWithArray:usages];
+        else AKTouchOwnedKeyUsages = nil;
+        // Null when nothing is taken, so the check at the adapter's door is one nil test in
+        // the common case rather than a set lookup per key.
+        AKTouchKeyIsTakenForVoice = AKTouchOwnedKeyUsages.count ? AKTouchUsageIsTaken : NULL;
+        AKLog(@"the user's keys: %lu taken (the game will not see those)",
+              (unsigned long)AKTouchOwnedKeyUsages.count);
+    }];
+}
+
 // The launcher's switch, and the platform's install path, ask this before the
 // controls are added. A stored choice wins; without one they are on, because
 // this product wants them on every device it runs on.
@@ -280,6 +324,10 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
         _haptics = [AKTouchHaptics new];
         _keyboardInput = [[AKKeyboardTextView alloc] initWithFrame:CGRectMake(0, 0, 1, 1) textContainer:nil];
         _keyboardInput.inputOwner = self;
+        // Announced, not reached for. This is the view that answers touchInsertText:,
+        // and it is the game's own text input, so it is what dictation types into.
+        [NSNotificationCenter.defaultCenter postNotificationName:AKTouchGameTextInputDidAppearNotification
+                                                        object:_keyboardInput];
         [self buildComposer];
         _keyboardButton = [self buttonWithSymbol:@"keyboard" label:@"Show keyboard" action:@selector(toggleKeyboard)];
         _keyboardButton.accessibilityIdentifier = @"tolkara.keyboard";
@@ -461,7 +509,37 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
 }
 // The guest owns its text/selection. Explicit Replace replaces the field.
 // Accessory keys still allow editing existing text directly in the guest.
+// Touches pass through the toolbar except on its own chrome.
+//
+// The platform's version named the two buttons it had; this names every control the layer
+// puts on the same strip, which is the same rule with the layer's controls in it. It was
+// lost when the layer rewrote this file, and without it the toolbar claims every point in
+// its frame - so a tap in the gap between two buttons goes to the toolbar instead of to the
+// game. The platform's own test is what caught it.
+- (BOOL)pointInside:(CGPoint)point withEvent:(UIEvent *)event {
+    (void)event;
+    for (UIView *control in @[_trackpadButton, _keyboardButton, _gamepadButton, _settingsButton, _composer]) {
+        if (control && !control.hidden && CGRectContainsPoint(control.frame, point)) return YES;
+    }
+    return NO;
+}
+
 - (BOOL)hasText { return YES; }
+// The text-input traits, carried over from the platform's version of this class. It is what
+// makes iPadOS treat these controls as a text input and offer the layer's own accessory row
+// for them, and the platform's test asserts the two that decide that. They were lost when
+// the layer rewrote this file; restored verbatim, because none of the layer's changes need
+// them to differ.
+- (UITextAutocapitalizationType)autocapitalizationType { return UITextAutocapitalizationTypeNone; }
+- (UITextAutocorrectionType)autocorrectionType { return UITextAutocorrectionTypeNo; }
+- (UITextSpellCheckingType)spellCheckingType { return UITextSpellCheckingTypeNo; }
+- (UITextSmartQuotesType)smartQuotesType { return UITextSmartQuotesTypeNo; }
+- (UITextSmartDashesType)smartDashesType { return UITextSmartDashesTypeNo; }
+- (UITextSmartInsertDeleteType)smartInsertDeleteType { return UITextSmartInsertDeleteTypeNo; }
+- (UIKeyboardType)keyboardType { return UIKeyboardTypeDefault; }
+- (UIReturnKeyType)returnKeyType { return UIReturnKeyDefault; }
+// Secure, so the system never offers to remember or spell-check what is typed at the game.
+- (BOOL)isSecureTextEntry { return YES; }
 - (void)insertText:(NSString *)text { [self.delegate touchInsertText:text]; }
 - (void)replaceGameText:(NSString *)text {
     // A host with no draft panel leaves this out; the button then does nothing

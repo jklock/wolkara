@@ -15,7 +15,7 @@
 # Upstream: candidate (not submitted).
 #
 diff --git a/translation/AppKit/AppKit.m b/translation/AppKit/AppKit.m
-index da4f8ad..973b014 100644
+index da4f8ad..47e3e59 100644
 --- a/translation/AppKit/AppKit.m
 +++ b/translation/AppKit/AppKit.m
 @@ -279,7 +279,7 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
@@ -27,21 +27,33 @@ index da4f8ad..973b014 100644
      AKTouchControls *_touchControls;
      BOOL _touchCursorActive, _touchCursorInitialized, _pressedMiddle;
      NSTimeInterval _lastTouchClickTime;
-@@ -417,6 +417,13 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
+@@ -417,6 +417,25 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
          [self postTextKey:code characters:characters unmodified:unmodified modifiers:modifiers];
      });
  }
 +- (void)touchReplaceText:(NSString *)text {
-+    // Type the text into the focused field, through the same event queue as typed input.
-+    // Nothing else: no select-all, no delete, no clipboard, no Return. A synthetic
-+    // Command+A followed by a delete was the only thing the guest received differently on
-+    // the dictation then Replace that ended with the app quitting, so it is gone.
++    // macOS field editing through the same event queue as typed input: one explicit
++    // Replace action, with no clipboard, no text query and no Return.
++    //
++    // Select all, delete, then type. This was removed once, because "dictation then
++    // Replace" ended with the app quitting and the select-all was the only thing the
++    // guest received differently. The crash was not that: it was
++    // `insertDictationResult:`, a selector UITextView does not implement, sent to
++    // super() the instant a dictation landed - see development/NOTES.md, 2026-10-15.
++    // With that fixed, taking this out only made the button a liar: it was still
++    // enabled for an empty draft and its hint still promised to replace the whole
++    // field, while typing at the caret instead. docs/TOUCH_INPUT.md specifies this
++    // sequence, and the fixture in tests/test_touch_controls_app.m asserts it.
++    //
++    // Command is carried on the A events only; it cannot stay held for typing.
++    [self postTextKey:0 characters:@"a" unmodified:@"a" modifiers:NSEventModifierFlagCommand];
++    [self touchSpecialKey:51 characters:@"\x7f"];
 +    [self touchInsertText:text];
 +}
  - (void)touchSpecialKey:(unsigned short)code characters:(NSString *)characters {
      [self postTextKey:code characters:characters unmodified:characters modifiers:0];
  }
-@@ -632,6 +639,20 @@ static BOOL AKIsRight(UIEvent *ev) { return (ev.buttonMask & UIEventButtonMaskSe
+@@ -632,6 +651,30 @@ static BOOL AKIsRight(UIEvent *ev) { return (ev.buttonMask & UIEventButtonMaskSe
          // A modifier key's own press and release set and clear it; other keys carry UIKit's state.
          if (isMod) _mods = AKModifiersAfterKey(_mods, k.keyCode, down);
          else [self reconcileModifiers:AKMods(k.modifierFlags)];
@@ -58,11 +70,21 @@ index da4f8ad..973b014 100644
 +            }
 +            continue;
 +        }
++        // A key the user has taken for dictation, with the game not to see it. This is the
++        // only place a guest key event is posted, so it is the only place ownership can be
++        // honoured; the release is swallowed below with the press, so the game never sees
++        // half a keystroke. The hook is the layer's answer and is null when no layer is
++        // linked, in which case nothing is owned and every key reaches the game.
++        if (!isMod && down && AKTouchKeyIsTakenForVoice && AKTouchKeyIsTakenForVoice(k.keyCode)) {
++            _swallowedKey = k.keyCode;
++            AKLog(@"key usage=%u is the user's; the game does not see it", (unsigned)k.keyCode);
++            continue;
++        }
 +        if (!isMod && !down && _swallowedKey == k.keyCode) { _swallowedKey = 0; continue; }
          e.modifierFlags = _mods;
          e.type = isMod || k.keyCode == 0x39 ? NSEventTypeFlagsChanged : down ? NSEventTypeKeyDown : NSEventTypeKeyUp;
          e.characters = k.characters; e.charactersIgnoringModifiers = k.charactersIgnoringModifiers;
-@@ -905,11 +926,14 @@ static void logLayer(CALayer *layer,unsigned depth) {
+@@ -905,11 +948,14 @@ static void logLayer(CALayer *layer,unsigned depth) {
  - (BOOL)isActive { return _active; }
  - (void)ak_becameActive:(NSNotification *)notification {
      (void)notification;
