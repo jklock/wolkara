@@ -625,8 +625,8 @@ python3 tools/test_native_debugserver.py
 
 ## September 20 physical integration update
 
-The earlier physical-device status above is historical. See DEVICE_VALIDATION.md
-for current evidence. Own trusted enrollment is in the shared protected Keychain;
+The earlier physical-device status above is historical. The per-commit validation records that used
+to accompany it are not kept in this repository. Own trusted enrollment is in the shared protected Keychain;
 our packet provider authenticates pairing, uses system PSK TLS over its own TCP
 packet path, discovers the exact iPad, and verifies the actual RSP capability
 response. iPadOS 27's debugproxy advertises UsesRemoteXPC=true despite answering
