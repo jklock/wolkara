@@ -19,6 +19,7 @@
 NSString *const AKSelfTestInput = @"input";
 NSString *const AKSelfTestVoice = @"voice";
 NSString *const AKSelfTestMic = @"mic";
+NSString *const AKSelfTestDictationTarget = @"dictation-target";
 
 #pragma mark - Recording what happened
 
@@ -473,6 +474,35 @@ static void AKSelfTestRunMic(AKSelfTestRecorder *recorder) {
 
 #pragma mark - Entry
 
+// The check the crash of 2026-10-21 needed, and the one part of that path a self-test can
+// check without a person speaking: the object registered as the game's text input must
+// answer the two selectors dictation sends it. It was registered as AKKeyboardTextView, the
+// draft editor, which answers neither, so the first transcript into the game aborted the app
+// with "-[AKKeyboardTextView touchInsertText:]: unrecognized selector".
+//
+// Nothing is typed and nothing in the game is touched: the registered object is asked what
+// it is, and answers. Run it with `--local-game-startup`, because the target exists only
+// once the guest's host view has been created.
+static void AKSelfTestRunDictationTarget(AKSelfTestRecorder *recorder) {
+    __block UIView *target = nil;
+    for (NSUInteger slice = 0; slice < 300 && !target; slice++) {
+        AKSelfTestOnMain(^{ target = AKDictation.gameTextTarget; });
+        if (!target) AKSelfTestSleep(0.1);
+    }
+    if (!target) {
+        recorder.detail = @"no guest, so no text target";
+        WKLog("selftest", @"no text target was registered in 30s; this check needs --local-game-startup");
+        [recorder check:NO _:@"<a running guest registered a text target for dictation>"];
+        return;
+    }
+    WKLog("selftest", @"the registered text target is %@", NSStringFromClass(target.class));
+    recorder.detail = [NSString stringWithFormat:@"%@ answers both selectors", NSStringFromClass(target.class)];
+    [recorder check:[target respondsToSelector:NSSelectorFromString(@"touchInsertText:")]
+                 _:@"<the registered text target takes typed words (touchInsertText:)> "];
+    [recorder check:[target respondsToSelector:NSSelectorFromString(@"touchSpecialKey:characters:")]
+                 _:@"<and keys (touchSpecialKey:characters:) for Return>"];
+}
+
 static void AKSelfTestLogVerdict(AKSelfTestRecorder *recorder, NSString *name) {
     if (recorder.firstFailure) {
         WKLog("selftest", @"selftest: %@ FAIL %lu/%lu checks: %@",
@@ -507,6 +537,14 @@ void AKRunSelfTest(NSString *name) {
         // queue, so a test that occupied it could never receive them.
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
             AKSelfTestRunVoice(recorder);
+            AKSelfTestLogVerdict(recorder, name);
+        });
+        return;
+    }
+    if ([name isEqualToString:AKSelfTestDictationTarget]) {
+        // Off the main queue too: it waits for the guest to start, which happens on the main queue.
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+            AKSelfTestRunDictationTarget(recorder);
             AKSelfTestLogVerdict(recorder, name);
         });
         return;
