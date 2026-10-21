@@ -23,7 +23,7 @@ and left the app running. The app's own `dictation-target` self-test also report
 The recorded evidence covers the exercised iPad/controller configuration; it is not a claim
 about every controller model, game field, or device.
 
-## Latest Wolkara gameplay report (2026-10-07)
+## Latest WolkaraForever gameplay report (2026-10-07)
 
 The developer reports **60 FPS at graphics quality 4 on an iPhone 16 Pro Max**
 in WoW Forever. Render scale, exact client build and a repeatable benchmark were
@@ -74,7 +74,7 @@ Real GameController input and connection lifecycle are covered by synthetic
 simulator fixtures. This touch-controller revision has **not yet been tested
 in WoW on the physical iPhone** and does not extend the gameplay report below.
 
-The subsequent Wolkara revision adds saved control opacity, separate rear/front
+The subsequent WolkaraForever revision adds saved control opacity, separate rear/front
 sizes, draggable groups/buttons and reset. Its original UIKit fixture verifies
 preferences, bounds, all button/axis events and input suppression during editing;
 the settings and editor were also inspected in the simulator. The app now has
@@ -226,7 +226,7 @@ been exercised on the device, so no package or game compatibility result is
 claimed here.
 
 As of 2026-10-16 the parts of that which a fixture can hold are covered by
-`wolkara/WoW/tests/test_wow_launcher_app.m`: TOC parsing, store import (including
+`wolkaraforever/WoW/tests/test_wow_launcher_app.m`: TOC parsing, store import (including
 importing the same add-on twice, which used to delete the installed copy), a
 missing TOC, a file the TOC does not list, pin, disable, remove, and the
 credentials contract. The device-side list above is unchanged - a fixture is not

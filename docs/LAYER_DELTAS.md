@@ -1,6 +1,6 @@
-# Layer deltas: Wolkara against tolkara
+# Layer deltas: WolkaraForever against tolkara
 
-This is the single source of truth for the split of Wolkara into a layer above
+This is the single source of truth for the split of WolkaraForever into a layer above
 tolkara. It records what we changed, what upstream changed, where the two ran over
 each other, and the class each path gets in the layer split.
 
@@ -8,7 +8,7 @@ each other, and the class each path gets in the layer split.
 
 | Item | Value |
 | --- | --- |
-| Our branch | `feature/wolkara-above-tolkara` (fork of the pre-split state, tagged `wolkara-pre-layer`) |
+| Our branch | `feature/wolkaraforever-above-tolkara` (fork of the pre-split state, tagged `wolkaraforever-pre-layer`) |
 | Merge base with upstream | `05035cc` *Document confirmed iPhone keyboard and trackpad use* |
 | Pinned upstream | `00a8501` *Compatibility: WoW Forever water renders on the iPad Pro M5* (`upstream/main`) |
 | Our side | 37 commits, 109 files, +9737 / -356 |
@@ -186,8 +186,8 @@ same as differing now - see "The measured delta set" below for what actually dif
 
 | Path | Class | Why |
 | --- | --- | --- |
-| `project.yml` | layer | Wolkara gets its own `wolkara/project.yml`; the platform's stays upstream and untouched |
-| `launcher/App/main.m` | replace | The layer supplies the Wolkara app shell; the platform's entry point stays for platform builds |
+| `project.yml` | layer | WolkaraForever gets its own `wolkaraforever/project.yml`; the platform's stays upstream and untouched |
+| `launcher/App/main.m` | replace | The layer supplies the WolkaraForever app shell; the platform's entry point stays for platform builds |
 | `launcher/App/ExecutionMode.h`, `ExecutionMode.m` | replace | Our shell owns mode glue and branding; upstream's version serves platform builds |
 | `launcher/Info.plist` | layer | Our branded plist, with `UIBackgroundModes: [audio]` and the microphone usage string; the platform's stays under `platform/` |
 | `translation/AppKit/AppKit.m` | patch | Touch-controls install, the Control+Option+D trigger in `postKeys:down:`, occlusion reporting in `ak_becameActive:`/`ak_resignedActive:`. **Re-derived in Phase 3** - see "Progress: seven patches" above for why, and for what upstream's rewritten version already gives us |
@@ -212,19 +212,19 @@ same as differing now - see "The measured delta set" below for what actually dif
 | `authorization/App/Integrated-Info.plist` | layer | The layer compiles against its own branded plist |
 | `authorization/App/LocalAuthorization.h`, `LocalAuthorization.m`, `authorization/Tunnel/LocalPacketProvider.m`, `authorization/Tunnel/PacketServiceProbe.swift` | patch | LocalServiceRetry wiring - a good upstream contribution candidate |
 | `launcher/Info.plist` | layer | Branded plist with `UIBackgroundModes: [audio]` and the microphone string |
-| `tools/generate.sh`, `tools/install.sh`, `tools/package_ipa.sh`, `tools/test_touch_controls_ui.sh` | layer | The layer's own wrapper scripts under `wolkara/tools/` |
+| `tools/generate.sh`, `tools/install.sh`, `tools/package_ipa.sh`, `tools/test_touch_controls_ui.sh` | layer | The layer's own wrapper scripts under `wolkaraforever/tools/` |
 | `translation/AppKit/ldflags` | layer | The AKFont alias is a build setting for the target that compiles the adapter, not a platform change: the platform's own generic builds carry no AKFont and fail to link if it is aliased there |
-| `LICENSE`, `NOTICE.md` | layer | Our licence and notice, and only from 2026-10-16: they reach the app as `Wolkara-LICENSE` and `Wolkara-NOTICE.md`, because the prepared tree already has upstream's files under the bare names and both sets have to ship. The app had been showing upstream's documents under our attribution. |
+| `LICENSE`, `NOTICE.md` | layer | Our licence and notice, and only from 2026-10-16: they reach the app as `WolkaraForever-LICENSE` and `WolkaraForever-NOTICE.md`, because the prepared tree already has upstream's files under the bare names and both sets have to ship. The app had been showing upstream's documents under our attribution. |
 | `tests/test_fixups.c` | patch | Follows the runtime delta |
 
 ## Ours only: 64 additions, by module
 
 | Module | Files |
 | --- | --- |
-| `wolkara/WoW` (launcher, updates, add-ons) | 17 files under `launcher/WoW/`, plus `tools/wow_cdn.m`, `profiles/wow-forever/sync_addons.sh`, `tests/test_wow_{client,installation,manifest,update,verification}.m`, `tests/wow_installation_fixture.h`, `tests/test_wow_launcher_app.m`, `tools/test_wow_launcher.sh`, `tools/test_wow_launcher_ui.sh`, `docs/WOW_LAUNCHER.md`, `docs/ADDON_MANAGER_PLAN.md` |
-| `wolkara/Touch` | `translation/AppKit/{Fonts.h,Fonts.m,TouchGamepad*,TouchGamepadLayout*,TouchHaptics*}`, `translation/Metal/BackgroundPacing.m`, `tests/test_touch_gamepad_app.m`, `tools/test_touch_gamepad_ui.sh`, `docs/TOUCH_CONTROLLER_PROPOSAL.md`, `docs/TOUCH_INPUT.md` |
-| `wolkara/Shell` | `launcher/Assets.xcassets/Wolkara.appiconset/*`, `artwork/wolkara/*`, `tools/make_wolkara_icon.py`, `docs/{GETTING_STARTED,WOLKARA_DISTRIBUTION,FRESH_INSTALL_TEST}.md` |
-| `wolkara/Bridge` | `authorization/App/LocalServiceRetry.{h,m}`, `tests/test_local_service_retry.m`, `tools/test_local_service_retry.sh`, `tests/test_packet_service_retry.swift` |
+| `wolkaraforever/WoW` (launcher, updates, add-ons) | 17 files under `launcher/WoW/`, plus `tools/wow_cdn.m`, `profiles/wow-forever/sync_addons.sh`, `tests/test_wow_{client,installation,manifest,update,verification}.m`, `tests/wow_installation_fixture.h`, `tests/test_wow_launcher_app.m`, `tools/test_wow_launcher.sh`, `tools/test_wow_launcher_ui.sh`, `docs/WOW_LAUNCHER.md`, `docs/ADDON_MANAGER_PLAN.md` |
+| `wolkaraforever/Touch` | `translation/AppKit/{Fonts.h,Fonts.m,TouchGamepad*,TouchGamepadLayout*,TouchHaptics*}`, `translation/Metal/BackgroundPacing.m`, `tests/test_touch_gamepad_app.m`, `tools/test_touch_gamepad_ui.sh`, `docs/TOUCH_CONTROLLER_PROPOSAL.md`, `docs/TOUCH_INPUT.md` |
+| `wolkaraforever/Shell` | `launcher/Assets.xcassets/WolkaraForever.appiconset/*`, `artwork/wolkaraforever/*`, `tools/make_wolkaraforever_icon.py`, `docs/{GETTING_STARTED,WOLKAREFOREVER_DISTRIBUTION,FRESH_INSTALL_TEST}.md` |
+| `wolkaraforever/Bridge` | `authorization/App/LocalServiceRetry.{h,m}`, `tests/test_local_service_retry.m`, `tools/test_local_service_retry.sh`, `tests/test_packet_service_retry.swift` |
 
 ## Upstream only: arrives with the pinned platform
 

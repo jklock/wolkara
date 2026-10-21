@@ -1,0 +1,26 @@
+# WolkaraForever layer patch 0011 - install: resolve package dependencies before building
+#
+# Why: the project is regenerated at the top of the install script, so a package
+# graph resolved before that is stale and the build then cannot find the module. The
+# platform has no packages of its own, so for it this resolves to nothing and costs
+# nothing; a layer that adds one needs it.
+#
+# Applies to: tools/install.sh
+# Upstream: candidate (not submitted).
+#
+diff --git a/tools/install.sh b/tools/install.sh
+index 3db50b2..10adc2f 100755
+--- a/tools/install.sh
++++ b/tools/install.sh
+@@ -30,6 +30,11 @@ fi
+ BUNDLE=${TOLKARA_BUNDLE_ID:-local.tolkara.app}
+ mkdir -p logs; LOG=logs/install-$(date +%Y%m%d-%H%M%S).log
+ tools/generate.sh
++# Resolve package dependencies after regenerating the project, so a project that declares
++# any has them fetched before the build looks for them. A project with none resolves to
++# nothing, which is the case here.
++xcodebuild -resolvePackageDependencies -project Tolkara.xcodeproj -scheme Tolkara \
++    -derivedDataPath build/device > /dev/null
+ # NATIVE_GUEST_SHIMS=YES builds and signs only Tolkara's translation libraries
+ # for the API surface those executables import. They stay outside the app.
+ # GENERIC builds one adapter per framework instead, for no executable.

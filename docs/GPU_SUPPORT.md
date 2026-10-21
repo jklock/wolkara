@@ -69,7 +69,7 @@ leaves undefined. Measured on the M1:
 
 `randomBlocks` used to force one block in nine into the reserved mode and then require
 the two to agree, which is why the test aborted on this OS/driver. Patch 0001
-(`wolkara/patches/0001-bc7-reserved-mode-not-comparable.patch`) generates only the
+(`wolkaraforever/patches/0001-bc7-reserved-mode-not-comparable.patch`) generates only the
 eight defined modes for that comparison; `tests/test_bc_decode.c` still covers that a
 reserved block is handled without crashing. With the patch the three runs (auto, off,
 forced on) all PASS, and `TOLKARA_BC_FALLBACK=off` now really compares instead of
@@ -97,5 +97,5 @@ the CPU path as a workaround without touching code.
 ## Status
 
 Patches 0001 and 0002 are upstream candidates (Phase 7). Nothing here is
-Wolkara-specific: both are corrections to the platform's own BC work, and the log line
+WolkaraForever-specific: both are corrections to the platform's own BC work, and the log line
 is diagnostics the platform wants for itself.

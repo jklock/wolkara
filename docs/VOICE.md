@@ -26,7 +26,7 @@ right page instead of describing where it is.
 5. In the game, **that button starts transcription**. Nothing of ours appears.
 6. The transcript is typed into the game, and optionally sent.
 
-Both pages are drawn from `wolkara/Shell/WolkaraTheme.{h,m}`, which is the one place the
+Both pages are drawn from `wolkaraforever/Shell/WolkaraForeverTheme.{h,m}`, which is the one place the
 launcher's ink and gold are written down - the Add-on Manager's values, because that is
 the screen the rest is expected to match. Building them from `UIColor.system*` is what
 made them the one part of the launcher that did not look like the launcher.
@@ -132,10 +132,10 @@ hears rather than what we do with it afterwards.
 
 Stored with the layer's other per-user choices, under `AKVoice*` keys, so they
 survive reinstalls and are inspectable. They are also written to
-`Documents/wolkara-config.json` in the app's container, which the installer
+`Documents/wolkaraforever-config.json` in the app's container, which the installer
 replaces in place — so the choices come back after an update without being
 re-entered. The CurseForge key is deliberately not in that file; it belongs in
-the keychain, and is already there. See `wolkara/Shell/WolkaraConfig.h`.
+the keychain, and is already there. See `wolkaraforever/Shell/WolkaraForeverConfig.h`.
 
 | Key | Meaning |
 | --- | --- |

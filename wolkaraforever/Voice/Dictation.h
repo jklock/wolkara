@@ -1,0 +1,128 @@
+// WolkaraForever: what the button says, turned into text in the game.
+//
+// The shape of it: a mapped button starts the microphone, the same button (or its
+// release) stops it, and what was said is typed into the game.
+//
+// Three things here come straight out of the 2026-10-16 audit:
+//
+//   * **Exactly one delivery.** The old code copied the transcript and tore the audio
+//     down immediately, so the recogniser's last words could arrive after the text -
+//     and after Return - had already gone to the game. There is now an explicit
+//     `finalizing` state: the audio ends, the recogniser is asked for its final result,
+//     and the text is delivered once, when that result arrives or when the wait times
+//     out.
+//   * **The audio session is given back as it was found.** It used to set record mode
+//     and then always leave the app at playback, which changes how the game sounds.
+//   * **On-device or nothing.** The product says recognition happens on the iPad, so a
+//     device that cannot do it is refused rather than quietly sent to a server.
+//
+// The recogniser and the audio session are behind two small protocols because they are
+// the two things that cannot run in a test, and the delivery rules are exactly what a
+// test has to be able to exercise.
+
+#import <Foundation/Foundation.h>
+#import <UIKit/UIKit.h>
+
+NS_ASSUME_NONNULL_BEGIN
+
+typedef NS_ENUM(NSInteger, AKDictationState) {
+    AKDictationStateIdle = 0,
+    // Asking for microphone and speech permission.
+    AKDictationStateAuthorizing,
+    // The microphone is open.
+    AKDictationStateListening,
+    // The audio has ended and the recogniser's last result is being waited for.
+    AKDictationStateFinalizing,
+};
+
+/// The loudest sample the most recent capture heard, as a fraction of full scale.
+///
+/// Zero means the capture delivered digital silence for its whole life, which a live microphone never
+/// does - a quiet room still has a noise floor. This exists because the voice self-test used to pass
+/// over a microphone that was delivering nothing at all: it checked that the session looked right and
+/// never checked that sound came out of it. A recogniser handed silence answers with a short word, or
+/// with "No speech detected", and both look like a working app from every other angle.
+double AKVoiceLoudestSample(void);
+
+/// The same peak as a level in dBFS. Silence meters at about -120, a room at about -50 to -70.
+/// A check written as "greater than zero" passes on silence, because -120 dBFS is 0.000001 linear;
+/// this exists so the check can be a threshold that digital silence cannot satisfy.
+double AKVoiceLoudestDecibels(void);
+
+#pragma mark - The two seams
+
+@protocol AKDictationSpeech <NSObject>
+- (BOOL)isAvailable;
+/// Whether recognition can happen without sending audio anywhere.
+- (BOOL)supportsOnDeviceRecognition;
+/// Asks once per session. The answer is what matters; the call may be asynchronous.
+- (void)requestAuthorization:(void (^)(BOOL granted))completion;
+/// Starts feeding audio to the recogniser. `handler` is called with the running
+/// transcript, once with `isFinal`, and with an `error` if the session failed.
+- (void)startOnDevice:(BOOL)onDevice
+                words:(NSArray<NSString *> *)words
+              handler:(void (^)(NSString *transcript, BOOL isFinal, NSError *error))handler;
+/// Stop feeding audio and ask for the last result. Either `isFinal` or the deadline
+/// in AKDictation follows.
+- (void)finish;
+/// Abandon the session. No further handler calls.
+- (void)cancel;
+@end
+
+@protocol AKDictationAudio <NSObject>
+/// Take the session for recording, remembering how to put it back.
+- (BOOL)beginRecording:(NSError **)error;
+/// Hand the session back. The coordinator puts it where the declared policy says it should be - the
+/// game's playback if a game lease is held, released with NotifyOthersOnDeactivation otherwise - and
+/// answers whether that happened. A refusal is reported to the user, not retried: an unbounded retry
+/// from a failed put-back is what could land in the middle of the next dictation.
+- (BOOL)restore:(NSError **)error;
+@end
+
+#pragma mark - Dictation
+
+@interface AKDictation : NSObject
+
++ (instancetype)shared;
+
+@property (nonatomic, readonly) AKDictationState state;
+/// The microphone is open. True while listening *and* while waiting for the last
+/// words, because the indicator above the iPad must not blink off in between.
+@property (nonatomic, readonly) BOOL listening;
+
+- (void)toggle;
+- (void)begin;
+- (void)end;
+/// Abandon whatever is happening and deliver nothing.
+- (void)cancel;
+
+/// A screen that wants the words instead of the game: the test screen. While one is
+/// set, the game is never typed into.
+@property (nonatomic, copy, nullable) void (^transcriptHandler)(NSString *text);
+@property (nonatomic, copy, nullable) void (^listeningChanged)(BOOL listening);
+/// For a screen that wants to show what is happening; used by the test screen.
+@property (nonatomic, copy, nullable) void (^stateChanged)(AKDictationState state);
+/// Something the user should be told: a refused permission, no on-device
+/// recognition, no microphone. Logged as well, always.
+@property (nonatomic, copy, nullable) void (^problemHandler)(NSString *message);
+
+/// The game's own text view, registered by the layer's touch controls when they
+/// create it. Words go there and nowhere else: the old code walked every window in
+/// every scene looking for something that answers the private selector, which is not
+/// a thing to do while a game is running.
++ (void)setGameTextTarget:(nullable UIView *)view;
++ (nullable UIView *)gameTextTarget;
+
+/// Test seams. Left nil in the app, where the real recogniser and the real audio
+/// session are used.
+@property (nonatomic, strong, nullable) id<AKDictationSpeech> speech;
+@property (nonatomic, strong, nullable) id<AKDictationAudio> audio;
+/// How long to wait for the recogniser's last words after the audio ends. If they do not
+/// arrive in that time, nothing is typed and the user is told: what would otherwise be
+/// delivered is a partial result, and half a sentence in the game's chat box is worse than
+/// an empty one.
+@property (nonatomic) NSTimeInterval finalizeTimeout;
+
+@end
+
+NS_ASSUME_NONNULL_END
