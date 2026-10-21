@@ -20,7 +20,7 @@ compatibility layer:
 - That is a rule about the application, not about this repository's own work.
   Fixtures, the device matrix, `pilot.sh` and the app's own self-tests exist to
   drive *our* code with synthetic input, and contributing more of that is
-  welcome; see `wolkara/Shell/SelfTest.h` for the app-side version of the idea.
+  welcome; see `wolkaraforever/Shell/SelfTest.h` for the app-side version of the idea.
 - Never commit signing teams, device identifiers, pairing records, provisioning
   profiles, credentials, or files from `build/` and `logs/`. Personal settings
   belong in the ignored `local.env`.

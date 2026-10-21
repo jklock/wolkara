@@ -1,0 +1,35 @@
+# WolkaraForever layer patch 0007 - AudioToolbox: keep the audio session out of the adapter
+#
+# Why: looking up an output audio unit set AVAudioSessionCategoryPlayback and activated the session
+# itself, with no coordination. Playback is an output-only category, so if the guest touched audio
+# while a dictation was recording, the input was disconnected under it: the engine kept running, the
+# tap kept firing with correctly shaped buffers, and every sample in them was exactly 0.0. The
+# recogniser answered "No speech detected" and the session had looked healthy the whole time.
+# The adapter now asks the host for the game's playback lease, as the CoreAudio adapter already does:
+# one owner of the session, and it is not a shim.
+# Applies to: translation/AudioToolbox/Output.m
+# Upstream: candidate (not submitted).
+#
+--- a/translation/AudioToolbox/Output.m
++++ b/translation/AudioToolbox/Output.m
+@@ -62,9 +62,17 @@
+     AudioComponentDescription mapped=*description;
+     if(mapped.componentType==kAudioUnitType_Output && (mapped.componentSubType=='ahal' || mapped.componentSubType=='def ')) {
+         mapped.componentSubType=kAudioUnitSubType_RemoteIO;
+-        NSError *error=nil;AVAudioSession *session=AVAudioSession.sharedInstance;
+-        BOOL active=[session setCategory:AVAudioSessionCategoryPlayback error:&error] && [session setActive:YES error:&error];
+-        AKLog(@"audio playback session active=%d error_code=%ld",active,(long)error.code);
++        // The host owns the audio session, so this asks it for the game's playback lease and does
++        // nothing else with the session. Taking Playback here is what pulled the session out from
++        // under a dictation that was already recording: Playback is an output-only category, so the
++        // input went to digital silence while the engine kept running and reported itself healthy.
++        // This is the same request the CoreAudio adapter makes, found by dlsym because this adapter
++        // is its own image and cannot link against the app's symbol.
++        typedef BOOL (*TKWolkaraForeverPlaybackRequest)(void);
++        static TKWolkaraForeverPlaybackRequest ask; static dispatch_once_t once;
++        dispatch_once(&once,^{ ask=(TKWolkaraForeverPlaybackRequest)dlsym(RTLD_DEFAULT,"TKWolkaraForeverRequestGamePlayback"); });
++        BOOL active=ask?ask():NO;
++        AKLog(@"audio playback session active=%d",active);
+     }
+     AudioComponent component=f(previous,&mapped);
+     AKLogC("audio component type=%#x subtype=%#x mapped=%#x found=%d",(unsigned)description->componentType,(unsigned)description->componentSubType,(unsigned)mapped.componentSubType,component!=NULL);

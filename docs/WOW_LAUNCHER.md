@@ -1,8 +1,8 @@
-# Wolkara launcher
+# WolkaraForever launcher
 
 Current branch: `main`, based on the touch-controller implementation
 at `b55084a` (2026-10-06). The name, original W/portal icon and home heading are
-now Wolkara. The engine, Xcode targets and bundle IDs retain their existing names
+now WolkaraForever. The engine, Xcode targets and bundle IDs retain their existing names
 to preserve signing configuration and installed data. The development history
 and validation below distinguish tested results from pending device checks.
 
@@ -31,7 +31,7 @@ External JIT in the diagnostics/sideload target, before memory reservation.
 An old saved Local signing selection cannot accidentally block an ordinary
 launch. Explicit development arguments retain the previous resolver and can
 still select another mode. Hiding the selector does not remove enrolment, JIT
-or memory requirements; see [the distribution plan](WOLKARA_DISTRIBUTION.md).
+or memory requirements; see [the distribution plan](WOLKAREFOREVER_DISTRIBUTION.md).
 
 - Remembers Forever Beta, Classic Era, Classic, Retail or Retail Beta, region
   and language. Forever currently maps to `wow_classic_beta`; a listed edition
@@ -111,7 +111,7 @@ no .NET runtime is embedded.
 
 ### Persistent verification (2026-10-07)
 
-`Data/data/.wolkara-verified` is a local, versioned, checksummed inventory with
+`Data/data/.wolkaraforever-verified` is a local, versioned, checksummed inventory with
 compact 25-byte records: the full encoded key, indexed location and encoded
 size. A record is reusable only if its current local index entry still matches
 and its segment's filesystem identity, size, nanosecond mtime and nanosecond
@@ -310,10 +310,10 @@ From the repository root (Xcode and XcodeGen required). The layer commands prepa
 the build tree; the remaining platform commands run inside that generated tree:
 
 ```sh
-bash wolkara/tools/test_wow_launcher.sh
-bash wolkara/tools/test_wow_launcher_ui.sh
-bash wolkara/tools/test_emulation.sh
-wolkara/tools/prepare.sh
+bash wolkaraforever/tools/test_wow_launcher.sh
+bash wolkaraforever/tools/test_wow_launcher_ui.sh
+bash wolkaraforever/tools/test_emulation.sh
+wolkaraforever/tools/prepare.sh
 cd build/platform
 # Focused fixup regression, also runnable after the unrelated signer failure:
 xcrun clang -std=c11 -D_DARWIN_C_SOURCE -Wall -Wextra -Werror -O1 -g \
@@ -370,7 +370,7 @@ Results with Xcode 27.0:
   **Corrected on 2026-10-16:** with Xcode 27.0 it does reproduce, identically and
   with identical sizes, and it reproduces in a checkout of the platform at the
   same commit with no layer applied at all - so it is the platform's, not the
-  layer's, and it is on the list in `wolkara/tools/known_platform_failures.txt`
+  layer's, and it is on the list in `wolkaraforever/tools/known_platform_failures.txt`
   with that evidence beside it. A validation run therefore reports the suite as
   PASS with one known platform failure, which is not the same sentence as "PASS in
   full" and must not be read as one. `docs/TOUCH_INPUT.md` recorded it correctly
@@ -388,8 +388,8 @@ were upstream Tolkara's, because the prepared tree already has `LICENSE` and
 `NOTICE.md` at its top level and the target asked for resources by those names.
 This repository's own notice - which carries the TACTSharp and CascLib MIT terms
 that have to accompany the software they are adapted into - was never in the
-bundle. The app now carries four documents, ours as `Wolkara-LICENSE` and
-`Wolkara-NOTICE.md`, the About page names whose each one is, and the installed
+bundle. The app now carries four documents, ours as `WolkaraForever-LICENSE` and
+`WolkaraForever-NOTICE.md`, the About page names whose each one is, and the installed
 app's own launch line is read back off the iPad to check it. A resource-name check
 that passes while the wrong file is under that name is worth less than no check at
 all, which is why the evidence now comes from the app.

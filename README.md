@@ -1,40 +1,42 @@
-# Wolkara Forever
+# WolkaraForever
 
 **World of Warcraft Forever on iPhone and iPad, built on [Tolkara](https://github.com/tolkara/tolkara).**
 
-Wolkara Forever is the name the app displays and the name this fork goes by now. The repository
-and the internal target keep the older names where changing them would break a build or an
-install - the bundle ID above all, so that an update replaces the app in place and the device
-keeps its data.
+WolkaraForever is the name of this fork, its repository and everything in it. The Xcode scheme
+and product still say **Tolkara**, because that project is the upstream platform this fork is
+built on; only the display name and this fork's own files carry the fork's name. The bundle ID
+and Keychain group are yours to set in `local.env`, and keeping them is what makes an update
+replace the app in place.
 
-Wolkara Forever is an independent, experimental fork focused on the WoW experience:
+WolkaraForever is an independent, experimental fork focused on the WoW experience:
 choose an edition, download its macOS client on the device, keep it updated,
 and play with touch controls or a physical controller. The game runs locally
 through Tolkara's compatibility layer; it is not streamed from a Mac.
 
 Tolkara's runtime and macOS API translation are the foundation of this project.
-Wolkara Forever adds the WoW launcher, the downloader and updater, the add-on
+WolkaraForever adds the WoW launcher, the downloader and updater, the add-on
 manager and the mobile input layer.
 The upstream history, MIT license and [third-party notices](NOTICE.md) are retained.
 This project is not affiliated with or endorsed by Blizzard Entertainment.
 
 ## Try it with Xcode
 
-**Start here: [Build and run Wolkara](docs/GETTING_STARTED.md).** Once the app
-is installed, use the [in-app guide](docs/USING_WOLKARA.md) for the launcher,
+**Start here: [Build and run WolkaraForever](docs/GETTING_STARTED.md).** Once the app
+is installed, use the [in-app guide](docs/USING_WOLKAREFOREVER.md) for the launcher,
 add-ons, voice, permissions, and recovery controls.
 
 The current route needs a Mac with Xcode, XcodeGen and Python 3, your own Apple
 developer signing with the required capabilities, Developer Mode on the device,
 and one-time USB authorization. Use the **Tolkara** scheme: the app is displayed
-as **Wolkara**, while the internal target name is retained for compatibility.
+as **WolkaraForever**, while the scheme and product names come from the upstream
+platform project.
 
 You do not need to install WoW or Battle.net on the Mac to build the generic
 launcher. You need your own eligible game account/access to log in. Game files
 are downloaded from Blizzard's CDN; no game code or assets are included here.
 
 This is a source release for people comfortable with Xcode. There is no tested
-public Wolkara IPA, App Store/TestFlight release or AltStore PAL install path.
+public WolkaraForever IPA, App Store/TestFlight release or AltStore PAL install path.
 A successful build alone does not prove that a signing profile permits startup.
 
 ## Features
@@ -57,7 +59,7 @@ A successful build alone does not prove that a signing profile permits startup.
 - Physical controller support and an on-screen controller when none is connected,
   with an inspector that reports what a pad has and what it does.
 - A **Leave game** button on the on-screen toolbar, so a game screen with no quit
-  of its own - the login screen is one - is not a dead end. It closes Wolkara
+  of its own - the login screen is one - is not a dead end. It closes WolkaraForever
   after a five-second countdown page that says what to do next; the next launch
   has Play working again.
 - Movable touch controls, opacity and size settings, an alignment grid and haptics.
@@ -70,7 +72,7 @@ A successful build alone does not prove that a signing profile permits startup.
 ## What has been tested
 
 The short version of how to read the rest of this section: every claim here has a script behind
-it, and the script's own output is what is quoted. `wolkara/tools/validate.sh` runs the whole
+it, and the script's own output is what is quoted. `wolkaraforever/tools/validate.sh` runs the whole
 set - the layer gate, the unit and fixture suites, the device build, the install and launch on
 the iPad, and the device matrix - and prints its record to the terminal. The per-commit records that
 used to be stored under `development/` have been removed, so a claim here rests on the script that
@@ -135,10 +137,10 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) before contributing.
 - [Touch controller](docs/TOUCH_CONTROLLER_PROPOSAL.md)
 - [Engine architecture](docs/ARCHITECTURE.md)
 - [Advanced Tolkara build and execution modes](docs/BUILDING.md)
-- [Distribution research and unverified routes](docs/WOLKARA_DISTRIBUTION.md)
+- [Distribution research and unverified routes](docs/WOLKAREFOREVER_DISTRIBUTION.md)
 
 The shared engine, adapters and non-WoW test fixtures remain in this fork to
-preserve upstream compatibility and regression coverage. Public Wolkara builds
+preserve upstream compatibility and regression coverage. Public WolkaraForever builds
 use the WoW home; alternative loaders/modes are development tools.
 
 ## What Tolkara does to the application
@@ -177,7 +179,7 @@ So that you can judge this yourself rather than take our word for it:
 
 ## Policy
 
-Wolkara builds on Tolkara as a compatibility layer. This fork will not accept:
+WolkaraForever builds on Tolkara as a compatibility layer. This fork will not accept:
 
 - reading or changing an application's memory for any purpose other than
   loading it, including "trainers", overlays, bots or input automation;
@@ -188,24 +190,24 @@ Wolkara builds on Tolkara as a compatibility layer. This fork will not accept:
 
 ## Online games
 
-Wolkara is not approved or supported by Blizzard. Successful execution does not
+WolkaraForever is not approved or supported by Blizzard. Successful execution does not
 establish publisher approval or guarantee the safety of an online account.
 The project provides no anti-cheat, license or integrity-check workarounds.
 
 ## Legal
 
-Wolkara and the upstream Tolkara code are released under the [MIT License](LICENSE).
+WolkaraForever and the upstream Tolkara code are released under the [MIT License](LICENSE).
 No game files or Apple operating-system components are included. Third-party
 adaptations and reference material are credited in [NOTICE.md](NOTICE.md).
 
-Wolkara is an independent project and is not affiliated with, sponsored by or
+WolkaraForever is an independent project and is not affiliated with, sponsored by or
 endorsed by Apple Inc. or Blizzard Entertainment, Inc. macOS, iPadOS, iPad,
 Metal and Xcode are trademarks of Apple Inc. World of Warcraft and Blizzard are
 trademarks of Blizzard Entertainment, Inc. Other names are the property of their
 owners and are used only to describe compatibility.
 
 You are responsible for having the right to use any application you run with
-Wolkara, and for complying with its licence.
+WolkaraForever, and for complying with its licence.
 
-Wolkara: [source and issues](https://github.com/fJavierLasso/wolkara).
+WolkaraForever: [source and issues](https://github.com/fJavierLasso/wolkaraforever).
 Upstream engine: [Tolkara](https://github.com/tolkara/tolkara) · [tolkara.org](https://tolkara.org).

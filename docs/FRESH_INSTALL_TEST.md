@@ -1,6 +1,6 @@
 # Fresh-install acceptance test
 
-Record the Wolkara commit, Xcode version, device/OS and game version with each
+Record the WolkaraForever commit, Xcode version, device/OS and game version with each
 result. Do not record account names, passwords, pairing records or device IDs.
 A synthetic test or existing configured installation is not a clean-device pass.
 
@@ -10,7 +10,7 @@ Use a new checkout of the published source. Do not copy `build/`, `local.env`,
 Xcode user settings, game files, caches, addons or authorization from an older
 checkout/app. Create your own configuration using [Getting started](GETTING_STARTED.md).
 
-Use the ordinary **Wolkara** app and one bundle ID. There is no separate test
+Use the ordinary **WolkaraForever** app and one bundle ID. There is no separate test
 edition. Start on a device without downloaded game data; if you already use the
 app, explicitly decide what to back up or remove before starting over. Do not
 automatically delete an existing installation or its container to run this test.
@@ -24,11 +24,11 @@ separately and use a new tester/device to validate the complete first-use setup.
 
 1. **Build/install:** follow only the public guide, including signing and USB
    enrollment. Record any undocumented manual intervention as a failure to fix.
-2. **Empty home:** launch Wolkara. Forever must offer Install,
+2. **Empty home:** launch WolkaraForever. Forever must offer Install,
    with no inherited game installation or addons. Record any retained preferences.
 3. **Download:** choose edition/region/language and Install. Confirm that progress
    is visible and the client comes from the CDN without a Mac game-file copy.
-4. **Resume:** after some content has downloaded, close Wolkara and reopen.
+4. **Resume:** after some content has downloaded, close WolkaraForever and reopen.
    It must resume and preserve verified downloads. Also test a brief network loss.
 5. **Complete:** confirm Ready to play and the expected installed client version;
    record elapsed time and final free storage. No partial install may be playable.

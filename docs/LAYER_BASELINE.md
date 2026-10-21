@@ -1,7 +1,7 @@
 # Pre-split baseline
 
-Recorded on the pre-split state: branch `feature/wolkara-above-tolkara`, tagged
-`wolkara-pre-layer`, pinned upstream `00a8501`. The layer split must reproduce
+Recorded on the pre-split state: branch `feature/wolkaraforever-above-tolkara`, tagged
+`wolkaraforever-pre-layer`, pinned upstream `00a8501`. The layer split must reproduce
 every result below exactly, including the one accepted failure.
 
 ## Environment
@@ -80,12 +80,12 @@ difference. All **eight defined BC7 modes decode bit-exactly** against Apple's
 hardware here (0.000 steps, through both `texture.read()` and a nearest sampler, in
 shared and default storage), so the fallback decoder is correct.
 
-Our fix is `wolkara/patches/0001-bc7-reserved-mode-not-comparable.patch`: generate
+Our fix is `wolkaraforever/patches/0001-bc7-reserved-mode-not-comparable.patch`: generate
 only the eight defined modes for the cross-check (the reserved mode's robustness is
 still covered by `tests/test_bc_decode.c`), and make `TOLKARA_BC_FALLBACK=off`
 actually run the comparison instead of printing PASS without measuring anything.
 With the patches applied all three runs PASS, so the platform BC test joins the gate
-as a required pass rather than an accepted abort. `wolkara/patches/0002` logs the
+as a required pass rather than an accepted abort. `wolkaraforever/patches/0002` logs the
 host's BC capability once per run so every device reports it.
 
 Both patches are upstream candidates (Phase 7).
@@ -101,5 +101,5 @@ Both patches are upstream candidates (Phase 7).
    comparison still aborts on BC7's reserved mode, which is why patch 0001 exists;
    the prepared tree is the tree we build and test.
 4. Device checks above, repeated on the installed app with the same bundle id.
-5. `wolkara/tools/check_layers.sh` (new): platform pristine, patches apply,
+5. `wolkaraforever/tools/check_layers.sh` (new): platform pristine, patches apply,
    source coverage complete, no cross-module reach-in.

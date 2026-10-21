@@ -1,5 +1,5 @@
 #!/bin/bash
-# Merge a local WoW Forever AddOns folder into Wolkara's selected game container.
+# Merge a local WoW Forever AddOns folder into WolkaraForever's selected game container.
 # This never deletes iPad add-ons, settings, or game files.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -14,9 +14,9 @@ usage() {
     cat <<'EOF'
 usage: profiles/wow-forever/sync_addons.sh [--source PATH] [--device UDID]
 
-Merges PATH/_classic_beta_/Interface/AddOns into Wolkara on the paired device.
+Merges PATH/_classic_beta_/Interface/AddOns into WolkaraForever on the paired device.
 The default source is /Volumes/Storage/World of Warcraft. Existing files on the
-device are not removed. Close Wolkara before running this command.
+device are not removed. Close WolkaraForever before running this command.
 EOF
 }
 
@@ -40,7 +40,7 @@ DESTINATION="Documents/World of Warcraft/_classic_beta_/Interface/AddOns"
 
 # Do not race the running game or its updater; this script never terminates it.
 if xcrun devicectl device info processes --device "$DEVICE" | grep -Fq '/Tolkara.app/Tolkara'; then
-    echo "Wolkara is running on the device. Close it before syncing add-ons." >&2
+    echo "WolkaraForever is running on the device. Close it before syncing add-ons." >&2
     exit 2
 fi
 
@@ -49,7 +49,7 @@ xcrun devicectl device copy to --device "$DEVICE" \
     --domain-type appDataContainer --domain-identifier "$BUNDLE" \
     --source "$SOURCE_ADDONS" --destination "$DESTINATION"
 
-echo "Add-on sync completed. Wolkara will load them on its next normal game launch."
+echo "Add-on sync completed. WolkaraForever will load them on its next normal game launch."
 xcrun devicectl device info files --device "$DEVICE" \
     --domain-type appDataContainer --domain-identifier "$BUNDLE" \
     --subdirectory "$DESTINATION" --no-recurse

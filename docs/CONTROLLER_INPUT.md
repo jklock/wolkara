@@ -30,7 +30,7 @@ a keystroke, and which one does the game receive?**
 
 ## What we know today, measured
 
-- Our layer already enumerates the real controllers (`wolkara/Touch/TouchGamepad.m`,
+- Our layer already enumerates the real controllers (`wolkaraforever/Touch/TouchGamepad.m`,
   `connectedControllers` returns `GCController.controllers`), so the pad is
   reachable from our code.
 - Nothing anywhere logs controller input. The platform's `authorization/Diagnostics/`
@@ -55,7 +55,7 @@ a keystroke, and which one does the game receive?**
 
 ## Design
 
-### 1. Controller inspector — our layer, `wolkara/Controller/`
+### 1. Controller inspector — our layer, `wolkaraforever/Controller/`
 
 Files land in the prepared tree under `launcher/Controller/` and compile with no
 project change: the platform's `AppBase` template declares `- path: launcher`, so
@@ -105,7 +105,7 @@ The guest's queue is where we find out what the game actually receives:
   number still pending.
 - Keep it behind a switch, so ordinary play pays nothing.
 
-This is a Tolkara change, so it goes in as a patch applied by `wolkara/tools/apply.sh`
+This is a Tolkara change, so it goes in as a patch applied by `wolkaraforever/tools/apply.sh`
 — never a hand edit of the prepared tree.
 
 ### 3. What we learn, and what each answer means
@@ -130,14 +130,14 @@ profile. Then, and in this order:
 3. Send is Return, as Handy's own **Auto Submit** setting does — the user may
    press it themselves instead.
 
-Nothing in that flow shows the user a panel, a keyboard or a Wolkara overlay.
+Nothing in that flow shows the user a panel, a keyboard or a WolkaraForever overlay.
 The game's own chat box is the only thing on screen that is part of it.
 
 ## Verification
 
 On the device, with the interposer off the game's own input path:
 
-1. Install with the guard (`wolkara/tools/install.sh` — it refuses while a game
+1. Install with the guard (`wolkaraforever/tools/install.sh` — it refuses while a game
    is live).
 2. Launch, and press each control once in a documented order: face buttons,
    shoulders, triggers, d-pad, stick clicks, sticks to their limits, Menu,
@@ -158,7 +158,7 @@ against observed events, and gaps in that table are findings too.
   recording gesture, which asked for permission from inside the app. So the
   button works — the *system* is what spends it.
 - **It never reaches the app as a key.** The window's responder chain is now
-  instrumented (`wolkara/Controller/ControllerWindow.m`), logging every press it
+  instrumented (`wolkaraforever/Controller/ControllerWindow.m`), logging every press it
   is given. Across two captures it saw 42 presses and **zero** of them carried a
   key: `UIKey` never appeared. The guest-side boundary log (patch 0013) saw none
   either.

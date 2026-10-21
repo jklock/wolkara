@@ -1,0 +1,22 @@
+# Tests in platform/ that fail on this machine with no WolkaraForever layer involved.
+#
+# One per line: the test id as unittest prints it, then a dash and why. Anything not on
+# this list fails the validation run. Anything on it is printed on every run, so it stays
+# visible rather than forgotten, and the step says how many there were.
+#
+# The rule for adding a line: first reproduce it in a pristine checkout of the platform
+# with no layer applied, and put that evidence in the reason. A failure the layer causes
+# belongs in the layer, not here.
+#
+#   git worktree add --detach /tmp/pristine HEAD
+#   cd /tmp/pristine/platform && python3 -m unittest <test id>
+#
+# tests.test_sign_guest_local.AdhocTests.test_matches_codesign_byte_for_byte - the
+#   platform's own ad-hoc signer does not produce byte-identical output to this macOS's
+#   `codesign -s -` (the signature blob differs in size and content), and the test compares
+#   the two files byte for byte. Reproduced with no layer on 2026-10-16, from a pristine
+#   worktree at the same commit, with the identical failure and the identical sizes; no
+#   WolkaraForever overlay or patch touches the signing path (checked in wolkaraforever/overlay.map and
+#   wolkaraforever/patches/). Local signing needs a valid ad-hoc signature, which it has; byte
+#   identity with a tool Apple changes between releases is a stricter thing than the
+#   feature needs. Fixing it means changing platform code, which is a patch and a decision.
