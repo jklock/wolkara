@@ -885,6 +885,25 @@ static void TestTypingIntoTheGame(void) {
     [speech say:@"again" final:YES];
     CHECK(([target.lastText isEqualToString:@"again "]), @"the trailing space is theirs, got '%@'", target.lastText);
     CHECK((target.returns == 1), @"and auto-submit sends Return once");
+
+    // A target that cannot take text is refused, never sent a selector it does not have.
+    // The device learned this the hard way: the controls announced their draft editor as
+    // the game's text input, and the first spoken sentence aborted the app with
+    // "-[AKKeyboardTextView touchInsertText:]: unrecognized selector" (2026-10-21). A
+    // wrong target may lose the words; it may not kill a running game.
+    UIView *silent = [UIView new];
+    [AKDictation setGameTextTarget:silent];
+    [dictation begin];
+    [speech say:@"nowhere" final:NO];
+    [dictation end];
+    [speech say:@"nowhere" final:YES];
+    CHECK((dictation.state == AKDictationStateIdle), @"a target that cannot take text is refused, not fatal");
+    AKVoiceSettings.shared.autoSubmit = YES;
+    [dictation begin];
+    [speech say:@"nowhere, with Return" final:NO];
+    [dictation end];
+    [speech say:@"nowhere, with Return" final:YES];
+    CHECK((dictation.state == AKDictationStateIdle), @"nor is one that cannot take a key");
     AKVoiceSettings.shared.autoSubmit = NO;
     AKVoiceSettings.shared.trailingSpace = NO;
     [AKDictation setGameTextTarget:nil];

@@ -83,7 +83,6 @@ docs/ARCHITECTURE.md
 docs/BUILDING.md
 docs/IPHONE.md
 docs/TOUCH_INPUT.md
-docs/WINDOWS.md
 launcher/App/AppLibrary.h
 launcher/App/AppLibrary.m
 launcher/App/ExecutionMode.h
@@ -236,8 +235,8 @@ the BC texture fallback (`translation/Metal/{BCDecode.c,BCDecode.h,BCTextures.m}
 the build work (`tools/{embed_vulkan_runtime,shim_stubs}.py`, adapter dependency
 resolution in `tools/build_shims.py`, `tests/test_shim_dependencies.py`,
 `tests/test_shim_stubs.py`); runtime write-flush and exit-observer logging
-(`runtime/NativeGuest.h`, `NativeGuest.m`); the MegaBonk profile and the
-`profiles/*` fixes; the pointer/touch fixes in `translation/AppKit/AppKit.m` and
+(`runtime/NativeGuest.h`, `NativeGuest.m`); the `profiles/*` fixes; the
+pointer/touch fixes in `translation/AppKit/AppKit.m` and
 `AppKit.h` - which is exactly why those two files are patches for us.
 
 ## Patch budget

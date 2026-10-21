@@ -26,6 +26,10 @@ extern NSString *const AKSelfTestInput;
 extern NSString *const AKSelfTestVoice;
 /// A bare recorder, opened the way Apple documents it, with none of the app's audio code in the path.
 extern NSString *const AKSelfTestMic;
+/// The object the touch controls registered as the game's text input, asked what it is. It
+/// reads nothing from the game and types nothing; run it with `--local-game-startup`, because
+/// the target exists only once the guest has started.
+extern NSString *const AKSelfTestDictationTarget;
 
 // Runs one self-test and logs the verdict the matrix greps:
 //   selftest: <name> PASS <passed>/<total> checks (<what was exercised>)

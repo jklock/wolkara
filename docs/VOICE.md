@@ -54,6 +54,27 @@ made them the one part of the launcher that did not look like the launcher.
   identity, so a mapping is remembered per *model* and two identical controllers share it.
   The log says so when that is what is connected.
 
+## Typing into the game
+
+The touch controls are the layer's `UIKeyInput`: their `insertText:` goes to their delegate,
+which turns the words into the guest's key events. They announce themselves to the shell
+(`AKTouchGameTextInputDidAppearNotification`), the shell hands that view to `AKDictation`, and
+the transcript is typed there and nowhere else. The draft editor is **not** announced: it is a
+`UITextView` that holds words for Replace and cannot reach the game at all.
+
+That distinction was worth a crash. The announcement once named the draft editor, so the first
+sentence spoken inside the game - at the login screen, into the password field - aborted the
+app with `-[AKKeyboardTextView touchInsertText:]: unrecognized selector`. The Test Voice page
+never showed it, because a transcript handler was set there and the game's path was never
+taken; the home screen was fine for the same reason. Two things now make that impossible: the
+controls answer `touchInsertText:` and `touchSpecialKey:characters:` themselves, and dictation
+asks `respondsToSelector:` before sending, so a wrong target loses the words instead of
+killing a running game.
+
+Measured on Dadpad, 2026-10-21: two dictations in the game, 21 characters each, 43 key events
+dequeued by the guest (21 down/up pairs plus Return), the session handed back to `game`, no
+crash report, the app still running.
+
 ## The audio session, as a policy rather than a promise
 
 Dictation takes the session as `Record`, and puts back the category, mode and options it

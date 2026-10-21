@@ -481,6 +481,25 @@ static void AKFixtureInputSource(void *context) {
                 assert([self.guest makeFirstResponder:fixture]);
                 fixture.selection = NSMakeRange(0, 0);
                 [fixture.text setString:@""];
+                // --- what dictation types into -----------------------------------------
+                //
+                // The controls announce themselves as the game's text input, because they
+                // are the layer's UIKeyInput and their delegate is what posts the guest's
+                // keys. Dictation sends them touchInsertText: and
+                // touchSpecialKey:characters: without asking whether they exist, so they
+                // must answer both, and the words must reach the guest. The announced
+                // object used to be the draft editor, which answers neither: the first
+                // transcript aborted the app ("unrecognized selector", Dadpad,
+                // 2026-10-21).
+                assert([controls respondsToSelector:@selector(touchInsertText:)] &&
+                       [controls respondsToSelector:@selector(touchSpecialKey:characters:)]);
+                [controls touchInsertText:@"a"];
+                AKDrainFixtureEvents();
+                assert([fixture.text isEqual:@"a"]);
+                [controls touchSpecialKey:53 characters:@"\x1b"];
+                AKDrainFixtureEvents();
+                assert(!fixture.text.length);
+                NSLog(@"native: the announced text target answers dictation and reaches the guest");
                 NSEvent *arrived = AKFixturePressKey(host, fixture, 0x04 /* 'a' */);
                 assert(arrived != nil && [fixture.text isEqual:@"a"]);
                 AKFixtureOwnsUsages(@[@0x04]);

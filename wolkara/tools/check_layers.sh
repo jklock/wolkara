@@ -219,6 +219,24 @@ else
     printf '     %s\n' $patchMutators $preparedMutators
 fi
 
+# 8. This project supports WoW Forever and nothing else. No other game may be named in
+#    anything the repository owns: the layer, the root documents, the profiles, the tools
+#    and the tests. The list is deliberately word-matched, so "switcher" is not a Witcher
+#    and "HOTAS" is not HotA. platform/ is upstream's pinned mirror, checked byte for byte
+#    by check 1, and is the only place another game can still appear until that mirror is
+#    forked; everything we write, ship or read is covered here.
+otherGames='cyberpunk|hota|h3hota|heroes|homm|megabonk|witcher|diablo|starcraft|overwatch|hearthstone|skyrim|fallout|minecraft|elden|baldur|quake|doom'
+# This script is the one exemption: it has to spell the names to forbid them.
+named=$(git ls-files | grep -v -e '^platform/' -e '^wolkara/tools/check_layers.sh$' | while IFS= read -r file; do
+            [ -f "$file" ] && grep -I -i -q -w -E "$otherGames" "$file" 2>/dev/null && echo "$file"
+        done | head -5)
+if [ -z "$named" ]; then
+    ok "no game other than WoW Forever is named outside platform/ (upstream's mirror)"
+else
+    bad "this repository is WoW Forever only; these files name another game:"
+    printf '     %s\n' $named
+fi
+
 if [ "$fail" -eq 0 ]; then
     echo "check_layers: OK"
 else
