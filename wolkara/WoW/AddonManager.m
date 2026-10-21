@@ -2,6 +2,7 @@
 #import "AddonStore.h"
 #import "AddonCredentialStore.h"
 #import "CurseForgeClient.h"
+#import "../App/WolkaraTheme.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 static NSString *const TKForeverGameVersion=@"1.60.1";
@@ -92,12 +93,17 @@ NSArray<TKWoWAddon *> *TKWoWAddonsAtDirectory(NSString *directory) {
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.overrideUserInterfaceStyle=UIUserInterfaceStyleDark;
-    self.view.backgroundColor=[UIColor colorWithRed:0.015 green:0.025 blue:0.045 alpha:1];
-    self.tableView.backgroundColor=UIColor.clearColor;
+    // The launcher's own colours, from WolkaraTheme, so this screen and the voice
+    // screens cannot drift apart again.
+    self.view.backgroundColor=WKInk();
+    // Navy, not clear. A transparent table shows whatever is behind it, and behind a
+    // sheet is the presentation container, which is white: as a popup this page had a
+    // white body under a navy navigation bar. Measured in the fixture on 2026-10-16.
+    self.tableView.backgroundColor=WKInk();
     self.tableView.separatorStyle=UITableViewCellSeparatorStyleNone;
     self.navigationItem.largeTitleDisplayMode=UINavigationItemLargeTitleDisplayModeNever;
     self.navigationItem.leftBarButtonItem=[[UIBarButtonItem alloc] initWithTitle:@"Done" style:UIBarButtonItemStyleDone target:self action:@selector(done)];
-    self.navigationItem.leftBarButtonItem.tintColor=[UIColor colorWithRed:0.9 green:0.72 blue:0.35 alpha:1];
+    self.navigationItem.leftBarButtonItem.tintColor=WKGold();
     self.navigationItem.rightBarButtonItems=@[
         [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemAdd target:self action:@selector(importAddon)],
         [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemRefresh target:self action:@selector(reloadAddons)]
@@ -109,12 +115,12 @@ NSArray<TKWoWAddon *> *TKWoWAddonsAtDirectory(NSString *directory) {
     [self reloadAddons];
 }
 - (UIView *)header {
-    UIColor *gold=[UIColor colorWithRed:0.9 green:0.72 blue:0.35 alpha:1];
+    UIColor *gold=WKGold();
     CGFloat width=MAX(CGRectGetWidth(self.tableView.bounds),320);
     UIView *header=[[UIView alloc] initWithFrame:CGRectMake(0,0,width,178)];
     UILabel *edition=[UILabel new]; edition.text=[NSString stringWithFormat:@"Edition: %@  ▾",_edition];
     edition.font=[UIFont preferredFontForTextStyle:UIFontTextStyleBody]; edition.textColor=gold;
-    edition.backgroundColor=[UIColor colorWithWhite:1 alpha:0.08]; edition.layer.cornerRadius=14; edition.layer.masksToBounds=YES;
+    edition.backgroundColor=WKPanel(); edition.layer.cornerRadius=14; edition.layer.masksToBounds=YES;
     edition.frame=CGRectMake(0,14,width,42); edition.autoresizingMask=UIViewAutoresizingFlexibleWidth;
     [header addSubview:edition];
     _mode=[[UISegmentedControl alloc] initWithItems:@[[NSString stringWithFormat:@"Installed (%lu)",(unsigned long)_addons.count],@"Browse CurseForge"]];
@@ -127,7 +133,7 @@ NSArray<TKWoWAddon *> *TKWoWAddonsAtDirectory(NSString *directory) {
     _search=[UISearchBar new]; _search.placeholder=@"Search World of Warcraft add-ons"; _search.frame=CGRectMake(0,116,width,44); _search.autoresizingMask=UIViewAutoresizingFlexibleWidth; _search.searchBarStyle=UISearchBarStyleMinimal; _search.delegate=self; [header addSubview:_search];
     return header;
 }
-- (void)done { [self.navigationController popViewControllerAnimated:YES]; }
+- (void)done { WKDismissPage(self); }
 - (void)changeMode:(UISegmentedControl *)sender {
     if (sender.selectedSegmentIndex==1) { if ([self hasKey]) [self beginBrowse]; else _browseStatus=@"Enter an approved CurseForge Core API key to search and install World of Warcraft add-ons."; }
     [self.tableView reloadData];

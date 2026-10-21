@@ -84,6 +84,7 @@ static BOOL Managed(NSDictionary *item) { return [item[@"folders"] isKindOfClass
     NSData *archive=[NSData dataWithContentsOfURL:url options:NSDataReadingMappedIfSafe error:error];if(!archive||archive.length>128*1024*1024)return Fail(error,@"The selected ZIP is missing or exceeds the 128 MiB limit.");
     NSString *job=[_support stringByAppendingPathComponent:NSUUID.UUID.UUIDString],*extract=[job stringByAppendingPathComponent:@"extract"];
     if(![NSFileManager.defaultManager createDirectoryAtPath:job withIntermediateDirectories:YES attributes:nil error:error])return NO;
+    @try {
     Class archiveClass=NSClassFromString(@"TKAddonArchive");SEL selector=NSSelectorFromString(@"extractArchiveAtURL:toDirectoryURL:error:");
     if(!archiveClass||![archiveClass respondsToSelector:selector])return Fail(error,@"ZIP support is unavailable in this build.");
     BOOL (*extractor)(id,SEL,NSURL *,NSURL *,NSError **)= (void *)objc_msgSend;
@@ -93,11 +94,26 @@ static BOOL Managed(NSDictionary *item) { return [item[@"folders"] isKindOfClass
     if(!folders.count&&top.count==1){NSString *wrapper=[extract stringByAppendingPathComponent:top[0]];NSArray *inside=[NSFileManager.defaultManager contentsOfDirectoryAtPath:wrapper error:NULL];for(NSString *name in inside)if(TOC([wrapper stringByAppendingPathComponent:name]))[folders addObject:name];if(folders.count)extract=wrapper;}
     if(!folders.count)return Fail(error,@"The ZIP contains no add-on folder with a .toc manifest.");
     if(![self compatibleFolders:folders from:extract error:error])return NO;
-    int lock=[self lock:error];if(lock<0)return NO;BOOL success=NO;@try { for(NSString *name in folders)if([NSFileManager.defaultManager fileExistsAtPath:[_directory stringByAppendingPathComponent:name]])return Fail(error,[NSString stringWithFormat:@"%@ already exists; remove or disable the managed package first.",name]);
+    int lock=[self lock:error];if(lock<0)return NO;BOOL success=NO;
+    // The folders this call actually created, so a failure cleans up after itself and
+    // nothing else. The cleanup used to remove every folder in the import on any failure,
+    // and the duplicate check returns through that path - so trying to install an add-on
+    // that was already there deleted the one that was already there. Found by the fixture
+    // in wolkara/WoW/tests/test_wow_launcher_app.m, which is the coverage the audit asked
+    // for; the manifest kept saying the package was owned while its folder was gone.
+    NSMutableArray<NSString *> *created=[NSMutableArray new];
+    @try { for(NSString *name in folders)if([NSFileManager.defaultManager fileExistsAtPath:[_directory stringByAppendingPathComponent:name]])return Fail(error,[NSString stringWithFormat:@"%@ already exists; remove or disable the managed package first.",name]);
         NSMutableArray *packages=[self mutablePackages];NSString *identifier=folders.firstObject;NSString *toc=TOC([extract stringByAppendingPathComponent:identifier]);[packages addObject:@{ @"identifier":identifier,@"name":Value(toc,@"Title:")?:identifier,@"version":Value(toc,@"Version:")?:@"Unknown version",@"source":@"zip",@"archiveSHA256":Digest(archive),@"folders":folders,@"pinned":@NO,@"disabled":@NO }];
-        for(NSString *name in folders)if(![NSFileManager.defaultManager copyItemAtPath:[extract stringByAppendingPathComponent:name] toPath:[_directory stringByAppendingPathComponent:name] error:error])return NO;
+        // The destination is recorded *before* the copy, not after. `copyItemAtPath:` can
+        // fail with a half-written folder already in place, and the cleanup below only
+        // knows the names in this list - so recording it afterwards left a stray folder
+        // that the next reload would show as an add-on the user never installed. Nothing
+        // but the cleanup reads this list: the manifest carries `folders`, so a failed
+        // import still never claims a folder it did not install.
+        for(NSString *name in folders) { [created addObject:name]; if(![NSFileManager.defaultManager copyItemAtPath:[extract stringByAppendingPathComponent:name] toPath:[_directory stringByAppendingPathComponent:name] error:error])return NO; }
         if(![self saveManifest:packages error:error])return NO;success=YES;[self reload];return YES;
-    } @finally {TKWoWReleaseUpdateLock(lock);if(!success)for(NSString *name in folders)[NSFileManager.defaultManager removeItemAtPath:[_directory stringByAppendingPathComponent:name] error:NULL];[NSFileManager.defaultManager removeItemAtPath:job error:NULL];}
+    } @finally {TKWoWReleaseUpdateLock(lock);if(!success)for(NSString *name in created)[NSFileManager.defaultManager removeItemAtPath:[_directory stringByAppendingPathComponent:name] error:NULL];}
+    } @finally { [NSFileManager.defaultManager removeItemAtPath:job error:NULL]; }
 }
 - (BOOL)setDisabled:(BOOL)disabled record:(TKAddonRecord *)record error:(NSError **)error {
     if (!record.managed) return Fail(error,@"Wolkara only changes folders it installed.");
@@ -111,7 +127,13 @@ static BOOL Managed(NSDictionary *item) { return [item[@"folders"] isKindOfClass
 }
 - (BOOL)removeRecord:(TKAddonRecord *)record error:(NSError **)error {
     if(!record.managed)return Fail(error,@"Wolkara only removes folders it installed."); int lock=[self lock:error];if(lock<0)return NO; BOOL success=NO;
-    @try { NSMutableArray *packages=[self mutablePackages];NSUInteger index=NSNotFound;NSDictionary *item=[self packageForRecord:record packages:packages index:&index];if(!item)return Fail(error,@"The package ownership record is missing.");NSFileManager *fm=NSFileManager.defaultManager;NSString *base=[item[@"disabled"] boolValue]?[[_support stringByAppendingPathComponent:@"disabled"] stringByAppendingPathComponent:record.identifier]:_directory;NSString *previous=[[_support stringByAppendingPathComponent:@"previous"] stringByAppendingPathComponent:[NSString stringWithFormat:@"%@-%@",record.identifier,NSUUID.UUID.UUIDString]];if(![fm createDirectoryAtPath:previous withIntermediateDirectories:YES attributes:nil error:error])return NO;for(NSString *folder in record.folders){NSString *source=[base stringByAppendingPathComponent:folder];if([fm fileExistsAtPath:source]&&![fm moveItemAtPath:source toPath:[previous stringByAppendingPathComponent:folder] error:error])return NO;}[packages removeObjectAtIndex:index];if(![self writePackages:packages error:error])return NO;success=YES;[self reload];return YES; } @finally { TKWoWReleaseUpdateLock(lock); if(!success)[self reload]; }
+    // The ownership record is dropped *before* anything moves. The other order had one
+    // bad state: folders already moved aside and the manifest still claiming them, which
+    // is a package that has vanished while its record says it is installed. This way a
+    // failed write moves nothing, and a failed move leaves an ordinary unmanaged folder
+    // that the user still has - the recoverable half of the mistake, not the lost one.
+    NSFileManager *fm=NSFileManager.defaultManager; NSString *identifier=record.identifier;
+    @try { NSMutableArray *packages=[self mutablePackages];NSUInteger index=NSNotFound;NSDictionary *item=[self packageForRecord:record packages:packages index:&index];if(!item)return Fail(error,@"The package ownership record is missing.");NSString *base=[item[@"disabled"] boolValue]?[[_support stringByAppendingPathComponent:@"disabled"] stringByAppendingPathComponent:identifier]:_directory;[packages removeObjectAtIndex:index];if(![self writePackages:packages error:error])return NO;NSString *previous=[[_support stringByAppendingPathComponent:@"previous"] stringByAppendingPathComponent:[NSString stringWithFormat:@"%@-%@",identifier,NSUUID.UUID.UUIDString]];if(![fm createDirectoryAtPath:previous withIntermediateDirectories:YES attributes:nil error:error])return Fail(error,@"Nothing was installed by that name any more. There was nothing to move; the folders are still in the add-on directory.");for(NSString *folder in record.folders){NSString *source=[base stringByAppendingPathComponent:folder];if([fm fileExistsAtPath:source]&&![fm moveItemAtPath:source toPath:[previous stringByAppendingPathComponent:folder] error:error])return Fail(error,@"The package is no longer managed, and its folders could not be set aside. They are still in the add-on directory; remove them by hand.");}NSString *keeping=previous.lastPathComponent,*root=previous.stringByDeletingLastPathComponent;for(NSString *name in [fm contentsOfDirectoryAtPath:root error:NULL])if([name hasPrefix:[identifier stringByAppendingString:@"-"]]&&![name isEqual:keeping])[fm removeItemAtPath:[root stringByAppendingPathComponent:name] error:NULL];success=YES;[self reload];return YES; } @finally { TKWoWReleaseUpdateLock(lock); if(!success)[self reload]; }
 }
-- (BOOL)setPinned:(BOOL)pinned record:(TKAddonRecord *)record error:(NSError **)error { if(!record.managed)return Fail(error,@"Only managed packages can be pinned.");int lock=[self lock:error];if(lock<0)return NO;@try {NSMutableArray *packages=[self mutablePackages];NSUInteger index=NSNotFound;NSMutableDictionary *item=[[self packageForRecord:record packages:packages index:&index] mutableCopy];if(!item)return Fail(error,@"The package ownership record is missing.");item[@"pinned"]=@(pinned);packages[index]=item;if(![self writePackages:packages error:error])return NO;[self reload];return YES;} @finally {TKWoWReleaseUpdateLock(lock);} }
+- (BOOL)setPinned:(BOOL)pinned record:(TKAddonRecord *)record error:(NSError **)error { if(!record.managed)return Fail(error,@"Only managed packages can be pinned.");int lock=[self lock:error];if(lock<0)return NO;BOOL success=NO;@try {NSMutableArray *packages=[self mutablePackages];NSUInteger index=NSNotFound;NSMutableDictionary *item=[[self packageForRecord:record packages:packages index:&index] mutableCopy];if(!item)return Fail(error,@"The package ownership record is missing.");item[@"pinned"]=@(pinned);packages[index]=item;if(![self writePackages:packages error:error])return NO;[self reload];success=YES;return YES;} @finally {TKWoWReleaseUpdateLock(lock);if(!success)[self reload];} }
 @end

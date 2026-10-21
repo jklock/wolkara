@@ -306,12 +306,15 @@ measurement, not an iPhone memory budget or a guarantee for larger builds.
 
 ## Reproduce
 
-From the repository root (Xcode and XcodeGen required):
+From the repository root (Xcode and XcodeGen required). The layer commands prepare
+the build tree; the remaining platform commands run inside that generated tree:
 
 ```sh
-bash tools/test_wow_launcher.sh
-bash tools/test_wow_launcher_ui.sh
-bash tools/test_emulation.sh
+bash wolkara/tools/test_wow_launcher.sh
+bash wolkara/tools/test_wow_launcher_ui.sh
+bash wolkara/tools/test_emulation.sh
+wolkara/tools/prepare.sh
+cd build/platform
 # Focused fixup regression, also runnable after the unrelated signer failure:
 xcrun clang -std=c11 -D_DARWIN_C_SOURCE -Wall -Wextra -Werror -O1 -g \
   -fsanitize=address,undefined -fno-omit-frame-pointer -Iruntime \
@@ -364,12 +367,32 @@ Results with Xcode 27.0:
 - `tools/test_emulation.sh`: PASS in full. The older signing-test failure
   recorded above no longer reproduces with this toolchain; no signer changes
   were needed for this UI work.
+  **Corrected on 2026-10-16:** with Xcode 27.0 it does reproduce, identically and
+  with identical sizes, and it reproduces in a checkout of the platform at the
+  same commit with no layer applied at all - so it is the platform's, not the
+  layer's, and it is on the list in `wolkara/tools/known_platform_failures.txt`
+  with that evidence beside it. A validation run therefore reports the suite as
+  PASS with one known platform failure, which is not the same sentence as "PASS in
+  full" and must not be read as one. `docs/TOUCH_INPUT.md` recorded it correctly
+  at the time; this file did not.
 - `tools/generate.sh`: PASS; both `LICENSE` and `NOTICE.md` are app resources.
 - `xcodebuild -project Tolkara.xcodeproj -scheme Tolkara -configuration Debug
   -sdk iphoneos -destination generic/platform=iOS -derivedDataPath
   build/iphone-wow-home-signed ARCHS=arm64 TOLKARA_SYSTEM_ROOTS=YES build`:
   BUILD SUCCEEDED. Strict signature verification passed, and both license
   resources match the checked-in originals byte for byte.
+
+**Corrected on 2026-10-16.** That last line was true and it was the problem: the
+two resources did match the checked-in originals, and the originals they matched
+were upstream Tolkara's, because the prepared tree already has `LICENSE` and
+`NOTICE.md` at its top level and the target asked for resources by those names.
+This repository's own notice - which carries the TACTSharp and CascLib MIT terms
+that have to accompany the software they are adapted into - was never in the
+bundle. The app now carries four documents, ours as `Wolkara-LICENSE` and
+`Wolkara-NOTICE.md`, the About page names whose each one is, and the installed
+app's own launch line is read back off the iPad to check it. A resource-name check
+that passes while the wrong file is under that name is worth less than no check at
+all, which is why the evidence now comes from the app.
 
 The follow-up on `feature/touch-controller` adds an automatic virtual gamepad;
 see [its layout, implementation and validation](TOUCH_CONTROLLER_PROPOSAL.md).

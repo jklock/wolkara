@@ -7,6 +7,25 @@ and what is still outstanding.
 
 Start with `PLAN.md` for the end-to-end plan and its per-step status.
 
+## Current state
+
+The numbers in the older notes below were written at different times and disagree with
+each other. These are the ones that hold now, and each can be checked in one command:
+
+| Thing | Now | Check it with |
+| --- | --- | --- |
+| Platform pin | `00a8501` | `wolkara/tools/check_layers.sh` |
+| Our patches | 15 | `ls wolkara/patches/*.patch \| wc -l` |
+| Overlay entries | 95 (9 replace, 86 add) | `wolkara/tools/overlay_map.sh` |
+| Layer files carried | every file the overlay names is in the layer, and every layer file is carried | `check_layers.sh` |
+| Gate | 11 checks | `wolkara/tools/check_layers.sh` |
+
+Evidence for a release comes from `wolkara/tools/validate.sh`, which runs the suites and
+writes one file per commit under `development/validation/`, naming the commit, whether
+the tree was clean, every command it ran and what each printed. It refuses to run on a
+dirty worktree unless told to. `VALIDATION.md` is the older, hand-written record and is
+tied to the commit it names, not to the work after it.
+
 ## The split in one page
 
 | Path | Owner | Notes |
@@ -44,26 +63,26 @@ its internals are Wolkara.
 | --- | --- | --- |
 | 0 | Ground truth, pre-split tag, baseline | **done** |
 | 1 | `platform/` vendored + the gate | **done** |
-| 2 | Every delta classified layer / replace / patch / drop | **partial** - classification done and measured; seven patches now carry the platform-side changes and six paths need nothing, so what remains is the branding-delta deletions and the three Phase 3 files |
+| 2 | Every delta classified layer / replace / patch / drop | **partial** - classification done and measured; fifteen patches now carry the platform-side changes and six paths need nothing, so what remains is the branding-delta deletions and the three Phase 3 files |
 | 3 | The modules, the overlay, the wrappers | **done** - by overlay onto the prepared tree rather than a layer project; `PLAN.md` says why |
-| 4 | Parity on the Mac suites and on Dadpad | **partial** - the suites, the compile checks and the project generation pass; the one check left is installing and running the app on the device since the split |
+| 4 | Parity on the Mac suites and on Dadpad | **partial** - post-split installs and scripted device checks are recorded in `validation/`; physical microphone/controller and in-game checks remain separate |
 | 5 | Ingest upstream through the ritual | **partial** - the pin is already current upstream; arrivals partly verified |
 | 6 | Clean base from the audit | **done** - every audit item is fixed or decided; see `AUDIT.md` |
-| 7 | Upstream contribution pipeline | **partial** - 7 patches ready, none submitted |
+| 7 | Upstream contribution pipeline | **partial** - 15 patches ready, none submitted |
 
 **Is Wolkara modularised on top of tolkara? Yes, as of 2026-10-15.** Our sources live
 in `wolkara/{Shell,WoW,Touch,Bridge}`, no platform source is duplicated at the root,
 and the platform's own project, shim builder and tests build our app from the prepared
 tree. The one piece still open is the AppKit adapter patch, recorded in
-`wolkara/README.md`. Measured on 2026-10-15, after the move:
+`wolkara/README.md`. Measured on 2026-10-17:
 
 | Measure | Count |
 | --- | --- |
-| Files under `wolkara/` | 80 |
-| Layer files carried by `overlay.map` (12 replace, 52 add) | 64 |
+| Files under `wolkara/` | 142 |
+| Layer files carried by `overlay.map` (9 replace, 86 add) | 95 |
 | Root copies of a platform path (455 before the split; 398 of them byte-identical) | 0 |
-| Patches against the platform | 7 |
-| Tracked files at the root outside `platform/` and `wolkara/` | 46 - `docs/`, `profiles/`, `development/`, `.github/` and the root documents |
+| Patches against the platform | 15 |
+| Tracked files at the root outside `platform/` and `wolkara/` | 71 - `docs/`, `profiles/`, `development/`, `.github/` and the root documents |
 
 ## Files here
 
@@ -74,6 +93,7 @@ tree. The one piece still open is the AppKit adapter patch, recorded in
 | `AUDIT.md` | The clean-base findings (Phase 6) - quality problems to fix, with status. |
 | `DIVERGENCE.md` | What we changed versus upstream: statistics, themes, and where the two ran over each other. |
 | `NOTES.md` | Operational knowledge that is easy to lose: the CASC index repair, background survival, dictation, and tool gotchas. |
+| `TAKEOVER.md` | Current branch inventory, uncommitted-work boundary, and evidence needed to resume the controller/voice work. |
 
 Related repository docs, kept as the single source of truth for their subject:
 
