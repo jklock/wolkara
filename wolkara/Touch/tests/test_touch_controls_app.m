@@ -500,6 +500,13 @@ static void AKFixtureInputSource(void *context) {
                 AKDrainFixtureEvents();
                 assert(!fixture.text.length);
                 NSLog(@"native: the announced text target answers dictation and reaches the guest");
+                // The one control that leaves a guest screen with no quit of its own. It asks
+                // the guest's own application object to terminate, which is the game's
+                // save-and-quit path; the tap itself runs in the adapter and is not exercised
+                // here because it would end the fixture.
+                UIButton *leave = (UIButton *)AKFindInputView(host, @"wolkara.leaveGame");
+                assert(leave && [leave.accessibilityLabel isEqual:@"Leave the game"]);
+                NSLog(@"native: the toolbar carries Leave the game");
                 NSEvent *arrived = AKFixturePressKey(host, fixture, 0x04 /* 'a' */);
                 assert(arrived != nil && [fixture.text isEqual:@"a"]);
                 AKFixtureOwnsUsages(@[@0x04]);
