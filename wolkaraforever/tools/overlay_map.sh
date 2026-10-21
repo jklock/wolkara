@@ -96,6 +96,17 @@ intent() {
         echo "$f $dst $(intent "$dst")"
     done
     echo "#"
+    echo "# CoreAudio: the audio adapter's test, which has to supply the host that asks"
+    echo "# for the game's playback lease. Patch 0005 stopped the adapter taking the"
+    echo "# session itself, so a bare test process has no route to report."
+    git ls-files wolkaraforever/CoreAudio | while read -r f; do
+        case "$f" in
+            wolkaraforever/CoreAudio/tests/*) dst=tests/${f#wolkaraforever/CoreAudio/tests/};;
+            *) echo "# not overlaid yet (source of a pending patch): $f"; continue;;
+        esac
+        echo "$f $dst $(intent "$dst")"
+    done
+    echo "#"
     echo "# Notices: this repository's own licence and notice, which the packaged app must"
     echo "# carry. The prepared tree already has a LICENSE and a NOTICE.md at its top level,"
     echo "# and those are upstream's, so ours travel under names of their own: both have to"
