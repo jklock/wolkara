@@ -12,6 +12,17 @@ pull request; say what you tested, on what hardware, with which execution mode
 | World of Warcraft Forever (Classic beta, macOS arm64 client) | 1.60.1 | iPad Pro M5, iPadOS 27 | Local signing | Login and gameplay (2026-09-27), with no debugger, helper or tunnel and no memory preparation. At startup the client's own unpacked code matched the signed page container byte for byte, and all 13,280 initializers ran into the original `main`. | Developer service not yet validated on this iPad. Same capture limitation as Classic Era. | [`wow-forever`](profiles/wow-forever) |
 | World of Warcraft Forever (Classic beta, macOS arm64 client) | 1.60.1 (70170) | iPhone 16 Pro Max, iOS 27.0 | Developer service | User-confirmed login, world entry and about two hours of gameplay without reported problems (2026-10-02). Reported 60 FPS at 50% render scale and graphics quality 2. Controller support enabled using middle mouse click; controller menu navigation works. | Initial tests used a Bluetooth keyboard and AssistiveTouch; physical left mouse click did not activate the tested menu controls, while wheel-button click worked. The new [iOS keyboard and touch trackpad](docs/TOUCH_INPUT.md) were subsequently confirmed working by the user on this iPhone (2026-10-02). See [iPhone validation](#iphone-validation-2026-10-01). | [`wow-forever`](profiles/wow-forever) |
 
+## Voice dictation into the game (2026-10-21)
+
+On Dadpad (iPad Pro 12.9-inch, 5th generation, iPadOS 27), Developer service, with an Xbox
+Bluetooth pad mapped to Options as Hold to talk: the **Test Voice** page on the home screen
+delivered a transcript, and two further utterances were typed into the running game at its
+login screen - 21 characters each, Return sent by auto-submit, 43 key events dequeued by the
+guest, the audio session handed back to the game, no crash report, and the app still running.
+The app's own `dictation-target` self-test reported PASS 2/2. Not covered: microphone audio
+was not verified sample by sample, no other controller was tried, and the in-game test used
+the login screen rather than the game's chat box.
+
 ## Latest Wolkara gameplay report (2026-10-07)
 
 The developer reports **60 FPS at graphics quality 4 on an iPhone 16 Pro Max**

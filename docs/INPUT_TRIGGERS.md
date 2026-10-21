@@ -52,3 +52,11 @@ repeat suppression, both modes, cancellation, system-signal isolation and voice 
 `wolkara/tools/test_touch_controls_ui.sh --self-test` tests the adapter's keyboard
 swallowing and forwarding. These synthetic fixtures do not prove physical controller
 button delivery; that requires a real press on the final installed build.
+
+A real press was measured on Dadpad on 2026-10-21: Options on an Xbox Bluetooth pad was
+mapped, and two hold-to-talk utterances in the running game were delivered - `heard 21
+characters` and `sent Return` each time, with the guest dequeuing 43 key events (21
+down/up pairs plus Return) and no crash. The same run also covered the home screen's **Test
+Voice** page. `--selftest=dictation-target` checks the wiring without a person speaking, by
+asking the registered text target whether it takes words and keys. See
+[`VOICE.md`](VOICE.md#verified-on-the-device).

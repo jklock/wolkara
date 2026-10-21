@@ -49,7 +49,9 @@ A successful build alone does not prove that a signing profile permits startup.
 - An iOS keyboard with dictation and an editable draft that replaces the focused
   game field, plus a touch trackpad with two-finger scrolling. A mapped button
   starts and stops dictation, in either Hold to talk or Press to start and stop,
-  and - for a keyboard key - the game can be kept from seeing it at all.
+  and - for a keyboard key - the game can be kept from seeing it at all. The
+  transcript is typed into whatever field the game has focused, with Return only
+  when auto-submit is on.
 - Physical controller support and an on-screen controller when none is connected,
   with an inspector that reports what a pad has and what it does.
 - Movable touch controls, opacity and size settings, an alignment grid and haptics.
@@ -70,11 +72,16 @@ produces it rather than on a stored log.
 
 The device matrix is 23 checks and includes the app's own self-tests, which the app runs on
 itself when launched with `--selftest=<name>`: `input` drives the real input router, settings
-store and published key set with synthetic presses, and `voice` opens a real dictation session
-with the real recogniser - on-device only - and checks that the session is handed back. It does not prove the microphone delivered audio: what
-it asserts is the session state, not the samples. Those
-exist because a script cannot press a pad button or speak; a person is only needed for a real
-voice, a real pad and the game itself. Development and testing automation is welcome here: the
+store and published key set with synthetic presses; `voice` opens a real dictation session
+with the real recogniser - on-device only - and checks that the session is handed back; and
+`dictation-target` asks the object registered as the game's text input whether it takes words
+and keys. They do not prove the microphone delivered audio or that a person spoke: what they
+assert is the session state and the wiring. Those exist because a script cannot press a pad
+button or speak; a person is only needed for a real voice, a real pad and the game itself.
+Dictation was confirmed by the developer in both places on 2026-10-21 - on the home screen's
+**Test Voice** page and inside the running game at its login screen - and the device logs hold
+the evidence for both (see [`docs/VOICE.md`](docs/VOICE.md#verified-on-the-device)).
+Development and testing automation is welcome here: the
 ban in the policy below is on automating *the game*, not on testing this app.
 
 The developer reports **60 FPS at graphics quality 4 on an iPhone 16 Pro Max**
