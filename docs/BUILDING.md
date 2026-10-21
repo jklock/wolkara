@@ -327,8 +327,7 @@ for apps started from the library:
   reservations are kept outside earlier requested ranges, including their
   unmapped tails; if no suitable location can be mapped, allocation fails.
   The guest still believes it received the full length, so accesses beyond
-  the grant can fault. This does not make Cyberpunk fit on the tested iPad:
-  separate large ranges fail during startup. See [the VM investigation](CYBERPUNK_VM.md).
+  the grant can fault.
 - `--vm-probe` (experimental): instead of starting an app, measures how much
   virtual memory iPadOS lets Tolkara reserve (single, cumulative, `PROT_NONE`,
   at fixed addresses, file-backed) and writes `Documents/vm-probe.txt`. It only

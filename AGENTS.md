@@ -46,15 +46,9 @@ Standalone native executables and Python `unittest`, with ASan/UBSan where confi
 
 ## Runtime & Security Constraints
 
-For this branch's Cyberpunk experiment, the user explicitly authorized a rare
-exception on 2026-09-26: runtime memory emulation may fetch the faulting
-instruction and execute its memory access against software backing. The opt-in
-is restricted to Cyberpunk. The general rule below stands for other apps, and
-the bans on game-code reverse engineering, binary patches, debugger attachment
-after entry, input automation and integrity workarounds still apply. See
-`docs/SOFTWARE_MEMORY.md` for the tested scope and current limits.
-
-That ban is about the application, not about our own work. Building, running, testing and
+No game-code reverse engineering, binary patches, debugger attachment after
+entry, input automation or integrity workarounds. That ban is about the
+application, not about our own work. Building, running, testing and
 automating *this project* is expected and encouraged: the simulator fixtures, the device matrix,
 `pilot.sh`, the in-app self-tests in `wolkara/Shell/SelfTest.m`, and any script that helps. What
 is forbidden is automating the *application* - bots, trainers, macros that play it, reading or
