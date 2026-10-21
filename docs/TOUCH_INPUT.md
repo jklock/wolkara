@@ -103,6 +103,14 @@ the guest still controls its own text display and masking. The bridge does not
 record audio itself or retain text after insertion. The local draft is
 discarded when the keyboard closes or the app enters the background.
 
+There are two dictation paths and they stay separate. The one above is the system
+keyboard's microphone writing into the draft, with Replace as the user's decision. The other
+is the **Voice Manager**'s mapped trigger ([`VOICE.md`](VOICE.md)): it records through the
+app's own session and types the transcript straight into the field the guest has focused,
+through the controls' `touchInsertText:`, with no draft and no Replace. The draft editor is
+never announced as the game's text input - that mistake aborted the app the first time a
+transcript was delivered inside the game (2026-10-21, `VOICE.md`).
+
 The dictation UI takes focus while the microphone listens, and that focus change
 is temporary: the draft and the pending result are kept and the draft keyboard is
 restored when the session ends, because a draft that was dictated into must still
