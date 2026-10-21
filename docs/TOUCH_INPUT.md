@@ -12,23 +12,24 @@ them live and restores the saved value at launch. It does not fade the native
 keyboard or the settings panel. The pointer icon is optically centered with a
 small rightward offset, without moving its touch target.
 
-**Leave game** (the house) asks the guest to terminate through its own Cocoa
-termination path, so a game screen with no quit of its own - the login screen is
-one - is no longer a dead end. The game's `applicationShouldTerminate:` and
-`applicationWillTerminate:` run first, which is how it saves its settings, and
-the confirmation says what happens next: Wolkara ends with the guest, and opening
-Wolkara again brings the launcher back. Nothing is killed and no application
-memory is written. One guest per process is a runtime limit, not a UI choice, so
-the launcher cannot be shown again in the same session after a guest has started.
+**Leave game** (the house) closes Wolkara, and the guest goes with it, so a game
+screen with no quit of its own - the login screen is one - is no longer a dead
+end. The confirmation says the cost plainly: anything the game has not saved is
+lost, and opening Wolkara again brings the launcher back with Play working. One
+guest per process is a runtime limit, not a UI choice, so the launcher cannot be
+shown again in the same session after a guest has started.
+
+The control does **not** ask the guest to terminate. That was tried first and is
+not kept: `applicationShouldTerminate:` answered `NSTerminateCancel`, so the tap
+did nothing at all, and on the same run the client faulted with `EXC_BAD_ACCESS`
+(ERROR #132) shortly afterwards (Dadpad, 2026-10-21) - a half-asked shutdown that
+is then cancelled is not a state to put a running client in for a UI
+convenience. The shell ends its own process instead, after flushing what the
+session owns.
+
 The control is built into the AppKit dylib and says so in
 `Documents/native-guest.log` at guest start (`toolbar: leave game control on the
 toolbar`), which is how a device run is checked without a tap.
-
-A guest may refuse to quit: `applicationShouldTerminate:` answered
-`NSTerminateCancel` when the control was first tried on Dadpad (2026-10-21), so
-the tap did nothing. If the process is still alive 2.5 s after the request, the
-adapter says so and offers **Close Wolkara**, which asks the shell to flush the
-session and end. That is the guaranteed exit.
 
 When the guest ends for any reason - its own quit, this control, or a startup
 that did not begin - a library launch ends its own process rather than leaving
