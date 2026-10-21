@@ -48,6 +48,9 @@ wolkaraforever/WoW/Client.h launcher/WoW/Client.h add
 wolkaraforever/WoW/Client.m launcher/WoW/Client.m add
 wolkaraforever/WoW/CurseForgeClient.h launcher/WoW/CurseForgeClient.h add
 wolkaraforever/WoW/CurseForgeClient.m launcher/WoW/CurseForgeClient.m add
+wolkaraforever/WoW/ForeverUI.h launcher/WoW/ForeverUI.h add
+wolkaraforever/WoW/ForeverUI.m launcher/WoW/ForeverUI.m add
+wolkaraforever/WoW/ForeverUIArchive.swift launcher/WoW/ForeverUIArchive.swift add
 wolkaraforever/WoW/Installation.h launcher/WoW/Installation.h add
 wolkaraforever/WoW/Installation.m launcher/WoW/Installation.m add
 wolkaraforever/WoW/Manifest.h launcher/WoW/Manifest.h add
@@ -61,6 +64,8 @@ wolkaraforever/WoW/WoWViewController.m launcher/WoW/WoWViewController.m add
 wolkaraforever/WoW/tests/test_addon_archive.swift tests/test_addon_archive.swift add
 wolkaraforever/WoW/tests/test_addon_import.m tests/test_addon_import.m add
 wolkaraforever/WoW/tests/test_curseforge.m tests/test_curseforge.m add
+wolkaraforever/WoW/tests/test_forever_config.m tests/test_forever_config.m add
+wolkaraforever/WoW/tests/test_forever_ui_archive.swift tests/test_forever_ui_archive.swift add
 wolkaraforever/WoW/tests/test_wow_client.m tests/test_wow_client.m add
 wolkaraforever/WoW/tests/test_wow_installation.m tests/test_wow_installation.m add
 wolkaraforever/WoW/tests/test_wow_launcher_app.m tests/test_wow_launcher_app.m add
@@ -71,6 +76,8 @@ wolkaraforever/WoW/tests/wow_installation_fixture.h tests/wow_installation_fixtu
 wolkaraforever/WoW/wow_cdn.m tools/wow_cdn.m add
 #
 # Touch: the on-screen controls, the gamepad, haptics and the adapter's fonts
+wolkaraforever/Touch/AKPerformanceOverlay.h translation/AppKit/AKPerformanceOverlay.h add
+wolkaraforever/Touch/AKPerformanceOverlay.m translation/AppKit/AKPerformanceOverlay.m add
 wolkaraforever/Touch/Fonts.h translation/AppKit/Fonts.h add
 wolkaraforever/Touch/Fonts.m translation/AppKit/Fonts.m add
 wolkaraforever/Touch/TouchControls.h translation/AppKit/TouchControls.h replace
