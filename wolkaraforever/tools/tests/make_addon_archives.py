@@ -26,8 +26,13 @@ link.external_attr = (stat.S_IFLNK | 0o777) << 16
 archive('symlink', [(link, b'../../outside')])
 archive('corrupt', [('Fixture/Fixture.toc', toc)], zipfile.ZIP_STORED)
 path = root / 'corrupt.zip'
-data = path.read_bytes()
-path.write_bytes(data.replace(b'WolkaraForever Fixture', b'Broken! Fixture'))
+# Flip one byte of the stored entry's data: the archive stays structurally valid and
+# the length is unchanged, so the CRC is the thing that must be refused. Replacing a
+# word with a different-length one would shift every offset after it, which makes the
+# fixture depend on the length of whatever text the entry happens to carry.
+data = bytearray(path.read_bytes())
+data[data.index(toc)] ^= 0xFF
+path.write_bytes(data)
 (root / 'invalid.zip').write_bytes(b'not a zip')
 archive('file-directory', [('Fixture/a', b'file'), ('Fixture/a/b', b'child')])
 
