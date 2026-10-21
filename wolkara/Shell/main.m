@@ -218,6 +218,18 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     WKLog("voice", @"the game's text input is up; dictation will type into it");
 }
 
+// The last way out of a guest screen. The adapter's Leave game control first asks the guest
+// itself to terminate, which is its own save-and-quit path; a guest may refuse, and the one
+// that was measured did (`applicationShouldTerminate:` answered NSTerminateCancel). The
+// adapter then asks whether to close Wolkara anyway, and this is the yes: flush what this
+// session owns, say so, and end. Nothing in the guest is touched.
+- (void)closeAfterGuestRefusedToQuit:(NSNotification *)note {
+    (void)note;
+    WKLog("host", @"the guest refused to quit; closing Wolkara because the user chose to");
+    [self.steamCloud flush];
+    exit(0);
+}
+
 // What the adapter needs to know, and the only thing it can be told: which keys are the
 // user's, so the guest does not see them. Sent on every change to the settings - a mapping,
 // the switch, or voice going off - because each of those changes the answer.
@@ -377,6 +389,12 @@ static NSString *AKAudioStateDescription(void) {
     // AKTouchGameTextInputDidAppearNotification in wolkara/Touch/TouchControls.h.
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(gameTextInputAppeared:)
                                                name:@"AKTouchGameTextInputDidAppear" object:nil];
+    // The other end of the adapter's Leave game control: the guest would not close, the user
+    // chose to close Wolkara, and the session's own flush happens here. The constant is
+    // AKTouchCloseAppNotification in wolkara/Touch/TouchControls.h, spelled out for the same
+    // reason as the notification above.
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(closeAfterGuestRefusedToQuit:)
+                                               name:@"AKTouchCloseAppNotification" object:nil];
     // Tell the adapter which keys are the user's, so it can swallow them before the guest
     // sees them. Every change to the settings re-publishes: a mapping, the switch on the page
     // and switching voice off all change the answer. Published rather than asked because the
@@ -966,6 +984,16 @@ static NSString *AKAudioStateDescription(void) {
 // container: Local signing's validated page container, or nil for the
 // Developer-service/debugger path. Callers choose it; this only applies it.
 - (void)resumeCloudPreparedNativeGame { [self runNativeGame:self.cloudFullStartup app:self.cloudApp container:self.cloudContainer]; }
+// A library launch that never got as far as running the guest cannot be retried in this
+// process either: Play is inert once a session has been used. Say why in the log and end the
+// process, so the next tap on Wolkara is a fresh launch with the game startable again. The
+// failure message is left on screen long enough to be read first.
+- (void)endSessionThatCannotStartAgain:(NSString *)why log:(FILE *)log {
+    if (!self.uiSession) return;
+    fprintf(log, "[host] %s; ending this process so the next launch can start the game\n", why.UTF8String);
+    fflush(log);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ exit(0); });
+}
 - (void)runNativeGame:(BOOL)fullStartup app:(TKApp *)app container:(NSString *)container {
     if (!self.cloudPrepared && [TKSteamCloudCoordinator configuredProfile:app.profile documents:TKDocumentsPath(@"")]) {
         if(self.cloudPreparing)return;self.cloudPreparing=YES;
@@ -989,7 +1017,6 @@ static NSString *AKAudioStateDescription(void) {
     NSString *logPath = TKDocumentsPath(@"native-guest.log");
     FILE *log = fopen(logPath.fileSystemRepresentation, "w");
     if (!log) { self.status.text = @"Cannot open native runtime log."; [self showStartStopped]; return; }
-    // Line-buffered: an early return must not leave its message stuck in the buffer.
     setvbuf(log, NULL, _IOLBF, 0);
     dup2(fileno(log), STDERR_FILENO);
     dup2(fileno(log), STDOUT_FILENO);
@@ -1009,6 +1036,7 @@ static NSString *AKAudioStateDescription(void) {
         self.status.text=app ? error.localizedDescription : @"Import an app into the library before running the development loader.";
         fprintf(log,"[host] %s\n",self.status.text.UTF8String);
         [self showStartStopped];
+        [self endSessionThatCannotStartAgain:self.status.text log:log];
         return;
     }
     fprintf(log,"[host] app=%s sha256=%s\n",app.name.UTF8String,app.sha256.UTF8String);
@@ -1077,6 +1105,7 @@ static NSString *AKAudioStateDescription(void) {
             if(self.sessionUsed) retry=@"Close and reopen the app to retry or to change the execution mode.";
             self.status.text=[NSString stringWithFormat:@"Local signing could not start: %s\n%@",reason[0]?reason:"see runtime log",retry];
             [self showStartStopped];
+            [self endSessionThatCannotStartAgain:self.status.text log:log];
             return;
         }
         fprintf(log,"[host] signed-image container=%s\n",shown.UTF8String); fflush(log);
@@ -1087,12 +1116,18 @@ static NSString *AKAudioStateDescription(void) {
     self.status.text = ok ? (fullStartup ? [app.name stringByAppendingString:@" closed."] : @"Original client first initializer returned.") : @"Native startup stopped. See runtime log.";
     [self showStartStopped];
     if (ok && fullStartup) [self.wowController finishStartupWithMessage:@"Session ended." failed:NO];
-    // A cleanly closed game was the whole session in a library launch. End the
-    // process after a short note: the next tap on Tolkara opens the library
-    // ready to start another app (one guest startup per process).
-    if (ok && fullStartup && self.uiSession) {
+    // One guest per process, and the guest has now ended: whatever the outcome, this process
+    // can never start another. Leaving the launcher up was a dead end - once a session has
+    // been used its Play button answers nothing, and the only way back was to force-quit
+    // Wolkara (reported on Dadpad, 2026-10-21: "if I quit the game inside Wolkara there is no
+    // way to start it again without killing the app completely"). So the process ends here,
+    // after a short note that the log keeps: the next tap on Wolkara is a fresh launch, with
+    // Play working again. This applies whether the guest closed cleanly or refused to start;
+    // neither case can be retried in this process.
+    if (fullStartup && self.uiSession) {
         [self.steamCloud flush];
-        fprintf(log,"[host] %s closed; ending this session\n",app.name.UTF8String); fflush(log);
+        fprintf(log,"[host] %s: the session is over; ending this process so the next launch can start the game\n",
+                ok ? "guest closed" : "the guest did not start"); fflush(log);
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC),dispatch_get_main_queue(),^{ exit(0); });
     }
     // Runtime callbacks retain this log for the life of the guest.
