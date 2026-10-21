@@ -1,16 +1,28 @@
 # Experimental touch input
 
-The AppKit adapter provides four translucent toolbar buttons: pointer, keyboard,
-automatic touch controller and control settings (gear). The toolbar always stays
-at the top center inside the safe area, including with a physical controller,
+The AppKit adapter provides five translucent toolbar buttons: pointer, keyboard,
+automatic touch controller, control settings (gear) and leave game (house). The toolbar
+always stays at the top center inside the safe area, including with a physical controller,
 with the keyboard open or with touch controls hidden. The keyboard button opens
 and closes the iOS keyboard and a visible draft editor immediately above it;
 the guest's rendering size stays unchanged. The accessory row provides Escape,
 Tab, left/right arrows, game backspace, Return and a close button.
-The control-transparency slider also fades all four toolbar buttons, updates
+The control-transparency slider also fades all five toolbar buttons, updates
 them live and restores the saved value at launch. It does not fade the native
 keyboard or the settings panel. The pointer icon is optically centered with a
 small rightward offset, without moving its touch target.
+
+**Leave game** (the house) asks the guest to terminate through its own Cocoa
+termination path, so a game screen with no quit of its own - the login screen is
+one - is no longer a dead end. The game's `applicationShouldTerminate:` and
+`applicationWillTerminate:` run first, which is how it saves its settings, and
+the confirmation says what happens next: Wolkara ends with the guest, and opening
+Wolkara again brings the launcher back. Nothing is killed and no application
+memory is written. One guest per process is a runtime limit, not a UI choice, so
+the launcher cannot be shown again in the same session after a guest has started.
+The control is built into the AppKit dylib and says so in
+`Documents/native-guest.log` at guest start (`toolbar: leave game control on the
+toolbar`), which is how a device run is checked without a tap.
 
 The gamepad button enables automatic touch controls when no physical controller
 is connected, or turns them off. The custom layout provides two sticks, D-pad,
