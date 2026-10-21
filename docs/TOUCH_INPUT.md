@@ -24,6 +24,20 @@ The control is built into the AppKit dylib and says so in
 `Documents/native-guest.log` at guest start (`toolbar: leave game control on the
 toolbar`), which is how a device run is checked without a tap.
 
+A guest may refuse to quit: `applicationShouldTerminate:` answered
+`NSTerminateCancel` when the control was first tried on Dadpad (2026-10-21), so
+the tap did nothing. If the process is still alive 2.5 s after the request, the
+adapter says so and offers **Close Wolkara**, which asks the shell to flush the
+session and end. That is the guaranteed exit.
+
+When the guest ends for any reason - its own quit, this control, or a startup
+that did not begin - a library launch ends its own process rather than leaving
+the launcher up. A process starts one guest, so Play can never work again in
+that session; leaving it on screen was the dead end in which the only way to
+play again was to force-quit Wolkara (reported 2026-10-21). The log keeps the
+reason (`the session is over; ending this process so the next launch can start
+the game`) and the next tap on Wolkara is a fresh launch.
+
 The gamepad button enables automatic touch controls when no physical controller
 is connected, or turns them off. The custom layout provides two sticks, D-pad,
 ABXY, LB/LT/RB/RT and `+`; it hides and releases held input while the keyboard is
