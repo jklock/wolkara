@@ -3,7 +3,7 @@
 Implemented on `feature/touch-controller` from `feature/wow-home` (`2b87fd8`),
 2026-10-06. This replaces the earlier feasibility-only proposal. The native mouse
 experiment remains separate, and the inherited keyboard correction is retained.
-`feature/wolkara` continues from `b55084a` with the settings/editor below.
+`feature/wolkaraforever` continues from `b55084a` with the settings/editor below.
 
 ## Layout and behavior
 
@@ -62,7 +62,7 @@ or editing. Standalone buttons remain touchable in edit mode so their pan
 recognizers work; their game values are still blocked. Positions are normalized
 to the available safe area, saved locally, and clamped after rotation/resizing.
 The toolbar and editor exit remain fixed, so moved controls cannot strand the UI.
-Preferences use `WolkaraTouchLayoutV1` and contain no game or account data.
+Preferences use `WolkaraForeverTouchLayoutV1` and contain no game or account data.
 Older saved layouts keep their positions and sizes and default to haptics on.
 The pointer symbol has a small optical offset to the right inside its existing
 button; the button's size, position and touch target are unchanged.
@@ -134,10 +134,10 @@ The signed device build also passed:
 ```sh
 xcodebuild -project Tolkara.xcodeproj -scheme Tolkara -configuration Debug \
   -sdk iphoneos -destination 'generic/platform=iOS' \
-  -derivedDataPath build/iphone-wolkara-signed ARCHS=arm64 \
+  -derivedDataPath build/iphone-wolkaraforever-signed ARCHS=arm64 \
   TOLKARA_SYSTEM_ROOTS=YES build
 codesign --verify --deep --strict \
-  build/iphone-wolkara-signed/Build/Products/Debug-iphoneos/Tolkara.app
+  build/iphone-wolkaraforever-signed/Build/Products/Debug-iphoneos/Tolkara.app
 ```
 
 Strict signature verification passed with normal access to the macOS keychain.

@@ -8,7 +8,7 @@ below remain the reference plan.
 
 ## Intended result
 
-Wolkara offers a native **Add-ons** screen for the selected WoW installation.
+WolkaraForever offers a native **Add-ons** screen for the selected WoW installation.
 Users can discover a small curated catalog, install an author's compatible
 release, import a ZIP from Files, update or pin installed packages, disable a
 package, remove it, and restore its previous version. Game updates preserve these
@@ -46,7 +46,7 @@ finish or recover before Play becomes available.
    those supported interfaces; do not scrape download pages or construct CDN
    URLs from file IDs. [API access](https://support.curseforge.com/support/solutions/articles/9000208346-about-the-curseforge-api-and-how-to-apply-for-a-key),
    [API reference](https://docs.curseforge.com/rest-api/).
-5. Wolkara already preserves `WTF` and `Interface` during game updates.
+5. WolkaraForever already preserves `WTF` and `Interface` during game updates.
    [Updater.m](../launcher/WoW/Updater.m) locks
    `<game-root-parent>/.tolkara-updates/update.lock`, refreshes user folders in its
    staged installation, then swaps the whole game root. Add-on mutations must
@@ -56,7 +56,7 @@ finish or recover before Play becomes available.
 ## First catalog
 
 These are candidates with publisher evidence of Forever support, not a claim
-that they have been tested inside Wolkara. Admit a specific downloadable package
+that they have been tested inside WolkaraForever. Admit a specific downloadable package
 only after checking its actual contents and dependencies.
 
 | Add-on | Purpose | Publisher evidence | Initial position |
@@ -94,7 +94,7 @@ dependencies, package size, source link and the compatibility evidence. Normal
 actions are Install, Update, Pin, Disable, Remove and Restore previous version.
 
 Use explicit states: Not installed, Downloading, Checking package, Installing,
-Installed, Update available, Disabled in Wolkara, Unverified for this beta,
+Installed, Update available, Disabled in WolkaraForever, Unverified for this beta,
 Incompatible, and Import required. Distinguish "publisher supports Forever" from
 "tested on this iPad". Installed files do not prove that the user enabled the
 add-on in WoW's own character-specific AddOns menu.
@@ -102,10 +102,10 @@ add-on in WoW's own character-specific AddOns menu.
 Allow catalog browsing before installing the game; require a valid selected game
 installation before changing its files. Keep mutation controls unavailable while
 the game updates, startup is preparing, or `sessionUsed` is true. Follow the
-existing requirement to reopen Wolkara after a guest session before managing
+existing requirement to reopen WolkaraForever after a guest session before managing
 files. A successful installation applies on the next normal game launch.
 
-Disabling in Wolkara moves the package out of the game's scan directory for all
+Disabling in WolkaraForever moves the package out of the game's scan directory for all
 characters. The manager does not rewrite character-specific game enable settings
 or enable gameplay features on the user's behalf. Provide a recovery action to
 disable all managed packages while retaining settings and unmanaged add-ons.
@@ -143,7 +143,7 @@ disable all managed packages while retaining settings and unmanaged add-ons.
   **Import ZIP**. The user downloads the author's Forever package in the browser,
   then imports it through Files. This is a manual fallback, not one-click support.
 - A hosted credential broker would be a separate later deployment decision;
-  v1 does not require a backend or new Wolkara account.
+  v1 does not require a backend or new WolkaraForever account.
 
 ### Imported ZIPs
 
@@ -190,13 +190,13 @@ mapping in [Manifest.m](../launcher/WoW/Manifest.m). The normal Forever location
 `Documents/World of Warcraft/_classic_beta_/Interface/AddOns`; imported game roots
 must work through the same resolver.
 
-Keep a versioned `.wolkara-addons.json` inside `AddOns`, recording package identity,
+Keep a versioned `.wolkaraforever-addons.json` inside `AddOns`, recording package identity,
 source, release/file/asset ID, selected channel, compatibility evidence, owned
 folders, file hashes, installation generation, pinned state and disabled state.
 It travels with `Interface` through game updates and swaps atomically with the
 add-on files. Namespace caches, disabled payloads, previous package versions and
 recovery journals by installation/product under
-`Library/Application Support/Wolkara/AddOns/`.
+`Library/Application Support/WolkaraForever/AddOns/`.
 
 Installation/update sequence:
 
@@ -233,7 +233,7 @@ Use a maintained ZIP library instead of implementing a new ZIP parser.
 [ZIPFoundation](https://github.com/weichsel/ZIPFoundation) is the proposed choice:
 it supports iOS, entry-wise extraction and cancellation, and has an MIT license.
 Pin a reviewed release and expose a small Objective-C-compatible Swift wrapper.
-Wolkara still owns path validation, resource limits and confined writes. The
+WolkaraForever still owns path validation, resource limits and confined writes. The
 first milestone must prove integration with both app targets and standalone tests.
 
 Removal affects recorded managed files only. Retain modified/untracked content
@@ -279,7 +279,7 @@ strings need not follow semantic-version ordering.
    progress, errors, installed actions, pins and recovery controls. Make Bagnon
    and RestedXP the first package examples, then admit the other catalog candidates
    after package validation. Keep game launch independent of optional update checks.
-5. **Validate on the connected iPad.** Update Wolkara in place, preserving its data.
+5. **Validate on the connected iPad.** Update WolkaraForever in place, preserving its data.
    Manually verify appearance in WoW's AddOns menu, useful operation in Forever,
    German behavior, disable/restore and survival through a game update. Record
    exact game/add-on versions and observed results in `COMPATIBILITY.md`; publisher

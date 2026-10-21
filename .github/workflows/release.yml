@@ -2,7 +2,7 @@
 
 name: Experimental IPA (manual)
 
-# Wolkara is currently published as source. Packaging an experimental External
+# WolkaraForever is currently published as source. Packaging an experimental External
 # JIT IPA is an explicit maintainer action, never an automatic tag/release side effect.
 on:
   workflow_dispatch:
@@ -59,7 +59,7 @@ jobs:
       - name: Build the unsigned .ipa
         if: steps.plan.outputs.skip != 'true'
         # Published, so nothing exported from the runner's macOS goes in.
-        run: TOLKARA_SYSTEM_ROOTS=NO wolkara/tools/package_ipa.sh "$IPA"
+        run: TOLKARA_SYSTEM_ROOTS=NO wolkaraforever/tools/package_ipa.sh "$IPA"
 
       - name: Write the release notes
         if: steps.plan.outputs.skip != 'true'

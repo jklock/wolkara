@@ -3,11 +3,11 @@
 ## Objective
 
 Create branch `PerformanceUI` from the current `main` checkout. Update the
-Wolkara home page and integrate the Metal performance-overlay pull request
-([fJavierLasso/wolkara#2](https://github.com/fJavierLasso/wolkara/pull/2)).
+WolkaraForever home page and integrate the Metal performance-overlay pull request
+([fJavierLasso/wolkaraforever#2](https://github.com/fJavierLasso/wolkaraforever/pull/2)).
 
 The homepage is the control surface, but four of its rows are deliberately
-**WoW Forever file operations**, not Wolkara settings:
+**WoW Forever file operations**, not WolkaraForever settings:
 
 - `Backup WoW UI Configuration`
 - `Reset to Default Graphical Settings`
@@ -17,12 +17,12 @@ The homepage is the control surface, but four of its rows are deliberately
 
 They operate only on the installed Forever edition at
 `_classic_beta_/WTF`. They must never read or write another edition's files,
-Wolkara configuration, controller-layout preferences, account state, add-ons,
+WolkaraForever configuration, controller-layout preferences, account state, add-ons,
 or the game's `GamePadConfig_*.json` and `gamecontrollerdb.txt` files.
 
 ## Homepage changes
 
-Edit `wolkara/WoW/WoWViewController.m` and its UIKit fixture as follows.
+Edit `wolkaraforever/WoW/WoWViewController.m` and its UIKit fixture as follows.
 
 1. Create `PerformanceUI` from the current `main` commit before making any
    source changes. Do not edit `platform/`.
@@ -58,7 +58,7 @@ Edit `wolkara/WoW/WoWViewController.m` and its UIKit fixture as follows.
 5. Give every row a stable `wow.performance.*` accessibility identifier.
    The four Forever configuration rows and folder row are enabled only when
    Forever is installed, ready, and no download/start/session is active.
-   Overlay is a Wolkara runtime feature and follows the non-busy launcher
+   Overlay is a WolkaraForever runtime feature and follows the non-busy launcher
    availability rule. Render enabled state explicitly: use `Enabled` for an
    active gamepad/overlay row and `Enable ...` when inactive; never perform a
    destructive reset without a confirmation sheet.
@@ -150,20 +150,20 @@ and UI CVar; unknown settings are preserved rather than guessed.
    `GamePadEnable` assignment with value `1` before showing success.
 4. Do not modify the existing `GamePadConfig_Default.json`,
    `GamePadConfig_Addons.json`, or `gamecontrollerdb.txt` files. Change the row
-   to `Gamepad UI Enabled`; it is not a Wolkara touch-gamepad preference and it
+   to `Gamepad UI Enabled`; it is not a WolkaraForever touch-gamepad preference and it
    does not alter any bindings. It takes effect when Forever next starts.
 
 ### Open Settings Folder
 
 Open the platform document picker at the Forever `WTF` directory. Create that
 directory only when a ready Forever installation exists and the directory is
-missing; do not create an add-on folder or a Wolkara folder as a side effect.
+missing; do not create an add-on folder or a WolkaraForever folder as a side effect.
 The picker is navigation only and makes no configuration change.
 
 ## Performance-overlay PR integration
 
 PR #2 is a useful starting point, but it must be incorporated through the
-Wolkara layer, not merged or copied into `platform/`.
+WolkaraForever layer, not merged or copied into `platform/`.
 
 1. Review the PR's ten changed files against the pinned upstream tree, then
    port only the required behavior:
@@ -175,10 +175,10 @@ Wolkara layer, not merged or copied into `platform/`.
    - the existing in-game touch-controller settings toggle and reset behavior;
    - host-view attachment and lifecycle-driven start/stop monitoring.
 2. Put new AppKit/touch sources and fixture tests in the appropriate
-   `wolkara/` layer directories. Regenerate `wolkara/overlay.map`; every new
+   `wolkaraforever/` layer directories. Regenerate `wolkaraforever/overlay.map`; every new
    overlay file must be tracked and carried into the prepared tree.
 3. Express changes to existing upstream `translation/AppKit/AppKit.m` and
-   `translation/Metal/Presentation.m` as ordered files in `wolkara/patches/`.
+   `translation/Metal/Presentation.m` as ordered files in `wolkaraforever/patches/`.
    Patches must apply cleanly to the pinned platform with no direct platform
    modifications.
 4. Keep performance collection observational: use Metal presentation timestamps
@@ -220,7 +220,7 @@ Wolkara layer, not merged or copied into `platform/`.
 ### Required verification order
 
 1. Run the new targeted Forever-config test and homepage fixture.
-2. Run `wolkara/tools/check_layers.sh`; it must confirm platform identity,
+2. Run `wolkaraforever/tools/check_layers.sh`; it must confirm platform identity,
    patches, generated overlay map, and prepared-tree integration.
 3. Run the relevant translation/touch simulator suite and launcher UI fixture.
 4. Build and install the exact candidate SHA on the iPad. Verify on that build:

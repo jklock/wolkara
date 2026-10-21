@@ -7,8 +7,8 @@
 - `authorization/`: Developer service: bundled pairing, transport, tunnel extension and memory-preparation protocol.
 - `launcher/`: the iPad app. `profiles/`: data-only descriptions of tested applications.
 - `tests/`: C, Objective-C, Swift and Python tests; `testguest/`: our synthetic guest fixture.
-- `wolkara/tools/`: the layer's scripts - prepare, the gate, and the wrappers that run the platform's own build, install, run and test scripts against the prepared tree. The platform's own tools are `platform/tools/` and run inside that tree. `docs/`: building guide and architecture.
-- `platform/`: upstream tolkara, vendored byte-identical to `upstream/main` and never edited by hand; `wolkara/`: our layer above it. Start at `docs/ARCHITECTURE.md`.
+- `wolkaraforever/tools/`: the layer's scripts - prepare, the gate, and the wrappers that run the platform's own build, install, run and test scripts against the prepared tree. The platform's own tools are `platform/tools/` and run inside that tree. `docs/`: building guide and architecture.
+- `platform/`: upstream tolkara, vendored byte-identical to `upstream/main` and never edited by hand; `wolkaraforever/`: our layer above it. Start at `docs/ARCHITECTURE.md`.
 - `build/` and `logs/` are ignored outputs. Third-party applications and assets are never committed.
 
 ## Build, Test, and Development Commands
@@ -17,16 +17,16 @@ Requires Xcode, XcodeGen and Python 3. Personal settings (team, bundle ID, devic
 
 ```sh
 # Ours: each prepares build/platform, then runs the platform's own script on it.
-wolkara/tools/prepare.sh        # platform/ -> build/platform/, patched and overlaid
-wolkara/tools/check_layers.sh   # the gate for the whole split
-wolkara/tools/test_emulation.sh # sanitizer regression suite on the Mac, then ours
-wolkara/tools/test_translation_sim.sh   # the UIKit-backed adapters' tests, run in the simulator
-wolkara/tools/run.sh sim            # loader diagnostics in the simulator (TolkaraDiagnostics scheme)
-TOLKARA_MODE=local-signing wolkara/tools/run.sh sim   # Local signing: first initializer of testguest (or GUEST_EXE) from an ad-hoc page container
-wolkara/tools/install.sh            # build, sign and install the app on the configured iPad
-NATIVE_GUEST_SHIMS=GENERIC wolkara/tools/install.sh   # build for no particular application: one adapter per translation/<Framework>/
-wolkara/tools/package_ipa.sh        # unsigned generic TolkaraDiagnostics .ipa for External JIT (sideloaded, e.g. SideStore)
-wolkara/tools/make_wolkara_icon.py  # redraw the app icon at every size and appearance (needs Google Chrome)
+wolkaraforever/tools/prepare.sh        # platform/ -> build/platform/, patched and overlaid
+wolkaraforever/tools/check_layers.sh   # the gate for the whole split
+wolkaraforever/tools/test_emulation.sh # sanitizer regression suite on the Mac, then ours
+wolkaraforever/tools/test_translation_sim.sh   # the UIKit-backed adapters' tests, run in the simulator
+wolkaraforever/tools/run.sh sim            # loader diagnostics in the simulator (TolkaraDiagnostics scheme)
+TOLKARA_MODE=local-signing wolkaraforever/tools/run.sh sim   # Local signing: first initializer of testguest (or GUEST_EXE) from an ad-hoc page container
+wolkaraforever/tools/install.sh            # build, sign and install the app on the configured iPad
+NATIVE_GUEST_SHIMS=GENERIC wolkaraforever/tools/install.sh   # build for no particular application: one adapter per translation/<Framework>/
+wolkaraforever/tools/package_ipa.sh        # unsigned generic TolkaraDiagnostics .ipa for External JIT (sideloaded, e.g. SideStore)
+wolkaraforever/tools/make_wolkaraforever_icon.py  # redraw the app icon at every size and appearance (needs Google Chrome)
 
 # The platform's own tools, run inside the prepared tree after prepare.sh.
 build/platform/tools/probe_guest.sh "/path/to/Executable"   # inspect an unchanged executable
@@ -50,10 +50,10 @@ No game-code reverse engineering, binary patches, debugger attachment after
 entry, input automation or integrity workarounds. That ban is about the
 application, not about our own work. Building, running, testing and
 automating *this project* is expected and encouraged: the simulator fixtures, the device matrix,
-`pilot.sh`, the in-app self-tests in `wolkara/Shell/SelfTest.m`, and any script that helps. What
+`pilot.sh`, the in-app self-tests in `wolkaraforever/Shell/SelfTest.m`, and any script that helps. What
 is forbidden is automating the *application* - bots, trainers, macros that play it, reading or
 changing its memory beyond loading it, and workarounds for its integrity, licence or anti-cheat
-checks. A test that feeds Wolkara's own input router or dictation a synthetic event is our code
+checks. A test that feeds WolkaraForever's own input router or dictation a synthetic event is our code
 testing itself; a macro that presses buttons in the game is not.
 
 ## How to work here (standing instruction, 2026-10-17)

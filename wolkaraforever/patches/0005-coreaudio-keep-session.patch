@@ -1,0 +1,69 @@
+# WolkaraForever layer patch 0005 - CoreAudio: keep the audio session alive
+#
+# Why: iPadOS honours the audio background mode only while the audio session is
+# active. Nothing in the adapter deactivates it, and re-activating after an
+# interruption is what keeps a running guest alive, and online, when the user
+# switches to another app.
+# Applies to: translation/CoreAudio/Hardware.m
+# Upstream: candidate (not submitted).
+#
+diff --git a/translation/CoreAudio/Hardware.m b/translation/CoreAudio/Hardware.m
+diff --git a/translation/CoreAudio/Hardware.m b/translation/CoreAudio/Hardware.m
+index 10de4b4..66d5318 100644
+--- a/translation/CoreAudio/Hardware.m
++++ b/translation/CoreAudio/Hardware.m
+@@ -6,10 +6,51 @@
+ typedef UInt32 AudioDeviceID;
+ typedef OSStatus (*HardwareListener)(UInt32,void *);
+ static _Atomic(UInt32) defaultOutputDevice;
++// The host owns the audio session. This asks it for the game's playback lease, synchronously, and
++// does nothing else: forcing the category here is what took the session away from a running dictation,
++// and a second owner of the session is what this adapter used to be.
++//
++// The request goes through dlsym rather than a declaration, because this adapter is its own image and
++// cannot link against the app's symbol; the app is the main image, so RTLD_DEFAULT finds it. A host
++// that does not implement it has nothing done to its session, which is the right answer for a process
++// that has not said what it wants. dlfcn.h is included here already, for the same kind of reason.
++typedef BOOL (*TKWolkaraForeverPlaybackRequest)(void);
++static TKWolkaraForeverPlaybackRequest playbackRequest(void) {
++    static TKWolkaraForeverPlaybackRequest found;
++    static dispatch_once_t once;
++    dispatch_once(&once,^{ found=(TKWolkaraForeverPlaybackRequest)dlsym(RTLD_DEFAULT,"TKWolkaraForeverRequestGamePlayback"); });
++    return found;
++}
++// The app declares the audio background mode, and iPadOS only honours it while the audio session is
++// active: that is what keeps a running game alive (and its connection up) when the user switches to
++// another app. An interruption ending, or a media services reset, is when the session can be asked
++// for again - asked for, never taken.
++static void keepSession(void) {
++    TKWolkaraForeverPlaybackRequest ask=playbackRequest();
++    if(ask) ask();
++}
++static void observeSession(void) {
++    static dispatch_once_t once;
++    dispatch_once(&once,^{
++        // AVFAudio notifications only: this adapter stays UIKit-free.
++        NSNotificationCenter *center=NSNotificationCenter.defaultCenter;
++        [center addObserverForName:AVAudioSessionInterruptionNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
++            NSNumber *type=note.userInfo[AVAudioSessionInterruptionTypeKey];
++            if(type.unsignedIntegerValue==AVAudioSessionInterruptionTypeEnded) keepSession();
++        }];
++        [center addObserverForName:AVAudioSessionMediaServicesWereResetNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
++            (void)note; keepSession();
++        }];
++    });
++}
+ static NSString *outputName(void) {
+-    AVAudioSession *session=AVAudioSession.sharedInstance; NSError *error=nil;
+-    if(![session.category isEqualToString:AVAudioSessionCategoryPlayback] || session.sampleRate<=0 || !session.currentRoute.outputs.count)
+-        if(![session setCategory:AVAudioSessionCategoryPlayback error:&error] || ![session setActive:YES error:&error])return nil;
++    observeSession();
++    // Asked for, not taken. If the host declines - a dictation holds the session, or it has not asked
++    // for playback yet - there is no output name to report, and that is the answer.
++    TKWolkaraForeverPlaybackRequest ask=playbackRequest();
++    if(ask) ask();
++    AVAudioSession *session=AVAudioSession.sharedInstance;
++    if(![session.category isEqualToString:AVAudioSessionCategoryPlayback] || !session.currentRoute.outputs.count)return nil;
+     NSArray *outputs=session.currentRoute.outputs;
+     return outputs.count?[(AVAudioSessionPortDescription *)outputs.firstObject portName]:nil;
+ }

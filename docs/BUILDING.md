@@ -1,6 +1,6 @@
 # Building and installing Tolkara
 
-For the WoW-focused Wolkara app, start with [GETTING_STARTED.md](GETTING_STARTED.md).
+For the WoW-focused WolkaraForever app, start with [GETTING_STARTED.md](GETTING_STARTED.md).
 This page covers the shared engine and its advanced development modes.
 
 Tolkara is meant to be built by you: you build it, you sign it with your own
@@ -68,7 +68,7 @@ xcrun devicectl list devices
 - `TOLKARA_PROFILE` (optional): your own profile, if it is not in
   [`profiles/`](../profiles). Every profile there is included automatically.
 - `TOLKARA_MODE` (optional): `developer-service` or `local-signing`, see step 4.
-  Used by explicit development runs. Wolkara's ordinary integrated launch
+  Used by explicit development runs. WolkaraForever's ordinary integrated launch
   selects Developer service without a picker.
 - `TOLKARA_EXPERIMENTAL_ADAPTERS` (optional, experimental): adapters marked
   `experimental` under `translation/` take part only when named here, separated
@@ -124,7 +124,7 @@ Settings > General > VPN & Device Management.
 ## 4. Set up your execution mode
 
 The shared engine has three execution modes, described below.
-Wolkara uses Developer service in the integrated target and External JIT in the
+WolkaraForever uses Developer service in the integrated target and External JIT in the
 diagnostics/sideload target. There is no normal startup-mode picker. The other
 routes remain available to explicit development launches; set up only the
 route used by your build.
@@ -249,10 +249,10 @@ profile: see [profiles/README.md](../profiles/README.md).
 
 ## 6. Run
 
-Open Wolkara, choose the WoW edition and tap Play after installation/updates
+Open WolkaraForever, choose the WoW edition and tap Play after installation/updates
 finish. With Developer service, keep the app in the foreground while it prepares
 memory. This still happens on each new process. One game can start per session;
-when it closes, reopen Wolkara for another session. The general library/import
+when it closes, reopen WolkaraForever for another session. The general library/import
 workflow described above is retained for internal development runs only.
 Runtime output goes to `Documents/native-guest.log`; the Diagnostics menu
 (stethoscope) shows it and the other logs, and holds the development checks.

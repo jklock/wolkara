@@ -12,10 +12,10 @@ them live and restores the saved value at launch. It does not fade the native
 keyboard or the settings panel. The pointer icon is optically centered with a
 small rightward offset, without moving its touch target.
 
-**Leave game** (the house) closes Wolkara, and the guest goes with it, so a game
+**Leave game** (the house) closes WolkaraForever, and the guest goes with it, so a game
 screen with no quit of its own - the login screen is one - is no longer a dead
 end. The confirmation says the cost plainly: anything the game has not saved is
-lost, and opening Wolkara again brings the launcher back with Play working. One
+lost, and opening WolkaraForever again brings the launcher back with Play working. One
 guest per process is a runtime limit, not a UI choice, so the launcher cannot be
 shown again in the same session after a guest has started.
 
@@ -31,20 +31,20 @@ The control is built into the AppKit dylib and says so in
 `Documents/native-guest.log` at guest start (`toolbar: leave game control on the
 toolbar`), which is how a device run is checked without a tap.
 
-Either way the session ends, the screen it ends on is Wolkara's own: the mark, a
+Either way the session ends, the screen it ends on is WolkaraForever's own: the mark, a
 line saying what happened, and what to do next, with a countdown from five that
-ends the process when it reaches zero (`wolkara.closing.countdown` in the log's
+ends the process when it reaches zero (`wolkaraforever.closing.countdown` in the log's
 words: `closing in 4`, `closing in 3`...). It sits above whatever the guest left
 on screen, so a quit - or a client crash - is never mistaken for a hung app. The
-next tap on Wolkara brings the launcher back with Play ready.
+next tap on WolkaraForever brings the launcher back with Play ready.
 
 When the guest ends for any reason - its own quit, this control, or a startup
 that did not begin - a library launch ends its own process rather than leaving
 the launcher up. A process starts one guest, so Play can never work again in
 that session; leaving it on screen was the dead end in which the only way to
-play again was to force-quit Wolkara (reported 2026-10-21). The log keeps the
+play again was to force-quit WolkaraForever (reported 2026-10-21). The log keeps the
 reason (`the session is over; ending this process so the next launch can start
-the game`) and the next tap on Wolkara is a fresh launch.
+the game`) and the next tap on WolkaraForever is a fresh launch.
 
 The gamepad button enables automatic touch controls when no physical controller
 is connected, or turns them off. The custom layout provides two sticks, D-pad,
@@ -176,7 +176,7 @@ same at guest start, for a device check of the keyboard and its microphone.
 Apple's dictation is reached through the iOS keyboard's own microphone. A hardware
 keyboard attached to the iPad makes iPadOS hide those keys, and the microphone with
 them - the touch row above them is ours and stays. Rather than leave a keyboard
-that cannot dictate, Wolkara says so in the draft's label and in
+that cannot dictate, WolkaraForever says so in the draft's label and in
 `native-guest.log` (`hardware keyboard attached`, `software keyboard keys are not
 on screen (height 0 ...)`): pressing the keyboard key (**⌘K**, or the keyboard key
 on our own row) brings the keys and the microphone back. With no hardware keyboard
@@ -236,8 +236,8 @@ Validation for this follow-up on Xcode 27.0 / iOS 27.0:
 
   **Read the paths in these records as of the day they were written.** Everything
   below names `tools/…` because that is where the scripts lived before the layer
-  split: the layer's scripts are at `wolkara/tools/` now, and the platform's own
-  are at `build/platform/tools/` after `wolkara/tools/prepare.sh`. The results are
+  split: the layer's scripts are at `wolkaraforever/tools/` now, and the platform's own
+  are at `build/platform/tools/` after `wolkaraforever/tools/prepare.sh`. The results are
   left as they were recorded rather than rewritten to match today's paths.
 
   **On the signing test:** this record says it passed here and
@@ -245,7 +245,7 @@ Validation for this follow-up on Xcode 27.0 / iOS 27.0:
   says it fails again. Both were written honestly on the day, and what holds now
   is the later one - it fails, identically, in a checkout of the platform with no
   layer applied, and it is listed with that evidence in
-  `wolkara/tools/known_platform_failures.txt`. `wolkara/tools/validate.sh` reports
+  `wolkaraforever/tools/known_platform_failures.txt`. `wolkaraforever/tools/validate.sh` reports
   the suite as PASS with one known platform failure and prints the entry, so the
   fact stays visible instead of depending on which record you happen to read.
 - Signed arm64 `iphoneos` Debug build and strict code-signature verification:
@@ -258,7 +258,7 @@ Validation for this follow-up on Xcode 27.0 / iOS 27.0:
   build metadata and original game executable hashes. Device typing/dictation
   validation is pending.
 
-For manual comparison, `wolkara/tools/test_touch_controls_ui.sh
+For manual comparison, `wolkaraforever/tools/test_touch_controls_ui.sh
 --native-keyboard-reference` opens an ordinary UIKit text view in the synthetic
 fixture, without the keyboard adapter.
 
@@ -381,7 +381,7 @@ previously reproduced on unchanged upstream `199da9e`; the full suite is not
 green. The commands after that failure were run separately and passed.
 
 To inspect or interact with the original fixture, run
-`bash wolkara/tools/test_touch_controls_ui.sh` (set `SIMULATOR` to choose a device).
+`bash wolkaraforever/tools/test_touch_controls_ui.sh` (set `SIMULATOR` to choose a device).
 It builds and launches only the test screen, never an imported application.
 `--show-keyboard` opens its keyboard for visual inspection; `--self-test`
 exits after the assertions. Synthetic tests are also registered in the

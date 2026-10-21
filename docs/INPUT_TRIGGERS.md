@@ -47,9 +47,9 @@ A controller button hidden entirely by iPadOS cannot be mapped through a screens
 
 ## Verification
 
-`wolkara/tools/test_voice.sh` tests mapping, persistence, invalid/retired patterns,
+`wolkaraforever/tools/test_voice.sh` tests mapping, persistence, invalid/retired patterns,
 repeat suppression, both modes, cancellation, system-signal isolation and voice state.
-`wolkara/tools/test_touch_controls_ui.sh --self-test` tests the adapter's keyboard
+`wolkaraforever/tools/test_touch_controls_ui.sh --self-test` tests the adapter's keyboard
 swallowing and forwarding. These synthetic fixtures do not prove physical controller
 button delivery; that requires a real press on the final installed build.
 

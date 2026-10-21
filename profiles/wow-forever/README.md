@@ -37,7 +37,7 @@ credentials or add-ons. Pass `--source` if the game is installed elsewhere, and
 
 ## Copy add-ons from the Mac
 
-Close Wolkara before copying add-ons. This merges the Mac's existing Forever
+Close WolkaraForever before copying add-ons. This merges the Mac's existing Forever
 add-ons into the iPad installation without deleting iPad files, settings or
 other add-ons:
 
