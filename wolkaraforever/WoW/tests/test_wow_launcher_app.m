@@ -8,6 +8,7 @@
 #import "../launcher/WoW/AddonCredentialStore.h"
 #import <Security/Security.h>
 #import "../launcher/WoW/Client.h"
+#import "../launcher/WoW/ForeverUI.h"
 #import "../launcher/WoW/Updater.h"
 #import "../launcher/App/LaunchProgressView.h"
 #import "../launcher/App/WolkaraForeverLog.h"
@@ -23,6 +24,10 @@
 - (void)manageAddons;
 - (void)manageVoice;
 - (void)testVoice;
+- (void)performGraphicsReset:(NSString *)directory;
+- (void)render;
+- (BOOL)foreverActionAllowed;
+- (NSString *)foreverWorkingDirectory;
 @end
 @interface TKWoWAddonManagerViewController (Fixture)
 - (void)done;
@@ -79,9 +84,6 @@ static UIView *Find(UIView *view, NSString *identifier) {
 
 @implementation TKAddonArchive
 + (BOOL)extractArchiveAtURL:(NSURL *)url toDirectoryURL:(NSURL *)destination error:(NSError **)error {
-    // The archive is a real file - the store reads and hashes it before asking us to extract
-    // it - and what it would extract to is a sibling directory named after it. The boundary
-    // between "the store" and "the unzipper" is exactly where this test stops looking.
     NSString *source = [url.path stringByAppendingString:@".extracted"];
     NSFileManager *files = NSFileManager.defaultManager;
     if (![files fileExistsAtPath:source]) {
@@ -97,6 +99,54 @@ static UIView *Find(UIView *view, NSString *identifier) {
                             toPath:[destination.path stringByAppendingPathComponent:name]
                              error:error]) return NO;
     }
+    return YES;
+}
+@end
+
+// The production backup component is Swift (ForeverUIArchive.swift) and is
+// compiled into the app, not into this Objective-C fixture. The controller
+// reaches it by name, so the fixture supplies a stand-in with the same
+// selectors: the UI, the confirmation flow, the guard rails and the config
+// writes are exercised here, and the real ZIP writer/restorer has its own
+// targeted Swift test (tests/test_forever_ui_archive.swift).
+static int stubBackups, stubRestores;
+static NSString *stubNewest;
+static NSString *stubLastRestored;
+static NSMutableArray<NSString *> *stubNames;
+@interface TKForeverUIArchive : NSObject
+@end
+@implementation TKForeverUIArchive
++ (NSString *)createBackupInWorkingDirectory:(NSString *)directory edition:(NSString *)edition error:(NSError **)error {
+    (void)edition; (void)error;
+    NSString *backups = [directory stringByAppendingPathComponent:@"WTF/Backups"];
+    [NSFileManager.defaultManager createDirectoryAtPath:backups withIntermediateDirectories:YES attributes:nil error:NULL];
+    stubBackups++;
+    NSString *name = [NSString stringWithFormat:@"WoW-UI-2026-10-21T00-00-%02dZ.zip", stubBackups];
+    assert([[@"stub snapshot" dataUsingEncoding:NSUTF8StringEncoding]
+        writeToFile:[backups stringByAppendingPathComponent:name] atomically:YES]);
+    stubNewest = name;
+    if (!stubNames) stubNames = [NSMutableArray new];
+    [stubNames addObject:name];
+    return name;
+}
++ (NSString *)newestBackupInWorkingDirectory:(NSString *)directory error:(NSError **)error {
+    (void)directory;
+    if (!stubNewest) {
+        if (error) *error = [NSError errorWithDomain:@"test" code:1
+            userInfo:@{NSLocalizedDescriptionKey: @"No complete backup was found. Run Backup first."}];
+        return nil;
+    }
+    return stubNewest;
+}
++ (BOOL)restoreBackupNamed:(NSString *)name inWorkingDirectory:(NSString *)directory edition:(NSString *)edition error:(NSError **)error {
+    (void)directory; (void)edition; (void)error;
+    assert([stubNames containsObject:name]);
+    stubLastRestored = name;
+    stubRestores++;
+    return YES;
+}
++ (BOOL)recoverInterruptedRestoreInWorkingDirectory:(NSString *)directory error:(NSError **)error {
+    (void)directory; (void)error;
     return YES;
 }
 @end
@@ -255,6 +305,7 @@ static void TestAddons(void) {
 @property(nonatomic) UIViewController *probeHost;
 @property(nonatomic) TKWoWAddonManagerViewController *probeManager;
 @property(nonatomic) NSUInteger launches, setups;
+- (UIButton *)row:(NSString *)identifier;
 @end
 @implementation TKWoWFixtureDelegate
 - (UIButton *)primary { return (id)Find(self.controller.view,@"wow.primary"); }
@@ -534,12 +585,245 @@ static void TestAddons(void) {
     NSString *documents=NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject;
     assert([UIImagePNGRepresentation(image) writeToFile:[documents stringByAppendingPathComponent:name] atomically:YES]);
 }
+#pragma mark - The home page's contract, and the Forever UI rows
+
+- (UIButton *)row:(NSString *)identifier { return (id)Find(self.controller.view, identifier); }
+- (void)dismissPresented {
+    UIViewController *presented = self.controller.presentedViewController;
+    if (presented) [self.controller dismissViewControllerAnimated:NO completion:nil];
+}
+- (NSString *)configText {
+    return [NSString stringWithContentsOfFile:[fixture.directory stringByAppendingPathComponent:@"WTF/Config.wtf"]
+                                     encoding:NSUTF8StringEncoding error:NULL];
+}
+- (NSUInteger)gamepadAssignments:(NSString *)text enabled:(BOOL *)enabled {
+    NSUInteger count = 0; BOOL on = NO;
+    for (NSString *line in [text componentsSeparatedByString:@"\n"]) {
+        NSString *trimmed = [line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+        if (![trimmed.uppercaseString hasPrefix:@"SET GAMEPADENABLE"]) continue;
+        count++; on = [trimmed containsString:@"\"1\""];
+    }
+    if (enabled) *enabled = on;
+    return count;
+}
+- (void)startPerformanceTests {
+    // A synthetic Forever installation with a configuration that has every
+    // category the reset must keep, and duplicate GamePadEnable assignments for
+    // the gamepad row to normalise.
+    NSString *wtf = [fixture.directory stringByAppendingPathComponent:@"WTF"];
+    WriteFile([wtf stringByAppendingPathComponent:@"Config.wtf"],
+        @"SET portal \"eu\"\n"
+         "SET textLocale \"enUS\"\n"
+         "SET audioLocale \"enUS\"\n"
+         "SET accountName \"TESTACCOUNT\"\n"
+         "SET gxResolution \"1920x1080\"\n"
+         "SET graphicsQuality \"7\"\n"
+         "SET Sound_OutputDriverIndex \"0\"\n"
+         "SET GamePadEnable \"0\"\n"
+         "SET GamePadEnable \"0\"\n"
+         "SET GamePadConfig \"Addons\"\n"
+         "SET uiScale \"1\"\n"
+         "SET unknownSetting \"keep\"\n"
+         "SET cameraDistance \"1.5\"\n");
+    WriteFile([fixture.directory stringByAppendingPathComponent:@"Interface/AddOns/Fixture/Fixture.toc"],
+              @"## Title: Fixture\n## Version: 1\n");
+
+    // The touch layout store, seeded so the overlay row's read-modify-write can
+    // be proven to keep every other value.
+    [NSUserDefaults.standardUserDefaults setObject:@{@"opacity":@0.4, @"rearScale":@1.2,
+        @"frontScale":@1.1, @"hapticsEnabled":@NO,
+        @"positions":@{@"menu":@[@0.1, @0.2]}} forKey:@"WolkaraForeverTouchLayoutV1"];
+
+    [self.controller render];
+    [self.window layoutIfNeeded];
+
+    // --- headings, in the order the page is read
+    NSArray *headings = @[@[@"wow.heading.edition", @"GAME EDITION"],
+                          @[@"wow.heading.addons", @"ADD-ON MANAGER"],
+                          @[@"wow.heading.voice", @"VOICE MANAGER"],
+                          @[@"wow.heading.performance", @"PERFORMANCE & UI MANAGER"]];
+    for (NSArray *pair in headings) {
+        UILabel *label = (id)Find(self.controller.view, pair[0]);
+        assert(label != nil && [label.text isEqual:pair[1]]);
+    }
+    // --- the left column's exact order
+    UIStackView *columns = (id)[self.controller valueForKey:@"_columns"];
+    assert(columns != nil);
+    UIStackView *left = columns.arrangedSubviews.firstObject;
+    NSMutableArray *order = [NSMutableArray new];
+    for (UIView *view in left.arrangedSubviews) [order addObject:view.accessibilityIdentifier ?: @""];
+    NSString *mark = Find(self.controller.view, @"wow.logo") ? @"wow.logo" : @"wow.title";
+    NSArray *expectedOrder = @[mark,
+        @"wow.heading.edition", @"wow.edition", @"wow.preferences",
+        @"wow.heading.addons", @"wow.addons.manage", @"wow.addons.macEver", @"wow.addons.directory",
+        @"wow.heading.voice", @"wow.permissions", @"wow.voice", @"wow.voice.test",
+        @"",
+        @"wow.heading.performance", @"wow.performance.backup", @"wow.performance.reset",
+        @"wow.performance.restore", @"wow.performance.gamepad", @"wow.performance.overlay",
+        @"wow.performance.settingsFolder"];
+    assert([order isEqualToArray:expectedOrder]);
+    // --- labels, exactly
+    assert([[(UIButton *)Find(self.controller.view, @"wow.addons.manage") configuration].title isEqual:@"Install Addons (Curse & Direct)"]);
+    assert([[(UIButton *)Find(self.controller.view, @"wow.addons.directory") configuration].title isEqual:@"Open Add-on Directory"]);
+    assert([[(UIButton *)Find(self.controller.view, @"wow.addons.macEver") configuration].title isEqual:@"Download Mac-Ever"]);
+    assert([[(UIButton *)Find(self.controller.view, @"wow.permissions") configuration].title isEqual:@"Toggle Permissions (Mic & Speech)"]);
+    assert([[(UIButton *)Find(self.controller.view, @"wow.voice") configuration].title isEqual:@"Key / Button Configuration"]);
+    assert([[(UIButton *)Find(self.controller.view, @"wow.voice.test") configuration].title isEqual:@"Test Voice & Dictation"]);
+    assert([[(UIButton *)Find(self.controller.view, @"wow.performance.backup") configuration].title isEqual:@"Backup WoW UI Configuration"]);
+    assert([[(UIButton *)Find(self.controller.view, @"wow.performance.reset") configuration].title isEqual:@"Reset to Default Graphical Settings"]);
+    assert([[(UIButton *)Find(self.controller.view, @"wow.performance.restore") configuration].title isEqual:@"Restore WoW UI Configuration"]);
+    assert([[(UIButton *)Find(self.controller.view, @"wow.performance.gamepad") configuration].title isEqual:@"Enable Gamepad UI"]);
+    assert([[(UIButton *)Find(self.controller.view, @"wow.performance.overlay") configuration].title isEqual:@"Enable Performance Overlay"]);
+    assert([[(UIButton *)Find(self.controller.view, @"wow.performance.settingsFolder") configuration].title isEqual:@"Open Settings Folder"]);
+    // --- enabled state on a ready, idle installation
+    for (NSString *identifier in @[@"wow.performance.backup", @"wow.performance.reset",
+                                   @"wow.performance.restore", @"wow.performance.gamepad",
+                                   @"wow.performance.settingsFolder", @"wow.performance.overlay",
+                                   @"wow.addons.manage", @"wow.voice", @"wow.voice.test",
+                                   @"wow.permissions", @"wow.addons.macEver"])
+        assert([self row:identifier].enabled);
+
+    // --- Download Mac-Ever asks for exactly the CurseForge project page, and no browser opens
+    __block NSURL *requested = nil;
+    self.controller.openExternalURL = ^(NSURL *url) { requested = url; };
+    [self row:@"wow.addons.macEver"].enabled = YES;
+    [[self row:@"wow.addons.macEver"] sendActionsForControlEvents:UIControlEventTouchUpInside];
+    assert([requested.absoluteString isEqual:@"https://www.curseforge.com/wow/addons/mac-ever"]);
+    self.controller.openExternalURL = nil;
+
+    // --- the overlay row writes the shared store, keeping the layout's own values
+    [[self row:@"wow.performance.overlay"] sendActionsForControlEvents:UIControlEventTouchUpInside];
+    NSDictionary *layout = [NSUserDefaults.standardUserDefaults objectForKey:@"WolkaraForeverTouchLayoutV1"];
+    assert([layout[@"performanceOverlayEnabled"] boolValue]);
+    assert([layout[@"opacity"] doubleValue] == 0.4 && [layout[@"rearScale"] doubleValue] == 1.2);
+    NSArray *menuPoint = layout[@"positions"][@"menu"];
+    assert(fabs([menuPoint[1] doubleValue] - 0.2) < 0.001);
+    assert([[(UIButton *)Find(self.controller.view, @"wow.performance.overlay") configuration].title isEqual:@"Performance Overlay Enabled"]);
+    [[self row:@"wow.performance.overlay"] sendActionsForControlEvents:UIControlEventTouchUpInside];
+    assert(![[NSUserDefaults.standardUserDefaults objectForKey:@"WolkaraForeverTouchLayoutV1"][@"performanceOverlayEnabled"] boolValue]);
+    assert([[(UIButton *)Find(self.controller.view, @"wow.performance.overlay") configuration].title isEqual:@"Enable Performance Overlay"]);
+    [[self row:@"wow.performance.overlay"] sendActionsForControlEvents:UIControlEventTouchUpInside];
+
+    // --- Open Settings Folder opens Forever's WTF folder and changes nothing
+    __block NSURL *folder = nil;
+    self.controller.openSettingsFolderURL = ^(NSURL *url) { folder = url; };
+    [[self row:@"wow.performance.settingsFolder"] sendActionsForControlEvents:UIControlEventTouchUpInside];
+    assert(folder != nil && [folder.lastPathComponent isEqual:@"WTF"]);
+    assert([folder.path hasPrefix:fixture.directory]);
+    self.controller.openSettingsFolderURL = nil;
+    [self performSelector:@selector(checkFolderPicker) withObject:nil afterDelay:0.4];
+}
+- (void)checkFolderPicker {
+    // --- nothing backed up yet: Restore says so instead of claiming success
+    [[self row:@"wow.performance.restore"] sendActionsForControlEvents:UIControlEventTouchUpInside];
+    [self performSelector:@selector(checkNoBackupYet) withObject:nil afterDelay:0.5];
+}
+- (void)checkNoBackupYet {
+    UIAlertController *alert = (id)self.controller.presentedViewController;
+    assert([alert isKindOfClass:UIAlertController.class]);
+    assert([alert.title isEqual:@"No backup to restore"]);
+    assert([alert.message containsString:@"Backup"]);
+    [self dismissPresented];
+    assert(stubBackups == 0 && stubRestores == 0);
+    [[self row:@"wow.performance.backup"] sendActionsForControlEvents:UIControlEventTouchUpInside];
+    [self performSelector:@selector(checkBackup) withObject:nil afterDelay:0.5];
+}
+static NSString *configBeforeReset;
+- (void)checkBackup {
+    UIAlertController *alert = (id)self.controller.presentedViewController;
+    assert([alert isKindOfClass:UIAlertController.class]);
+    assert([alert.title isEqual:@"Backup complete"]);
+    assert([alert.message containsString:@"WTF/Backups"]);
+    assert(stubBackups == 1);
+    assert([NSFileManager.defaultManager fileExistsAtPath:
+        [fixture.directory stringByAppendingPathComponent:[@"WTF/Backups" stringByAppendingPathComponent:stubNewest]]]);
+    [self dismissPresented];
+    configBeforeReset = [self configText];
+    // --- the destructive row is confirmed first, and cancelling changes nothing
+    [self performSelector:@selector(tapReset) withObject:nil afterDelay:0.4];
+}
+- (void)tapReset {
+    [[self row:@"wow.performance.reset"] sendActionsForControlEvents:UIControlEventTouchUpInside];
+    [self performSelector:@selector(checkResetConfirmation) withObject:nil afterDelay:0.5];
+}
+- (void)checkResetConfirmation {
+    UIAlertController *alert = (id)self.controller.presentedViewController;
+    assert([alert isKindOfClass:UIAlertController.class]);
+    assert([alert.title isEqual:@"Reset to default graphics settings?"]);
+    assert([alert.message containsString:@"backup"]);
+    [self dismissPresented];
+    assert([[self configText] isEqual:configBeforeReset]);
+    [self performSelector:@selector(performConfirmedReset) withObject:nil afterDelay:0.4];
+}
+- (void)performConfirmedReset {
+    // The same path the confirmed action takes; the sheet above is the gate.
+    [self.controller performGraphicsReset:fixture.directory];
+    [self performSelector:@selector(checkReset) withObject:nil afterDelay:0.6];
+}
+- (void)checkReset {
+    UIAlertController *alert = (id)self.controller.presentedViewController;
+    assert([alert isKindOfClass:UIAlertController.class]);
+    assert([alert.title isEqual:@"Graphics reset"]);
+    assert([alert.message containsString:@"when Forever next launches"]);
+    assert(stubBackups == 2);   // the reset made its own rollback point
+    [self dismissPresented];
+    NSString *config = [self configText];
+    assert(![config containsString:@"SET gxResolution"]);
+    assert(![config containsString:@"SET graphicsQuality"]);
+    for (NSString *kept in @[@"SET portal \"eu\"", @"SET textLocale \"enUS\"", @"SET audioLocale \"enUS\"",
+                             @"SET accountName \"TESTACCOUNT\"", @"SET Sound_OutputDriverIndex \"0\"",
+                             @"SET GamePadEnable", @"SET GamePadConfig \"Addons\"", @"SET uiScale \"1\"",
+                             @"SET unknownSetting \"keep\"", @"SET cameraDistance \"1.5\""])
+        assert([config containsString:kept]);
+    [self performSelector:@selector(tapGamepad) withObject:nil afterDelay:0.4];
+}
+- (void)tapGamepad {
+    [[self row:@"wow.performance.gamepad"] sendActionsForControlEvents:UIControlEventTouchUpInside];
+    [self performSelector:@selector(checkGamepad) withObject:nil afterDelay:0.5];
+}
+- (void)checkGamepad {
+    UIAlertController *alert = (id)self.controller.presentedViewController;
+    assert([alert isKindOfClass:UIAlertController.class]);
+    assert([alert.title isEqual:@"Gamepad UI enabled"]);
+    [self dismissPresented];
+    NSString *config = [self configText];
+    BOOL enabled = NO;
+    assert([self gamepadAssignments:config enabled:&enabled] == 1 && enabled);
+    assert([config containsString:@"SET accountName \"TESTACCOUNT\""]);
+    assert([[(UIButton *)Find(self.controller.view, @"wow.performance.gamepad") configuration].title isEqual:@"Gamepad UI Enabled"]);
+    [self performSelector:@selector(tapRestore) withObject:nil afterDelay:0.4];
+}
+- (void)tapRestore {
+    [[self row:@"wow.performance.restore"] sendActionsForControlEvents:UIControlEventTouchUpInside];
+    [self performSelector:@selector(checkRestore) withObject:nil afterDelay:0.6];
+}
+- (void)checkRestore {
+    UIAlertController *alert = (id)self.controller.presentedViewController;
+    assert([alert isKindOfClass:UIAlertController.class]);
+    assert([alert.title isEqual:@"Restore complete"]);
+    assert([alert.message containsString:stubLastRestored]);
+    assert(stubRestores == 1);
+    assert(stubBackups == 3);   // restore snapshotted the current state first
+    [self dismissPresented];
+    puts("WoW UIKit PASS: automatic check/update, offline retry, edition race, background cancellation, verified launch, inline preparation/failure/session end, no duplicate launches and bundled licenses; home page headings, rows, order, identifiers, labels, enabled states and Mac-Ever URL; backup, confirmed reset, gamepad config, folder picker and restore flow.");
+    fflush(stdout);
+    if (![NSProcessInfo.processInfo.arguments containsObject:@"--preview"]) exit(0);
+    // Leave a ready home for visual inspection; no real download or guest runs.
+    [self.controller refresh];
+}
+
 - (void)checkLaunch {
     assert(self.launches==1); self.controller.sessionUsed=YES;
     [self.controller beginStartup];
     self.controller.startupStatusLabel.text=@"Preparing to run. This can take a few minutes. Keep this app open.";
     assert(![self primary].enabled && !self.controller.launchProgress.hidden);
     assert([[self status] isEqual:@"Starting…"]);
+    // The Forever file rows are disabled while a start is in progress; every
+    // handler rechecks the same guard.
+    for (NSString *identifier in @[@"wow.performance.backup", @"wow.performance.reset",
+                                   @"wow.performance.restore", @"wow.performance.gamepad",
+                                   @"wow.performance.settingsFolder", @"wow.performance.overlay"])
+        assert(![self row:identifier].enabled);
     assert(self.controller.navigationController.viewControllers.count==1);
     unsigned before=atomic_load(&requests);
     [self.controller refresh]; [self tap];
@@ -572,10 +856,8 @@ static void TestAddons(void) {
     // this went unnoticed in the first place.
     assert(![credits.text containsString:@"missing from this build"]);
     [self.controller.navigationController popToRootViewControllerAnimated:NO];
-    puts("WoW UIKit PASS: automatic check/update, offline retry, edition race, background cancellation, verified launch, inline preparation/failure/session end, no duplicate launches and bundled licenses."); fflush(stdout);
-    if (![NSProcessInfo.processInfo.arguments containsObject:@"--preview"]) exit(0);
-    // Leave a ready home for visual inspection; no real download or guest runs.
-    [self.controller refresh];
+    // Finally the home page's own contract, on a ready installation.
+    [self performSelector:@selector(startPerformanceTests) withObject:nil afterDelay:0.3];
 }
 
 @end

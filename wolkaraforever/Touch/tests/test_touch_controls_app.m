@@ -1,7 +1,9 @@
 // Original UIKit/AppKit fixture for manual touch/keyboard testing. No guest.
 #import "AppKit.h"
+#import "AKPerformanceOverlay.h"
 #import "TouchControls.h"
 #import "TouchGamepad.h"
+#import "TouchGamepadLayout.h"
 #include <assert.h>
 
 @interface AKInputFixtureView : NSView
@@ -469,6 +471,33 @@ static void AKFixtureInputSource(void *context) {
                 assert(CGRectEqualToRect(toolbarFrame, controls.frame));
                 [controls setGamepadVisible:NO]; [host layoutIfNeeded];
                 assert(CGRectEqualToRect(toolbarFrame, controls.frame));
+
+                // --- the optional performance HUD -----------------------------------
+                AKPerformanceOverlay *overlay = [host valueForKey:@"_performanceOverlay"];
+                AKGamepadLayout *prefs = [[AKGamepadLayout alloc] initWithDefaults:NSUserDefaults.standardUserDefaults];
+                assert(overlay != nil);
+                assert(overlay.hidden == !prefs.performanceOverlayEnabled);
+                assert(overlay.isAccessibilityElement);
+                [overlay updateMetrics];
+                assert(overlay.accessibilityValue.length > 0);
+                // No timer and no display link while it is hidden, even in a window.
+                assert([overlay valueForKey:@"_pollTimer"] == nil);
+                assert([overlay valueForKey:@"_displayLink"] == nil);
+                [overlay setExpanded:YES];
+                assert(overlay.isExpanded);
+                [overlay setExpanded:NO];
+                assert(!overlay.isExpanded);
+                overlay.hidden = NO; [host layoutIfNeeded];
+                assert([overlay valueForKey:@"_pollTimer"] != nil);
+                assert([overlay valueForKey:@"_displayLink"] != nil);
+                // A position pushed off screen comes back into the safe area on layout.
+                overlay.center = CGPointMake(-500, -500);
+                [overlay setNeedsLayout]; [overlay layoutIfNeeded];
+                CGRect safe = UIEdgeInsetsInsetRect(host.bounds, host.safeAreaInsets);
+                assert(CGRectContainsPoint(safe, overlay.center));
+                overlay.hidden = YES;
+                assert([overlay valueForKey:@"_pollTimer"] == nil);
+                assert([overlay valueForKey:@"_displayLink"] == nil);
 
                 // --- a key the user took for dictation must not reach the game -------
                 //

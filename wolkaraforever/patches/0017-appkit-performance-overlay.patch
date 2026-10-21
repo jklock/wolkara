@@ -1,0 +1,63 @@
+# WolkaraForever layer patch 0017 - AppKit: the optional performance HUD
+#
+# Why: the contribution (performance-overlay PR #2) created the HUD but left it
+# unowned: nothing instantiated it, and the preference it reads had no writer in
+# the launcher. This attaches one HUD to the host view, below the cursor and the
+# keyboard toolbar, and keeps it in step with the layout store - the same store
+# the in-game settings switch and the launcher's Performance & UI row write.
+#
+# It is attached to the host view rather than to the touch controls, because the
+# HUD is a display preference and has to work on a device where the on-screen
+# controls are off. Off by default: the store's performanceOverlayEnabled starts
+# NO and only a user action turns it on.
+#
+# Applies to: translation/AppKit/AppKit.m
+# Upstream: candidate (not submitted) - the host-view hook is the part upstream
+# might want, with the HUD itself living in the layer.
+#
+--- a/translation/AppKit/AppKit.m	2026-10-21 16:25:07
++++ b/translation/AppKit/AppKit.m	2026-10-21 16:25:07
+@@ -3,6 +3,8 @@
+ #import "Images.h"
+ #import "TextInput.h"
+ #import "TouchControls.h"
++#import "TouchGamepadLayout.h"
++#import "AKPerformanceOverlay.h"
+ #import <GameController/GameController.h>
+ #import <objc/message.h>
+ #import <objc/runtime.h>
+@@ -281,6 +283,7 @@
+ 
+ @implementation AKHostView { CGPoint _last; NSEventModifierFlags _mods; BOOL _pressedRight, _pressedLeft, _pointerInside, _softwareCursor; UIImageView *_cursorView; UIPointerInteraction *_pointer; UIPointerStyle *_gamePointerStyle; unsigned _hoverUpdates, _pointerUpdates, _cursorVisibilityReasons; NSTimeInterval _pointerReportTime; CGPoint _cursorHotSpot; unsigned short _swallowedKey;
+     AKTouchControls *_touchControls;
++    AKPerformanceOverlay *_performanceOverlay;
+     BOOL _touchCursorActive, _touchCursorInitialized, _pressedMiddle;
+     NSTimeInterval _lastTouchClickTime;
+     CGPoint _lastTouchClickPoint;
+@@ -311,9 +314,26 @@
+         // Optional on-screen keyboard and trackpad: on by default on iPhone,
+         // off on iPad, where they would cover part of the game.
+         if (AKTouchControls.enabled) [self installTouchControls];
++        // The optional performance HUD. It is attached here rather than to the
++        // touch controls, so it also works on a device where those are off, and
++        // the layout store decides whether it is shown. Off by default.
++        _performanceOverlay = [[AKPerformanceOverlay alloc] initWithFrame:CGRectZero];
++        _performanceOverlay.layer.zPosition = 90000;
++        AKGamepadLayout *layout = [[AKGamepadLayout alloc] initWithDefaults:NSUserDefaults.standardUserDefaults];
++        _performanceOverlay.hidden = !layout.performanceOverlayEnabled;
++        [self addSubview:_performanceOverlay];
++        [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(performanceOverlayLayoutChanged:)
++            name:AKGamepadLayoutDidChangeNotification object:nil];
+     }
+     return self;
+ }
++- (void)performanceOverlayLayoutChanged:(NSNotification *)note {
++    (void)note;
++    // Re-read the store rather than trust the notification's object: the
++    // launcher writes the same preference without owning an AKGamepadLayout.
++    AKGamepadLayout *layout = [[AKGamepadLayout alloc] initWithDefaults:NSUserDefaults.standardUserDefaults];
++    _performanceOverlay.hidden = !layout.performanceOverlayEnabled;
++}
+ - (void)installTouchControls {
+     _touchControls = [[AKTouchControls alloc] initWithFrame:CGRectZero];
+     _touchControls.delegate = self;
