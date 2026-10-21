@@ -3,10 +3,12 @@
 // Posted when the guest asks for the draft keyboard - the AppKit adapter's
 // dictation trigger, a key combination the game itself never sees.
 extern NSNotificationName const AKTouchKeyboardRequestNotification;
-// Posted with the game's own text view as the object, when it is created. Shell/main.m
-// observes it and hands the view to dictation, which types into that view and nowhere
-// else. Kept as a notification because this module and the voice module cannot include
-// each other without spelling out the prepared tree's layout.
+// Posted with the controls as the object, when they are created. They are the layer's
+// UIKeyInput, so they are what reaches the guest; Shell/main.m observes it and hands the
+// view to dictation, which types into that view and nowhere else. The draft editor is not
+// announced: it is ours, and it cannot reach the game. Kept as a notification because
+// this module and the voice module cannot include each other without spelling out the
+// prepared tree's layout.
 extern NSNotificationName const AKTouchGameTextInputDidAppearNotification;
 // Whether the controls are wanted at all. The platform's install path asks this
 // before adding them, and the launcher's On-Screen Controls switch stores its
@@ -64,4 +66,9 @@ extern NSString *const AKTouchOwnedKeyUsagesKey;                             // 
 - (void)cancelTouches;
 - (void)toggleKeyboard;
 - (void)dismissKeyboard;
+// What dictation sends the object it was told is the game's text input. Declared here
+// because the announcement above promises them: both go straight to the delegate, which
+// is what turns words into the guest's key events.
+- (void)touchInsertText:(NSString *)text;
+- (void)touchSpecialKey:(unsigned short)code characters:(NSString *)characters;
 @end
