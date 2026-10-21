@@ -34,6 +34,11 @@ static BOOL AKTouchUsageIsTaken(unsigned short usage) {
 NSNotificationName const AKTouchGameTextInputDidAppearNotification = @"AKTouchGameTextInputDidAppear";
 
 NSNotificationName const AKTouchKeyboardRequestNotification = @"AKTouchKeyboardRequestNotification";
+// Posted when the user has asked to leave twice and the guest still refused to quit: the shell,
+// which owns the session and what it has to flush, closes Wolkara. Named as a string on the
+// shell's side for the same reason as the two notifications above - the adapter is a dylib the
+// app does not link.
+NSNotificationName const AKTouchCloseAppNotification = @"AKTouchCloseAppNotification";
 // The keys the launcher's and the platform's switches read. The trackpad string
 // is the one the platform already stored, so an existing choice carries over.
 NSString *const AKTouchControlsDefaultsKey = @"AKTouchControls";
@@ -472,14 +477,43 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
 - (void)leaveGame {
     [self cancelTouches]; [self dismissKeyboard];
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Leave the game?"
-        message:@"The game is asked to close and save its settings. Wolkara ends with it; open Wolkara again to start the game."
+        message:@"The game is asked to close and save its settings. If it will not close, you can still close Wolkara."
         preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"Keep playing" style:UIAlertActionStyleCancel handler:nil]];
+    __weak AKTouchControls *weakSelf = self;
     [alert addAction:[UIAlertAction actionWithTitle:@"Leave game" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
         (void)action;
         AKLog(@"leave game: asking the guest to terminate");
-        if (NSApp) [NSApp terminate:nil];
-        else AKLog(@"leave game: the guest has no application object; nothing sent");
+        if (!NSApp) {
+            AKLog(@"leave game: the guest has no application object; offering to close Wolkara");
+            [weakSelf offerToCloseWolkara];
+            return;
+        }
+        [NSApp terminate:nil];
+        // A guest is allowed to refuse. `applicationShouldTerminate:` answered NSTerminateCancel
+        // when this control was first tried on Dadpad (2026-10-21), so the tap did nothing and
+        // the user was still inside the game - the exact dead end this control exists to remove.
+        // If this process is still here a moment later, say so and offer the only exit left.
+        // When the guest does quit, its own termination path ends the process and this never runs.
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            AKLog(@"leave game: the guest is still running after the request to terminate");
+            [weakSelf offerToCloseWolkara];
+        });
+    }]];
+    [self.window.rootViewController presentViewController:alert animated:YES completion:nil];
+}
+// The second question, and the last way out: the guest would not close, so Wolkara is closed
+// instead. The shell does it, because the session and the Steam Cloud flush belong to it; this
+// only asks. Nothing in the guest's memory is touched and no state is saved on its behalf.
+- (void)offerToCloseWolkara {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"The game did not close"
+        message:@"It refused to quit, so it may be busy. Closing Wolkara now loses anything the game has not saved."
+        preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Keep playing" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Close Wolkara" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
+        (void)action;
+        AKLog(@"leave game: the user chose to close Wolkara after the guest refused to quit");
+        [NSNotificationCenter.defaultCenter postNotificationName:AKTouchCloseAppNotification object:nil];
     }]];
     [self.window.rootViewController presentViewController:alert animated:YES completion:nil];
 }

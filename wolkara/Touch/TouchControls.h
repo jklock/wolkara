@@ -1,5 +1,10 @@
 #import <UIKit/UIKit.h>
 
+// Posted when the user has chosen to leave, the guest refused to quit, and they chose to
+// close Wolkara anyway. Shell/main.m observes it, flushes what the session owns and ends the
+// process. By name on the shell's side, because this module is built into a dylib the shell
+// does not link against.
+extern NSNotificationName const AKTouchCloseAppNotification;  // "AKTouchCloseAppNotification"
 // Posted when the guest asks for the draft keyboard - the AppKit adapter's
 // dictation trigger, a key combination the game itself never sees.
 extern NSNotificationName const AKTouchKeyboardRequestNotification;
