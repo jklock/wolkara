@@ -332,9 +332,9 @@ signatures verify for both. The only warning is unused AppIntents metadata.
 The signed app still excludes the original guest executable. Neither build was
 installed; the physical prototype and previous simulator installation are intact.
 
-Batched preparation (September 27, iPad Pro M5, iPadOS 27): Heroes III's
-109,854,720-byte arena was prepared and detached in 33.0 s, against 104.0 s when
-every byte was written and read back one command at a time, and the game's
+Batched preparation (September 27, iPad Pro M5, iPadOS 27): a
+109,854,720-byte guest arena was prepared and detached in 33.0 s, against 104.0 s when
+every byte was written and read back one command at a time, and the guest's
 translated code ran from it. Apple's macOS debugserver prepares the 130-page
 fixture of `tools/test_native_debugserver.py` the same way.
 
