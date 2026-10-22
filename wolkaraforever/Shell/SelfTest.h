@@ -36,6 +36,10 @@ extern NSString *const AKSelfTestDictationTarget;
 /// overlay so the in-game HUD can be seen; `forever-ui-clean` turns that back off.
 extern NSString *const AKSelfTestForeverUI;
 extern NSString *const AKSelfTestForeverUIClean;
+/// The stored CurseForge key, asked one question: does the API accept it? It
+/// logs the key's length and SHA-256 prefix - never the key - and the HTTP
+/// outcome, so a rejected key can be told apart from a rejected paste.
+extern NSString *const AKSelfTestCurseForge;
 
 // Runs one self-test and logs the verdict the matrix greps:
 //   selftest: <name> PASS <passed>/<total> checks (<what was exercised>)
