@@ -7,6 +7,7 @@
 #import "../launcher/WoW/AddonStore.h"
 #import "../launcher/WoW/AddonCredentialStore.h"
 #import <Security/Security.h>
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import "../launcher/WoW/Client.h"
 #import "../launcher/WoW/ForeverUI.h"
 #import "../launcher/WoW/Updater.h"
@@ -26,6 +27,7 @@
 - (void)testVoice;
 - (void)performGraphicsReset:(NSString *)directory;
 - (void)render;
+- (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls;
 - (BOOL)foreverActionAllowed;
 - (NSString *)foreverWorkingDirectory;
 @end
@@ -292,6 +294,23 @@ static void TestAddons(void) {
         assert([credentials curseForgeKey:NULL] == nil);
         assert(keyError.code == errSecMissingEntitlement);
     }
+    // A Core API key is issued in bcrypt's textual shape ($2a$...). It is the
+    // credential, not a password hash: refusing that shape rejected a real
+    // approved key. The value here is a fixture, not a credential.
+    NSError *shapeError = nil;
+    NSString *shape = @"$2a$10$0123456789012345678901234567890123456789012345678901";
+    BOOL shapeStored = [credentials storeCurseForgeKey:shape error:&shapeError];
+    if (shapeStored) {
+        assert([[credentials curseForgeKey:NULL] isEqual:shape]);
+        assert([credentials removeCurseForgeKey:NULL]);
+    } else {
+        // The keychain is the only thing allowed to refuse it here.
+        assert(shapeError != nil && ![shapeError.domain isEqual:@"WolkaraForever.AddOns"]);
+    }
+    // An upload personal-access token is a different credential, and says so.
+    NSError *tokenError = nil;
+    assert(![credentials storeCurseForgeKey:@"cfc_pat_not-a-core-key" error:&tokenError]);
+    assert([tokenError.domain isEqual:@"WolkaraForever.AddOns"]);
 
     [files removeItemAtPath:root error:NULL];
 }
@@ -588,6 +607,9 @@ static void TestAddons(void) {
 #pragma mark - The home page's contract, and the Forever UI rows
 
 - (UIButton *)row:(NSString *)identifier { return (id)Find(self.controller.view, identifier); }
+- (UISwitch *)toggle:(NSString *)identifier {
+    return (id)Find(self.controller.view, [identifier stringByAppendingString:@".switch"]);
+}
 - (void)dismissPresented {
     UIViewController *presented = self.controller.presentedViewController;
     if (presented) [self.controller dismissViewControllerAnimated:NO completion:nil];
@@ -704,16 +726,20 @@ static void TestAddons(void) {
     assert([[(UIButton *)Find(self.controller.view, @"wow.performance.backup") configuration].title isEqual:@"Backup WoW UI Configuration"]);
     assert([[(UIButton *)Find(self.controller.view, @"wow.performance.reset") configuration].title isEqual:@"Reset to Default Graphical Settings"]);
     assert([[(UIButton *)Find(self.controller.view, @"wow.performance.restore") configuration].title isEqual:@"Restore WoW UI Configuration"]);
-    assert([[(UIButton *)Find(self.controller.view, @"wow.performance.gamepad") configuration].title isEqual:@"Enable Gamepad UI"]);
-    assert([[(UIButton *)Find(self.controller.view, @"wow.performance.overlay") configuration].title isEqual:@"Enable Performance Overlay"]);
+    // The two on/off settings are switches with fixed words: the control says the
+    // state, the label never changes.
+    assert([[(UILabel *)Find(self.controller.view, @"wow.performance.gamepad.label") text] isEqual:@"Gamepad UI"]);
+    assert([[(UILabel *)Find(self.controller.view, @"wow.performance.overlay.label") text] isEqual:@"Performance Overlay"]);
+    assert([self toggle:@"wow.performance.gamepad"] != nil && [self toggle:@"wow.performance.overlay"] != nil);
     assert([[(UIButton *)Find(self.controller.view, @"wow.performance.settingsFolder") configuration].title isEqual:@"Open Settings Folder"]);
     // --- enabled state on a ready, idle installation
     for (NSString *identifier in @[@"wow.performance.backup", @"wow.performance.reset",
-                                   @"wow.performance.restore", @"wow.performance.gamepad",
-                                   @"wow.performance.settingsFolder", @"wow.performance.overlay",
+                                   @"wow.performance.restore", @"wow.performance.settingsFolder",
                                    @"wow.addons.manage", @"wow.voice", @"wow.voice.test",
                                    @"wow.permissions", @"wow.addons.macEver"])
         assert([self row:identifier].enabled);
+    assert([self toggle:@"wow.performance.gamepad"].enabled);
+    assert([self toggle:@"wow.performance.overlay"].enabled);
 
     // --- Download Mac-Ever asks for exactly the CurseForge project page, and no browser opens
     __block NSURL *requested = nil;
@@ -723,18 +749,19 @@ static void TestAddons(void) {
     assert([requested.absoluteString isEqual:@"https://www.curseforge.com/wow/addons/mac-ever"]);
     self.controller.openExternalURL = nil;
 
-    // --- the overlay row writes the shared store, keeping the layout's own values
-    [[self row:@"wow.performance.overlay"] sendActionsForControlEvents:UIControlEventTouchUpInside];
+    // --- the overlay switch writes the shared store, keeping the layout's own values
+    UISwitch *overlay = [self toggle:@"wow.performance.overlay"];
+    overlay.on = YES; [overlay sendActionsForControlEvents:UIControlEventValueChanged];
     NSDictionary *layout = [NSUserDefaults.standardUserDefaults objectForKey:@"WolkaraForeverTouchLayoutV1"];
     assert([layout[@"performanceOverlayEnabled"] boolValue]);
     assert([layout[@"opacity"] doubleValue] == 0.4 && [layout[@"rearScale"] doubleValue] == 1.2);
     NSArray *menuPoint = layout[@"positions"][@"menu"];
     assert(fabs([menuPoint[1] doubleValue] - 0.2) < 0.001);
-    assert([[(UIButton *)Find(self.controller.view, @"wow.performance.overlay") configuration].title isEqual:@"Performance Overlay Enabled"]);
-    [[self row:@"wow.performance.overlay"] sendActionsForControlEvents:UIControlEventTouchUpInside];
+    assert(overlay.on && [[(UILabel *)Find(self.controller.view, @"wow.performance.overlay.label") text] isEqual:@"Performance Overlay"]);
+    overlay.on = NO; [overlay sendActionsForControlEvents:UIControlEventValueChanged];
     assert(![[NSUserDefaults.standardUserDefaults objectForKey:@"WolkaraForeverTouchLayoutV1"][@"performanceOverlayEnabled"] boolValue]);
-    assert([[(UIButton *)Find(self.controller.view, @"wow.performance.overlay") configuration].title isEqual:@"Enable Performance Overlay"]);
-    [[self row:@"wow.performance.overlay"] sendActionsForControlEvents:UIControlEventTouchUpInside];
+    assert(!overlay.on && [[(UILabel *)Find(self.controller.view, @"wow.performance.overlay.label") text] isEqual:@"Performance Overlay"]);
+    overlay.on = YES; [overlay sendActionsForControlEvents:UIControlEventValueChanged];
 
     // --- Open Settings Folder opens Forever's WTF folder and changes nothing
     __block NSURL *folder = nil;
@@ -810,7 +837,9 @@ static NSString *configBeforeReset;
     [self performSelector:@selector(tapGamepad) withObject:nil afterDelay:0.4];
 }
 - (void)tapGamepad {
-    [[self row:@"wow.performance.gamepad"] sendActionsForControlEvents:UIControlEventTouchUpInside];
+    UISwitch *gamepad = [self toggle:@"wow.performance.gamepad"];
+    assert(gamepad != nil);
+    gamepad.on = YES; [gamepad sendActionsForControlEvents:UIControlEventValueChanged];
     [self performSelector:@selector(checkGamepad) withObject:nil afterDelay:0.5];
 }
 - (void)checkGamepad {
@@ -822,12 +851,40 @@ static NSString *configBeforeReset;
     BOOL enabled = NO;
     assert([self gamepadAssignments:config enabled:&enabled] == 1 && enabled);
     assert([config containsString:@"SET accountName \"TESTACCOUNT\""]);
-    assert([[(UIButton *)Find(self.controller.view, @"wow.performance.gamepad") configuration].title isEqual:@"Gamepad UI Enabled"]);
+    UISwitch *gamepad = [self toggle:@"wow.performance.gamepad"];
+    assert(gamepad.on && [[(UILabel *)Find(self.controller.view, @"wow.performance.gamepad.label") text] isEqual:@"Gamepad UI"]);
+    // The same switch turns it off, and the words still do not change.
+    gamepad.on = NO; [gamepad sendActionsForControlEvents:UIControlEventValueChanged];
+    [self performSelector:@selector(checkGamepadOff) withObject:nil afterDelay:0.5];
+}
+- (void)checkGamepadOff {
+    UIAlertController *alert = (id)self.controller.presentedViewController;
+    assert([alert isKindOfClass:UIAlertController.class]);
+    assert([alert.title isEqual:@"Gamepad UI disabled"]);
+    [self dismissPresented];
+    BOOL enabled = YES;
+    assert([self gamepadAssignments:[self configText] enabled:&enabled] == 1 && !enabled);
+    assert([[(UILabel *)Find(self.controller.view, @"wow.performance.gamepad.label") text] isEqual:@"Gamepad UI"]);
     [self performSelector:@selector(tapRestore) withObject:nil afterDelay:0.4];
 }
 - (void)tapRestore {
+    // Restore opens the folder browser at the game's WTF/Backups; the fixture
+    // stands in for the system picker and chooses the snapshot the stub wrote,
+    // exactly as a tap on it would.
+    __block NSURL *backupFolder = nil;
+    self.controller.chooseBackupFile = ^(NSURL *url) { backupFolder = url; };
     [[self row:@"wow.performance.restore"] sendActionsForControlEvents:UIControlEventTouchUpInside];
-    [self performSelector:@selector(checkRestore) withObject:nil afterDelay:0.6];
+    assert(backupFolder != nil);
+    assert([backupFolder.lastPathComponent isEqual:@"Backups"]);
+    NSString *expected = [fixture.directory stringByAppendingPathComponent:@"WTF/Backups"];
+    assert([[backupFolder.path stringByResolvingSymlinksInPath] isEqual:[expected stringByResolvingSymlinksInPath]]);
+    assert(stubNewest != nil);
+    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeZIP]];
+    picker.directoryURL = backupFolder;
+    [self.controller documentPicker:picker
+         didPickDocumentsAtURLs:@[[backupFolder URLByAppendingPathComponent:stubNewest]]];
+    self.controller.chooseBackupFile = nil;
+    [self performSelector:@selector(checkRestore) withObject:nil afterDelay:0.8];
 }
 - (void)checkRestore {
     UIAlertController *alert = (id)self.controller.presentedViewController;
@@ -853,9 +910,10 @@ static NSString *configBeforeReset;
     // The Forever file rows are disabled while a start is in progress; every
     // handler rechecks the same guard.
     for (NSString *identifier in @[@"wow.performance.backup", @"wow.performance.reset",
-                                   @"wow.performance.restore", @"wow.performance.gamepad",
-                                   @"wow.performance.settingsFolder", @"wow.performance.overlay"])
+                                   @"wow.performance.restore", @"wow.performance.settingsFolder"])
         assert(![self row:identifier].enabled);
+    assert(![self toggle:@"wow.performance.gamepad"].enabled);
+    assert(![self toggle:@"wow.performance.overlay"].enabled);
     assert(self.controller.navigationController.viewControllers.count==1);
     unsigned before=atomic_load(&requests);
     [self.controller refresh]; [self tap];

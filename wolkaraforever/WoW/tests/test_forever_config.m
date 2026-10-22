@@ -109,6 +109,21 @@ int main(void) {
         assert([normalised containsString:@"SET portal \"eu\""]);
         assert([normalised containsString:@"SET accountName \"ACC\""]);
 
+        // --- the switch's off position uses the same normalisation
+        assert([TKForeverUI setGamepad:NO inWorkingDirectory:root error:&error]);
+        NSString *off = Read(ConfigPath(root));
+        NSUInteger offAssignments = 0;
+        for (NSString *line in [off componentsSeparatedByString:@"\n"]) {
+            if (![line hasPrefix:@"SET GamePadEnable"]) continue;
+            offAssignments++;
+            assert([line isEqual:@"SET GamePadEnable \"0\""]);
+        }
+        assert(offAssignments == 1);
+        assert(![TKForeverUI gamepadEnabledInWorkingDirectory:root]);
+        // Turning it back on leaves exactly one "1".
+        assert([TKForeverUI setGamepad:YES inWorkingDirectory:root error:&error]);
+        assert([TKForeverUI gamepadEnabledInWorkingDirectory:root]);
+
         // --- a WTF folder outside the working directory is refused
         NSString *outside = [root stringByAppendingPathComponent:@"../outside-wtf"];
         [files createDirectoryAtPath:outside withIntermediateDirectories:YES attributes:nil error:NULL];

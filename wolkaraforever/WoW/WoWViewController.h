@@ -16,6 +16,9 @@ NS_ASSUME_NONNULL_BEGIN
 // The folder the Settings browser would open. Injectable for the same reason:
 // a fixture proves the destination without a system file provider.
 @property(nonatomic, copy, nullable) void (^openSettingsFolderURL)(NSURL *url);
+// The folder Restore's file browser would open, holding the backups to pick
+// from. Injectable for the same reason as the two above.
+@property(nonatomic, copy, nullable) void (^chooseBackupFile)(NSURL *directory);
 // Reuse this home screen throughout startup; the runtime retains its execution path.
 @property(nonatomic, readonly) UILabel *startupStatusLabel;
 @property(nonatomic, readonly) TKLaunchProgressView *launchProgress;

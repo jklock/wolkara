@@ -628,6 +628,20 @@ static void AKSelfTestRunForeverUI(AKSelfTestRecorder *recorder) {
     [recorder check:[expectedGamepad isEqualToArray:originalNonGamepad]
                  _:@"no other Config.wtf line changed"];
 
+    // --- the switch's off position is the same normalisation with "0"
+    error = nil;
+    BOOL offStored = [TKForeverUI setGamepad:NO inWorkingDirectory:directory error:&error];
+    [recorder check:offStored _:[NSString stringWithFormat:@"gamepad off position stored (%@)", error.localizedDescription ?: @"ok"]];
+    NSUInteger offAssignments = 0;
+    BOOL offValue = NO;
+    for (NSString *line in AKSelfTestLines(AKSelfTestReadText(configPath))) {
+        NSString *name = AKSelfTestCVarName(line);
+        if (!name || [name caseInsensitiveCompare:@"GamePadEnable"] != NSOrderedSame) continue;
+        offAssignments++;
+        offValue = [line containsString:@"\"0\""];
+    }
+    [recorder check:offAssignments == 1 && offValue _:@"exactly one GamePadEnable assignment, value 0"];
+
     // Undo the gamepad write the same way, so the user's configuration is untouched.
     error = nil;
     [recorder check:[TKForeverUI restoreUIBackupNamed:backup inWorkingDirectory:directory
