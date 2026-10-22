@@ -21,7 +21,7 @@ platform file, or as an **overlay** of one of our files.
 
 `wolkaraforever/tools/prepare.sh` builds `build/platform` and does three things in order:
 
-1. exports `platform/` exactly as pinned;
+1. exports `platform/` exactly as vendored from the most current Tolkara (`upstream/main`);
 2. applies `patches/` - a patch that no longer applies stops the run;
 3. overlays our files: a `replace` entry must find its platform file, and an `add`
    entry must not collide with one upstream now has. Either mismatch stops the run.

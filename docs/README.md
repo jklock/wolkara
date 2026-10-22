@@ -3,7 +3,7 @@
 This folder holds the fork's own documentation. The vendored upstream engine keeps
 its own, unchanged, under `platform/docs/`; anything in this folder describes
 WolkaraForever - the WoW launcher, the mobile input layer and the layer split - or the
-fork's view of the engine.
+fork's view of the engine. WolkaraForever targets iPad.
 
 New here? Read the repository [README](../README.md), then
 [From zero to playing](FROM_ZERO.md) for the complete setup walkthrough (or the
@@ -17,6 +17,7 @@ New here? Read the repository [README](../README.md), then
 | [README](../README.md) | The single front page: requirements, build, enroll, install, play, update, troubleshoot. |
 | [FROM_ZERO.md](FROM_ZERO.md) | The complete, checkpointed walkthrough from a bare Mac to playing, with troubleshooting. |
 | [GETTING_STARTED.md](GETTING_STARTED.md) | The condensed route: clone, `local.env`, Xcode run, one-time enroll, install an edition. |
+| [DEVICE_WORKFLOW.md](DEVICE_WORKFLOW.md) | Scripted setup: Mac prerequisites, iPad variables over USB or network, and pushing the game. |
 | [USING_WOLKARAFOREVER.md](USING_WOLKARAFOREVER.md) | The in-app guide: home, add-ons, Performance & UI, voice, settings, recovery. |
 | [FRESH_INSTALL_TEST.md](FRESH_INSTALL_TEST.md) | Clean-device acceptance checklist for a first full download. |
 | [WOW_LAUNCHER.md](WOW_LAUNCHER.md) | Launcher and updater: editions, download, verification, resume, updates. |
@@ -25,7 +26,6 @@ New here? Read the repository [README](../README.md), then
 | [CONTROLLER_INPUT.md](CONTROLLER_INPUT.md) | Physical controller support and the inspector. |
 | [INPUT_TRIGGERS.md](INPUT_TRIGGERS.md) | Trigger modes, key mapping and ownership. |
 | [VOICE.md](VOICE.md) | Voice dictation: modes, auto-submit, verification, crash history. |
-| [IPHONE.md](IPHONE.md) | The experimental iPhone path and mobile-data notes. |
 | [COMPATIBILITY.md](../COMPATIBILITY.md) | Dated device results; what was measured, and where. |
 
 ## Developing
@@ -54,7 +54,6 @@ as current guidance. Each begins with a banner naming what it was true of.
 | --- | --- |
 | [LAYER_BASELINE.md](LAYER_BASELINE.md) | The measurements taken before the layer split. |
 | [LAYER_DELTAS.md](LAYER_DELTAS.md) | The authoritative delta set of the layer split. |
-| [../PERFORMANCE_UI_PLAN.md](../PERFORMANCE_UI_PLAN.md) | The plan for the boxed home page and Forever UI, since shipped. |
 | [../development/validation/](../development/validation/) | Per-commit validation records written by `validate.sh`. |
 
 ## The layer split, in one paragraph

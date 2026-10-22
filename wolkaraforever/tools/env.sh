@@ -6,7 +6,7 @@
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 export ROOT
 export DEVELOPER_DIR=${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}
-given=$(export -p | sed -n -E 's/^(declare -x|export) ((DEVELOPMENT_TEAM|TOLKARA_[A-Z_]+|DEVICE|SIMULATOR|GUEST_EXE|NATIVE_GUEST_SHIMS|SIGN_IDENTITY)=)/export \2/p')
+given=$(export -p | sed -n -E 's/^(declare -x|export) ((DEVELOPMENT_TEAM|TOLKARA_[A-Z_]+|DEVICE|SIMULATOR|GUEST_EXE|NATIVE_GUEST_SHIMS|SIGN_IDENTITY)=.*)$/export \2/p' | grep -v -E "^export [A-Z_]+=(\"\"|'')?$")
 if [ -f "$ROOT/local.env" ]; then set -a; . "$ROOT/local.env"; set +a; fi
 eval "$given"
 # The product's display name is the layer's, not the platform's.

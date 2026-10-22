@@ -59,7 +59,7 @@ extern NSString *const AKTouchOwnedKeyUsagesKey;                             // 
 
 @interface AKTouchControls : UIView <UIKeyInput>
 // On unless the launcher's switch stored otherwise: this product wants the
-// toolbar wherever it runs, not only on iPhone as the platform defaults to.
+// toolbar wherever it runs, not only where the platform's default places it.
 @property (class, nonatomic, readonly) BOOL enabled;
 @property (nonatomic, weak) id<AKTouchControlsDelegate> delegate;
 @property (nonatomic) BOOL trackpadEnabled;

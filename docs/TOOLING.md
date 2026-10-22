@@ -21,11 +21,15 @@ end of this page.
 | Script | What it does |
 | --- | --- |
 | `prepare.sh` | Exports `platform/` with `git archive HEAD` into `build/platform`, applies every patch in `wolkaraforever/patches/`, then copies the overlay in `wolkaraforever/overlay.map`. A patch that no longer applies, or a `replace`/`add` overlay entry that does not match, stops the run. `build/` is ignored, so the result can be deleted at any time. |
-| `check_layers.sh` | The gate. Fails if `platform/` drifted from the pin, if anything in `platform/` names WolkaraForever, if a patch does not apply, if an overlay entry no longer matches, or if one module reaches into another (`WoW/` into `Touch/`, say). Run it before trusting any suite. |
+| `check_layers.sh` | The gate. Fails if `platform/` drifted from the most current Tolkara (`upstream/main`), if anything in `platform/` names WolkaraForever, if a patch does not apply, if an overlay entry no longer matches, or if one module reaches into another (`WoW/` into `Touch/`, say). Run it before trusting any suite. |
+| `update_tolkara.sh [--check] [--test] [--install]` | Fetches the Tolkara source repo, reports what changed, pulls it into `platform/` with `git subtree pull --squash`, then runs `check_layers.sh`. `--check` reports only and changes nothing; `--test` and `--install` follow through. Refuses a dirty worktree unless `--allow-dirty`. |
 | `overlay_map.sh` | Regenerates `wolkaraforever/overlay.map` from the layer's tracked files. Run it after adding, moving or removing a file under `wolkaraforever/`. |
 | `apply.sh <tree>` | Applies the patches, then the overlay, to any tolkara tree - the prepared build tree or someone else's checkout. |
 | `adopt.sh <path/to/tolkara>` | Turns someone's own tolkara checkout into WolkaraForever by running `apply.sh` on it, in place. Run it on a copy if you want to keep the original. |
 | `check_docs.sh` | Verifies that every relative markdown link and image in the fork's documentation resolves. The vendored `platform/` is skipped. |
+| `install_prerequisites.sh [--check] [--install-homebrew]` | Checks (and, when safe, installs) the Mac prerequisites: full Xcode, `devicectl`, iOS SDK, Homebrew, `xcodegen`, `git` with subtree, Python 3.9+, disk space. Never uses sudo; never installs Xcode or Homebrew silently. |
+| `device_variables.sh [--write] [--export] [--json] [--device X]` | Finds a physical iPad over USB or paired network and prints `DEVICE`, name, model, OS, link and bundle id. `--write` updates `DEVICE` in `local.env`; `--force` allows replacing a different value. |
+| `preflight.sh [--source <folder>] [--size]` | Read-only check of `local.env`, the device (USB or network), the app on it, the Mac game folder and disk space. Says `Ready.` or lists what is missing. |
 
 ## Build, install, run
 
@@ -33,6 +37,7 @@ end of this page.
 | --- | --- |
 | `generate.sh [args]` | `prepare.sh`, then the platform's project generator, using your signing team and identifiers from `local.env`. The project lands in `build/platform/Tolkara.xcodeproj`. Regenerating replaces manual project edits, so keep personal settings in `local.env`. |
 | `install.sh [--build-only] [--replace-running]` | The full device procedure: refuse to install while the game is running; prepare; build through the platform's install script; run the platform's `enroll.sh`; verify the app is on the device; relaunch the normal launcher and prove it reached home. `--build-only` stops after the build and leaves the iPad alone. `NATIVE_GUEST_SHIMS=GENERIC wolkaraforever/tools/install.sh` builds for no particular application. |
+| `push_game.sh [--prepare] [--dry-run] [--source <folder>] [--skip-data]` | Copies a WoW Forever install from the Mac into the app on the iPad, so it is not downloaded on the device. Wraps the supported `profiles/wow-forever/install.py` in `build/platform`; `--dry-run` runs `preflight.sh` and copies nothing. Uses USB when a cable is attached, otherwise the paired network. Requires the app installed and `DEVICE` set. `--source` accepts the game on any volume; `--retries N` retries a dropped copy, reusing verified files. |
 | `run.sh [sim|device ...]` | `prepare.sh`, then the platform's run script. `run.sh sim` runs the loader diagnostics in the simulator. |
 | `package_ipa.sh [args]` | Builds the unsigned generic `Tolkara-unsigned.ipa` for External JIT (the `TolkaraDiagnostics` target), by preparing the tree and running the platform's packaging script. Only our own code goes in - never application code. |
 | `after_install.sh <mode>` | The post-install step, decided by the execution mode. Split out of `install.sh` so it can be tested without building; run from inside `build/platform`. |
@@ -119,7 +124,7 @@ value already in the environment win.
 | `TOLKARA_BUNDLE_ID` | Your own bundle identifier. Keep it stable so updates replace the app in place. |
 | `TOLKARA_KEYCHAIN_GROUP` | The device-only Keychain group for authorization. Changing it needs re-enrolling. |
 | `TOLKARA_DISPLAY_NAME` | The app's display name. Defaults to `WolkaraForever`. |
-| `DEVICE` | The connected iPhone/iPad identifier (`xcrun devicectl list devices`). |
+| `DEVICE` | The connected iPad identifier (`xcrun devicectl list devices`). |
 | `SIMULATOR` | The simulator to use for simulator runs and the UI fixtures. |
 | `GUEST_EXE` | The macOS executable you own. Several apps: separate with `:` (like `PATH`). |
 | `NATIVE_GUEST_SHIMS` | `GENERIC` builds for no particular application: one adapter per `translation/<Framework>/`. |

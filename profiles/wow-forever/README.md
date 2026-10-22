@@ -3,15 +3,15 @@
 The macOS arm64 Classic beta client (1.60.1) from `_classic_beta_`. See
 [COMPATIBILITY.md](../../COMPATIBILITY.md) for what works.
 
-On an iPhone 16 Pro Max / iOS 27.0, build 70170 was tested with Developer
+On an iPad Pro M5 / iPadOS 27, build 70170 was tested with Developer
 service on 2026-10-02: the user reported successful login and about two hours
 of gameplay without problems at 60 FPS, 50% render scale and graphics quality
 2. That session used a Bluetooth keyboard and AssistiveTouch. See the
-[iPhone guide](../../docs/IPHONE.md) for the beta portal,
+[setup guide](../../docs/FROM_ZERO.md) for the beta portal,
 public certificate resource and mouse/controller setup. Experimental
-[iOS keyboard and trackpad controls](../../docs/TOUCH_INPUT.md) are now
+[on-screen keyboard and trackpad controls](../../docs/TOUCH_INPUT.md) are now
 implemented in this branch; the user subsequently confirmed them working
-correctly in Forever on the same iPhone (2026-10-02).
+correctly in Forever on the same iPad (2026-10-02).
 
 You need your own installation made by the Battle.net app on a Mac, and your own
 account. Nothing from the game is included here.
@@ -25,15 +25,24 @@ GUEST_EXE="/Applications/World of Warcraft/_classic_beta_/World of Warcraft Beta
 Build, install and set up your execution mode as described in
 [docs/BUILDING.md](../../docs/BUILDING.md), then copy your installation:
 
+From the repository root, use the wrapper (it runs the copy from the prepared tree):
+
 ```bash
-python3 profiles/wow-forever/install.py
+wolkaraforever/tools/push_game.sh --source "/Applications/World of Warcraft"
+```
+
+Or, from the prepared tree directly:
+
+```bash
+cd build/platform && python3 profiles/wow-forever/install.py
 ```
 
 The script copies the client and the `Data` folder unchanged (tens of
 gigabytes, so use a cable) and verifies the executable's hash before and after.
 It copies only your region and language settings, not account settings, saved
-credentials or add-ons. Pass `--source` if the game is installed elsewhere, and
-`--skip-data` to refresh the client without copying `Data` again.
+credentials or add-ons. Pass `--source` if the game is installed elsewhere (for example
+`/Volumes/Storage/World of Warcraft`), and `--skip-data` to refresh the client without
+copying `Data` again.
 
 ## Copy add-ons from the Mac
 
@@ -59,7 +68,7 @@ game as usual.
 the client logs in and plays on an iPad Pro M5 (2026-09-27), with no debugger,
 helper or tunnel: the unpacked code matched the signed page container byte for
 byte and all 13,280 initializers ran into the original `main`. Developer
-service login and gameplay are also confirmed on the iPhone described above;
+service login and gameplay are also confirmed on the iPad described above;
 Developer service has not been validated on this iPad.
 Like the Era client, this client unpacks its own code at launch, so its Local
 signing page container must be built from a capture of its final code pages —

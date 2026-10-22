@@ -79,7 +79,7 @@ Older saved layouts keep their positions and sizes and default to haptics on.
 The pointer symbol has a small optical offset to the right inside its existing
 button; the button's size, position and touch target are unchanged.
 
-Haptics use UIKit's public `UIImpactFeedbackGenerator` on the phone. They do not
+Haptics use UIKit's public `UIImpactFeedbackGenerator` on the iPad. They do not
 produce controller rumble, inspect the game or generate additional inputs.
 Controller feedback is suspended with input while configuring, hiding controls
 or losing focus. Each stick has an independent radial latch (99.5% normalized
@@ -132,11 +132,11 @@ The haptics follow-up checks button press/release deduplication, both stick
 edges, edge jitter, inward rearming, cancellation, disabled feedback, preference
 persistence and reset, while checking the same real GameController values.
 These tests count requested pulses with an original fixture; the simulator
-cannot establish the feel or strength of vibration on the physical iPhone.
+cannot establish the feel or strength of vibration on the physical iPad.
 The launcher fixture checks that status text fits at normal and large
 accessibility font sizes.
 
-All six commands above passed with Xcode 27.0 and the iOS 27.0 iPhone 16 Pro Max
+All six commands above passed with Xcode 27.0 and the iPadOS 27 iPad Pro M5
 simulator. The integration test still asserted the old toolbar's secure-entry
 trait; it now checks the separate dictation text view and its disabled spelling
 and autocorrection traits. No keyboard implementation change was needed.
@@ -146,16 +146,16 @@ The signed device build also passed:
 ```sh
 xcodebuild -project Tolkara.xcodeproj -scheme Tolkara -configuration Debug \
   -sdk iphoneos -destination 'generic/platform=iOS' \
-  -derivedDataPath build/iphone-wolkaraforever-signed ARCHS=arm64 \
+  -derivedDataPath build/ipad-wolkaraforever-signed ARCHS=arm64 \
   TOLKARA_SYSTEM_ROOTS=YES build
 codesign --verify --deep --strict \
-  build/iphone-wolkaraforever-signed/Build/Products/Debug-iphoneos/Tolkara.app
+  build/ipad-wolkaraforever-signed/Build/Products/Debug-iphoneos/Tolkara.app
 ```
 
 Strict signature verification passed with normal access to the macOS keychain.
 The only build warnings concerned skipped App Intents metadata extraction.
 The embedded AppKit adapter contains the new touch-controller implementation.
-This build was not installed on the user's iPhone during this work.
+This build was not installed on the user's iPad during this work.
 
 For manual inspection, run the gamepad fixture without a self-test flag. If the
 simulator forwards a controller from the Mac, `--ignore-other-controllers` lets
@@ -163,11 +163,11 @@ this fixture alone display the touch UI without disconnecting the user's
 hardware. Production never uses that override. This option must not be confused
 with a successful automatic no-hardware test.
 
-Physical-iPhone usability, Bluetooth handover during gameplay and WoW's response
+Physical-iPad usability, Bluetooth handover during gameplay and WoW's response
 to this virtual profile still require manual validation. Simulator input success
 does not prove game compatibility or Blizzard approval/account safety.
 
 References:
 - [Apple: adding virtual controls](https://developer.apple.com/documentation/gamecontroller/adding-virtual-controls-to-games-that-support-game-controllers-in-ios)
 - [Apple: GCVirtualController](https://developer.apple.com/documentation/gamecontroller/gcvirtualcontroller)
-- Xcode 27 iPhoneOS SDK, `GameController.framework/Headers/GCVirtualController.h`.
+- Xcode 27 iPadOS SDK, `GameController.framework/Headers/GCVirtualController.h`.

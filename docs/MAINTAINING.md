@@ -17,9 +17,13 @@ There are three layers. Only the middle one is ours.
 
 | Layer | What it is | Where it lives | Editable by hand? |
 | --- | --- | --- | --- |
-| **Engine** | Upstream Tolkara: the Mach-O loader, the macOS API translation, the developer-service authorization. | `platform/`, vendored byte-identical to `upstream/main`. | **No.** Never. |
+| **Engine** | Upstream Tolkara: the Mach-O loader, the macOS API translation, the developer-service authorization. | `platform/`, the most current Tolkara (`upstream/main`), vendored byte-identical. | **No.** Never. |
 | **Our layer** | Patches to engine files, plus our own modules (WoW launcher, touch, voice, controller, shell). | `wolkaraforever/patches/` and `wolkaraforever/overlay.map`. | Yes, that is the point. |
 | **The app** | The built, signed Xcode project. | `build/platform/Tolkara.xcodeproj`, generated. | No; regenerate it. |
+
+WolkaraForever does not change how Tolkara works. The loader, authorization and execution
+behaviour are upstream's, and how Tolkara does things is how WolkaraForever does them; the
+layer adds the WoW app and input, not a different execution model.
 
 ### How the build is assembled
 
@@ -120,9 +124,23 @@ unchanged, so the game files, add-ons, saved layout and log survive. Re-running
 
 ## Updating Tolkara (the engine)
 
-Use this when upstream Tolkara publishes commits you want. The engine is a git subtree at
-`platform/`; it is never edited by hand, so upstream updates are pulled and our patches are
-re-applied on top.
+WolkaraForever uses the most current pull of Tolkara. The engine is a git subtree at
+`platform/` and is never edited by hand; to move to newer Tolkara you pull it, and our patches
+are re-applied on top.
+
+### One command
+
+```bash
+wolkaraforever/tools/update_tolkara.sh            # fetch, pull, and run the gate
+wolkaraforever/tools/update_tolkara.sh --check    # is platform/ current, and what changed
+wolkaraforever/tools/update_tolkara.sh --test     # ... then run the suites
+wolkaraforever/tools/update_tolkara.sh --install  # ... then build and install
+```
+
+It refuses a dirty worktree unless you pass `--allow-dirty`, because a subtree pull makes a
+commit and your other uncommitted edits could conflict. If the gate fails after the pull, the
+script stops and names the patch or overlay entry to fix; the engine is never edited by hand to
+make a patch fit.
 
 ```mermaid
 flowchart TD
@@ -136,7 +154,7 @@ flowchart TD
     T --> I["install.sh and verify on the device"]
 ```
 
-### Exact steps
+### The same steps by hand
 
 ```bash
 # 1. See what upstream has.
@@ -180,9 +198,9 @@ Pull (step 2), and it should pass again. It also proves:
 Only after the gate passes should you run the suites and install. If a test now fails, the
 engine change is the suspect, not the game.
 
-> **Rolling back an engine update.** The subtree pull is a commit. Revert it (`git revert` the
-> merge, or reset to the commit before it), re-run `check_layers.sh`, and install again. The
-> app data on the device is untouched by a rollback.
+> **Rolling back an engine update.** The subtree pull is a commit. Right after it,
+> `git reset --hard HEAD^` goes back one step; later, `git revert -m 1 <merge>` undoes it.
+> Re-run `check_layers.sh` and install again. The app data on the device is untouched.
 
 ## Updating the game
 

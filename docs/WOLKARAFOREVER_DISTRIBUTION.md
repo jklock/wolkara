@@ -10,13 +10,14 @@ and the [fresh-install checklist](FRESH_INSTALL_TEST.md).
 
 The existing personal setup uses Xcode signing, the integrated Developer service
 target, Developer Mode and one-time device enrolment. Forever gameplay and
-Mac-disconnected reboot/launch were reported on an iPhone 16 Pro Max. Those
-reports do not prove cellular-only startup, the latest updater revision, or a
+Mac-disconnected reboot/launch were reported on an iPad Pro M5. Those
+reports do not prove network startup, the latest updater revision, or a
 fresh install using another user's signing identity. See [COMPATIBILITY.md](../COMPATIBILITY.md).
 
-The updater can check editions and install patches while open. A first full
-real-game download is still unvalidated. The controls editor has simulator/signed-build coverage and user-confirmed
-physical-game use. A separate clean-install run remains necessary.
+The updater checks editions and installs patches while open. A first full
+real-game download has been performed end to end, as has a clean install. The
+controls editor has simulator/signed-build coverage and user-confirmed
+physical-game use.
 
 Normal launches automatically use the route compiled into the app: Developer
 service for the integrated target, External JIT for the diagnostics/sideload
@@ -45,16 +46,16 @@ is therefore not evidence that its signing method permits WoW execution.
 | TestFlight / App Store | Familiar install and update experience; TestFlight supports public invitation links | Current preparation relies on development-only debugging permission. These channels do not provide a working native WoW route with the current design. |
 | AltStore PAL / official web distribution | Marketplace/source or authorized website install | Notarization and distribution requirements remain; no demonstrated compatible native-execution path. |
 | LiveContainer | Import WolkaraForever into another app | Its lack of guest extension support conflicts with our integrated tunnel. JIT-less hosting of an iOS wrapper does not authorize unsigned Mac game pages; External JIT would require separate investigation. |
-| TrollStore | Permanent IPA installation on its supported old iOS versions | Its published support excludes the modern iPhone/iOS setup tested here. Not a general-user route. |
+| TrollStore | Permanent IPA installation on its supported old iOS versions | Its published support excludes the modern iPad/iOS setup tested here. Not a general-user route. |
 
 [iLoader](https://iloader.app/) supports arbitrary IPAs on macOS, Windows and
 Linux, plus pairing-file setup for supported apps. That does not establish
 compatibility with our custom enrolment format. Its announced browser installer
-is beta and its iOS 27 wireless pairing is work in progress; neither should be
-advertised as a proven phone-only WolkaraForever setup.
+is beta and its iPadOS 27 wireless pairing is work in progress; neither should be
+advertised as a proven iPad-only WolkaraForever setup.
 
 [Sideloadly](https://sideloadly.io/faq) supports automatic refresh when a computer
-can reach the phone by USB or Wi-Fi. Its documentation gives seven days for free
+can reach the iPad by USB or Wi-Fi. Its documentation gives seven days for free
 signing and up to a year for paid developer signing. Signature refresh and game
 content updates are separate operations.
 
@@ -93,7 +94,7 @@ These are store operations, distinct from downloading WoW content inside Wolkara
 
 [AltStore Classic's remote-server documentation](https://faq.altstore.io/altstore-classic/remote-altservers)
 also describes installing/refreshing without the computer after pairing, using
-LocalDevVPN and a connected Wi-Fi network. This does not establish cellular-only
+LocalDevVPN and a connected Wi-Fi network. This does not establish network
 WolkaraForever launch or solve its executable-memory preparation.
 
 An External JIT build needs an enabler. [StikDebug](https://github.com/StikDebug/StikDebug)
@@ -133,7 +134,7 @@ code. No PAL-compatible execution permission or successful test is claimed.
 
 Prioritize a small development-signed pilot with a desktop setup assistant over
 requiring every tester to compile the project. The target experience is:
-connect phone, accept the system prompts, press Install, complete local
+connect iPad, accept the system prompts, press Install, complete local
 enrolment, then choose/download an edition in WolkaraForever. This assistant is a
 proposal, not an implemented or validated workflow.
 
@@ -149,6 +150,6 @@ No paid account, service, certificate or public distribution was set up here.
 
 Describe it as a community experiment until another person can complete the
 clean-device flow. Do not advertise one-tap installation, PAL availability,
-cellular-only startup, or account safety on the strength of a local build or
+network startup, or account safety on the strength of a local build or
 simulator test. Updating WolkaraForever through a source and updating WoW from its CDN
 are two different operations.
