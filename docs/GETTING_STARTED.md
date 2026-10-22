@@ -4,6 +4,10 @@ This guide is for the WolkaraForever fork and its integrated Developer service b
 It builds our generic runtime, then downloads the selected WoW client directly
 on the iPhone/iPad. WoW and Battle.net do not need to be installed on your Mac.
 
+> This is the condensed route. For the exhaustive, checkpointed walkthrough - with
+> prerequisites, what each step should print, and troubleshooting - see
+> [From zero to playing](FROM_ZERO.md).
+
 ## Requirements
 
 - An Apple silicon Mac, Xcode with support for your device's iOS version,
