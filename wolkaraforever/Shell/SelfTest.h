@@ -30,6 +30,12 @@ extern NSString *const AKSelfTestMic;
 /// reads nothing from the game and types nothing; run it with `--local-game-startup`, because
 /// the target exists only once the guest has started.
 extern NSString *const AKSelfTestDictationTarget;
+/// The home page's Forever rows, against the installation actually on the device: backup,
+/// reset, restore and the gamepad write, each undone before the check finishes. It leaves the
+/// user's UI as it found it (the restore at the end is the proof), and enables the performance
+/// overlay so the in-game HUD can be seen; `forever-ui-clean` turns that back off.
+extern NSString *const AKSelfTestForeverUI;
+extern NSString *const AKSelfTestForeverUIClean;
 
 // Runs one self-test and logs the verdict the matrix greps:
 //   selftest: <name> PASS <passed>/<total> checks (<what was exercised>)
