@@ -8,6 +8,9 @@
 #import "SelfTest.h"
 #import "WolkaraForeverLog.h"
 #import "../WoW/ForeverUI.h"
+#import "../WoW/AddonCredentialStore.h"
+#import "../WoW/CurseForgeClient.h"
+#import <CommonCrypto/CommonDigest.h>
 #import "../Input/InputElement.h"
 #import "../Input/InputRouter.h"
 #import "../Input/Trigger.h"
@@ -23,6 +26,7 @@ NSString *const AKSelfTestMic = @"mic";
 NSString *const AKSelfTestDictationTarget = @"dictation-target";
 NSString *const AKSelfTestForeverUI = @"forever-ui";
 NSString *const AKSelfTestForeverUIClean = @"forever-ui-clean";
+NSString *const AKSelfTestCurseForge = @"curseforge";
 
 #pragma mark - Recording what happened
 
@@ -682,6 +686,54 @@ static void AKSelfTestRunForeverUIClean(AKSelfTestRecorder *recorder) {
     recorder.detail = @"overlay preference returned to its default off state";
 }
 
+#pragma mark - CurseForge key
+
+// Never prints the key. It prints what can be compared without it: the length,
+// the shape, and the first bytes of its SHA-256. That is enough to tell a wrong
+// paste from a key the API refuses.
+static void AKSelfTestRunCurseForge(AKSelfTestRecorder *recorder) {
+    TKAddonCredentialStore *store = [TKAddonCredentialStore new];
+    NSError *error = nil;
+    NSString *key = [store curseForgeKey:&error];
+    if (!key.length) {
+        [recorder check:NO _:@"a CurseForge key is stored in the Keychain"];
+        WKLog("selftest", @"no CurseForge key is stored (%@)", error.localizedDescription ?: @"none");
+        recorder.detail = @"no key stored";
+        return;
+    }
+    unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+    NSData *bytes = [key dataUsingEncoding:NSUTF8StringEncoding];
+    CC_SHA256(bytes.bytes, (CC_LONG)bytes.length, digest);
+    NSMutableString *hash = [NSMutableString new];
+    for (NSUInteger i = 0; i < 8; i++) [hash appendFormat:@"%02x", digest[i]];
+    BOOL coreShape = [key hasPrefix:@"$2a$"];
+    WKLog("selftest", @"stored key length=%lu coreShape=%d sha256=%@",
+          (unsigned long)key.length, coreShape ? 1 : 0, hash);
+    [recorder check:coreShape _:@"the stored key has CurseForge's Core API key shape"];
+    [recorder check:![key hasPrefix:@"cfc_pat_"] _:@"the stored key is not an upload token"];
+
+    TKCurseForgeClient *client = [[TKCurseForgeClient alloc] initWithAPIKey:key];
+    dispatch_semaphore_t done = dispatch_semaphore_create(0);
+    __block NSError *requestError = nil;
+    __block NSUInteger projects = 0;
+    // The search endpoint is authenticated (the categories list is not), so it is
+    // the one that says whether this key is actually accepted.
+    [client browseModsWithQuery:@"wow" sortField:2 sortOrder:@"desc" categoryID:nil index:0
+                     completion:^(id value, NSError *failure) {
+        requestError = failure;
+        if ([value isKindOfClass:NSDictionary.class] && [value[@"data"] isKindOfClass:NSArray.class])
+            projects = [value[@"data"] count];
+        dispatch_semaphore_signal(done);
+    }];
+    dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, 25 * NSEC_PER_SEC));
+    [recorder check:requestError == nil && projects > 0
+                 _:@"CurseForge accepts the stored key (authenticated search)"];
+    if (requestError)
+        WKLog("selftest", @"CurseForge search failed: %@", requestError.localizedDescription);
+    recorder.detail = [NSString stringWithFormat:@"stored key sha256 %@, %lu projects",
+                       hash, (unsigned long)projects];
+}
+
 static void AKSelfTestLogVerdict(AKSelfTestRecorder *recorder, NSString *name) {    if (recorder.firstFailure) {
         WKLog("selftest", @"selftest: %@ FAIL %lu/%lu checks: %@",
               name, (unsigned long)recorder.passed, (unsigned long)recorder.total, recorder.firstFailure);
@@ -723,6 +775,14 @@ void AKRunSelfTest(NSString *name) {
         // Off the main queue too: it waits for the guest to start, which happens on the main queue.
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
             AKSelfTestRunDictationTarget(recorder);
+            AKSelfTestLogVerdict(recorder, name);
+        });
+        return;
+    }
+    if ([name isEqualToString:AKSelfTestCurseForge]) {
+        // Off the main queue: it waits on the network.
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+            AKSelfTestRunCurseForge(recorder);
             AKSelfTestLogVerdict(recorder, name);
         });
         return;
