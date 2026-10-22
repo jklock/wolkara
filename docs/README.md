@@ -6,7 +6,8 @@ WolkaraForever - the WoW launcher, the mobile input layer and the layer split - 
 fork's view of the engine.
 
 New here? Read the repository [README](../README.md), then
-[Build and run WolkaraForever](GETTING_STARTED.md), then the
+[From zero to playing](FROM_ZERO.md) for the complete setup walkthrough (or the
+[condensed route](GETTING_STARTED.md)), then the
 [in-app guide](USING_WOLKARAFOREVER.md).
 
 ## Using the app
@@ -14,7 +15,8 @@ New here? Read the repository [README](../README.md), then
 | Document | What it covers |
 | --- | --- |
 | [README](../README.md) | The single front page: requirements, build, enroll, install, play, update, troubleshoot. |
-| [GETTING_STARTED.md](GETTING_STARTED.md) | The first route: clone, `local.env`, Xcode run, one-time enroll, install an edition. |
+| [FROM_ZERO.md](FROM_ZERO.md) | The complete, checkpointed walkthrough from a bare Mac to playing, with troubleshooting. |
+| [GETTING_STARTED.md](GETTING_STARTED.md) | The condensed route: clone, `local.env`, Xcode run, one-time enroll, install an edition. |
 | [USING_WOLKARAFOREVER.md](USING_WOLKARAFOREVER.md) | The in-app guide: home, add-ons, Performance & UI, voice, settings, recovery. |
 | [FRESH_INSTALL_TEST.md](FRESH_INSTALL_TEST.md) | Clean-device acceptance checklist for a first full download. |
 | [WOW_LAUNCHER.md](WOW_LAUNCHER.md) | Launcher and updater: editions, download, verification, resume, updates. |
@@ -32,6 +34,7 @@ New here? Read the repository [README](../README.md), then
 | --- | --- |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | The loader, the translation layer and the three execution modes. |
 | [BUILDING.md](BUILDING.md) | Advanced engine build and execution modes; development runs on the iPad. |
+| [MAINTAINING.md](MAINTAINING.md) | How the layers fit; how to update Tolkara, the app and the game safely. |
 | [TESTING.md](TESTING.md) | The suites, the device matrix, the self-tests and how evidence is recorded. |
 | [TOOLING.md](TOOLING.md) | Every script in `wolkaraforever/tools/`, its arguments and environment. |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | Ground rules and workflow. |

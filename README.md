@@ -41,6 +41,9 @@ successful build alone does not prove a signing profile permits startup.
 
 ## Quick start
 
+Prefer a fully checkpointed walkthrough? See
+[From zero to playing](docs/FROM_ZERO.md). This is the short version.
+
 1. **Clone and configure.**
 
    ```bash
@@ -201,6 +204,8 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) before contributing, and
 [TESTING.md](docs/TESTING.md) for what each suite proves and how evidence is recorded.
 
 - [All documentation](docs/README.md) - the full index
+- [From zero to playing](docs/FROM_ZERO.md) - the complete setup walkthrough
+- [Maintaining](docs/MAINTAINING.md) - the layers, and safe updates
 - [Testing](docs/TESTING.md) and [tools reference](docs/TOOLING.md)
 - [Launcher and updater](docs/WOW_LAUNCHER.md)
 - [Touch input](docs/TOUCH_INPUT.md)
