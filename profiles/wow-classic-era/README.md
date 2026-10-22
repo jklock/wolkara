@@ -48,7 +48,7 @@ root with your own `DEVICE` and `TOLKARA_BUNDLE_ID` in `local.env`:
 ```bash
 bash <<'SH'
 set -euo pipefail
-. tools/localenv.sh
+. platform/tools/localenv.sh
 tolkara_load_env
 : "${DEVICE:?Set DEVICE in local.env}"
 : "${TOLKARA_BUNDLE_ID:?Set TOLKARA_BUNDLE_ID in local.env}"
@@ -80,7 +80,7 @@ Copy the edited file back and verify it:
 ```bash
 bash <<'SH'
 set -euo pipefail
-. tools/localenv.sh
+. platform/tools/localenv.sh
 tolkara_load_env
 : "${DEVICE:?Set DEVICE in local.env}"
 : "${TOLKARA_BUNDLE_ID:?Set TOLKARA_BUNDLE_ID in local.env}"
@@ -112,7 +112,7 @@ screens can be controlled with a gamepad. Do not enable the experimental
 `GameController` adapter to fix this: that adapter reports no controllers.
 
 **Execution mode.** The execution modes are described in the
-[README](../../README.md#three-ways-to-run-code); choose one. This client has been
+[README](../../README.md#three-execution-modes); choose one. This client has been
 played with Developer service, and with Local signing it logs in and plays
 (2026-09-27) with no debugger, helper or tunnel. This client unpacks its
 own code at launch, so its page container must be built from a capture of its

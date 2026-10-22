@@ -1,5 +1,10 @@
 # GPU support across the M series
 
+> **Paths.** A bare `tools/<script>` in this page means `wolkaraforever/tools/<script>`
+> when the layer provides it, otherwise the platform's `platform/tools/<script>`.
+> `translation/` and `runtime/` live under `platform/`; `patches/` is under
+> `wolkaraforever/`.
+
 The layer must work on every Apple-silicon device we ship on - M1 through M5 and
 later - on both iPadOS and macOS, at whatever OS version each device runs. Nothing
 we write may assume a particular GPU generation.
@@ -11,7 +16,7 @@ what a GPU can do. It asks the device:
 
 | Question | Asked through | Where |
 | --- | --- | --- |
-| Can this GPU sample BC (DXT/BPTC) textures? | `-[MTLDevice supportsBCTextureCompression]` | `translation/Metal/BCTextures.m`, `deviceSamplesBC()` |
+| Can this GPU sample BC (DXT/BPTC) textures? | `-[MTLDevice supportsBCTextureCompression]` | `platform/translation/Metal/BCTextures.m`, `deviceSamplesBC()` |
 | Feature set the caller is testing for | `-[MTLDevice supportsFeatureSet:]` | the Metal adapter's device wrappers |
 | Anything else capability-shaped | the matching `MTLDevice`/`MTLTexture` query | as above |
 
@@ -43,7 +48,7 @@ Recorded 2026-09 on the branch's two hosts:
 
 ### BC decode accuracy against Apple's M1 hardware
 
-`tests/test_bc_textures.m` compares the CPU decoder with the same GPU that decodes
+`platform/tests/test_bc_textures.m` compares the CPU decoder with the same GPU that decodes
 the texture natively: 256 random blocks per format, largest difference in 8-bit
 steps (relative for BC6H). With the layer's patch 0001 applied:
 
@@ -70,7 +75,7 @@ leaves undefined. Measured on the M1:
 `randomBlocks` used to force one block in nine into the reserved mode and then require
 the two to agree, which is why the test aborted on this OS/driver. Patch 0001
 (`wolkaraforever/patches/0001-bc7-reserved-mode-not-comparable.patch`) generates only the
-eight defined modes for that comparison; `tests/test_bc_decode.c` still covers that a
+eight defined modes for that comparison; `platform/tests/test_bc_decode.c` still covers that a
 reserved block is handled without crashing. With the patch the three runs (auto, off,
 forced on) all PASS, and `TOLKARA_BC_FALLBACK=off` now really compares instead of
 printing PASS without measuring.

@@ -12,6 +12,9 @@
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 static UIColor *Gold(void) { return [UIColor colorWithRed:0.88 green:0.73 blue:0.43 alpha:1]; }
+// One grey for every row that cannot be used, so a page in a transient state
+// reads as one thing instead of a mix of dimmed and full-strength text.
+static UIColor *RowGrey(void) { return [UIColor colorWithWhite:0.55 alpha:1]; }
 static UIColor *Muted(void) { return [UIColor colorWithRed:0.66 green:0.72 blue:0.78 alpha:1]; }
 static UILabel *Label(CGFloat size, UIFontWeight weight, UIColor *color) {
     UILabel *label=[UILabel new]; label.numberOfLines=0; label.textColor=color;
@@ -61,6 +64,7 @@ static NSNotificationName const TKForeverLayoutDidChange = @"AKGamepadLayoutDidC
         _titleLabel.isAccessibilityElement=NO;
         [_titleLabel setContentHuggingPriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
         _toggle=[UISwitch new];
+        _toggle.onTintColor=Gold();
         _toggle.accessibilityLabel=title;
         _toggle.accessibilityIdentifier=[identifier stringByAppendingString:@".switch"];
         [_toggle addTarget:target action:action forControlEvents:UIControlEventValueChanged];
@@ -86,7 +90,10 @@ static NSNotificationName const TKForeverLayoutDidChange = @"AKGamepadLayoutDidC
 - (void)setEnabled:(BOOL)enabled {
     _enabled=enabled;
     _toggle.enabled=enabled;
-    self.alpha=enabled?1:0.45;
+    // The label follows the row, and the control only shows its own off/on
+    // colour: no alpha on the row, which used to make an enabled switch look
+    // the same as a disabled one.
+    _titleLabel.textColor=enabled?UIColor.whiteColor:RowGrey();
 }
 @end
 
@@ -102,7 +109,7 @@ static NSNotificationName const TKForeverLayoutDidChange = @"AKGamepadLayoutDidC
     NSError *_error;
     NSDate *_checkedAt;
     NSUInteger _generation;
-    BOOL _busy, _updating, _updateError, _starting;
+    BOOL _busy, _updating, _updateError, _starting, _running;
     // A Forever UI file operation is running (backup, reset, restore, gamepad).
     // The rows are disabled while it runs and every handler rechecks it.
     BOOL _uiOperation;
@@ -420,7 +427,7 @@ static NSNotificationName const TKForeverLayoutDidChange = @"AKGamepadLayoutDidC
 - (void)background:(NSNotification *)note { (void)note; [self cancel]; }
 - (void)cancel { [_client cancel]; _client=nil; _generation++; _busy=NO; }
 - (void)setExecutionMode:(TKExecutionMode)mode { _executionMode=mode; if (self.isViewLoaded) [self render]; }
-- (void)setSessionUsed:(BOOL)used { _sessionUsed=used; if (used) [self cancel]; if (self.isViewLoaded) [self render]; }
+- (void)setSessionUsed:(BOOL)used { _sessionUsed=used; if (used) { _running=NO; [self cancel]; } if (self.isViewLoaded) [self render]; }
 - (void)selectProduct:(NSDictionary *)product {
     if (_starting || _sessionUsed) return;
     if (![TKWoWProducts() containsObject:product]) return;
@@ -520,7 +527,12 @@ static NSNotificationName const TKForeverLayoutDidChange = @"AKGamepadLayoutDidC
     });
 }
 - (void)primaryAction {
-    if (_busy || _sessionUsed || _starting) return;
+    // Starting and running own the button; nothing else may close or start.
+    if (_starting || _running) return;
+    // After a session the only useful action is to leave: this process cannot
+    // start a second guest, and the user must be able to close it from here.
+    if (_sessionUsed) { [self closeApp]; return; }
+    if (_busy) return;
     if (_startupFailure) { _startupFailure=nil; [self render]; }
     if (_error || !_plan) { [self refresh]; return; }
     if (_installation.state==TKWoWInstallationMissing || _installation.state==TKWoWInstallationNeedsRepair) {
@@ -543,6 +555,20 @@ static NSNotificationName const TKForeverLayoutDidChange = @"AKGamepadLayoutDidC
     button.configuration=configuration;
     [button setTitle:title forState:UIControlStateNormal];
 }
+// Disabled rows use one explicit grey rather than the system's dimming, so a
+// starting page, a session page and an ended session all read the same.
+- (void)stylePlainButton:(UIButton *)button {
+    UIButtonConfiguration *configuration=button.configuration;
+    configuration.baseForegroundColor=button.enabled?Gold():RowGrey();
+    button.configuration=configuration;
+}
+- (void)stylePrimaryButton {
+    UIButtonConfiguration *configuration=_primaryButton.configuration;
+    BOOL enabled=_primaryButton.enabled;
+    configuration.baseBackgroundColor=enabled?Gold():[UIColor colorWithWhite:0.28 alpha:1];
+    configuration.baseForegroundColor=enabled?[UIColor colorWithRed:0.08 green:0.065 blue:0.035 alpha:1]:[UIColor colorWithWhite:0.62 alpha:1];
+    _primaryButton.configuration=configuration;
+}
 - (void)render {
     if (!self.isViewLoaded) return;
     [self configureButton:_editionButton title:[_product[@"name"] stringByAppendingString:@"  ▾"] filled:NO];
@@ -552,32 +578,34 @@ static NSNotificationName const TKForeverLayoutDidChange = @"AKGamepadLayoutDidC
     _preferencesButton.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;
     [self configureButton:_addonsButton title:_installation.app?@"Install Addons (Curse & Direct)":@"Install Addons (Curse & Direct) (install game first)" filled:NO];
     _addonsButton.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;
-    _addonsButton.enabled=_installation.app && !_busy && !_starting && !_sessionUsed;
+    _addonsButton.enabled=_installation.app && !_busy && !_starting && !_running && !_sessionUsed;
     [self configureButton:_macEverButton title:@"Download Mac-Ever" filled:NO];
     _macEverButton.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;
     // Navigation only: the page is opened for the user to download the ZIP.
-    _macEverButton.enabled=YES;
+    // Starting and an ended session grey it with everything else.
+    _macEverButton.enabled=!_starting && !_running && !_sessionUsed;
     [self configureButton:_addonsDirectoryButton title:_installation.app?@"Open Add-on Directory":@"Open Add-on Directory (install game first)" filled:NO];
     _addonsDirectoryButton.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;
     _addonsDirectoryButton.enabled=_addonsButton.enabled;
     [self configureButton:_voiceButton title:@"Key / Button Configuration" filled:NO];
     _voiceButton.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;
     // Available before the game is installed: it is a setting, not a game action.
-    _voiceButton.enabled=!_busy && !_starting;
+    _voiceButton.enabled=!_busy && !_starting && !_running && !_sessionUsed;
     [self configureButton:_voiceTestButton title:@"Test Voice & Dictation" filled:NO];
     _voiceTestButton.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;
     _voiceTestButton.enabled=_voiceButton.enabled;
     [self configureButton:_permissionsButton title:@"Toggle Permissions (Mic & Speech)" filled:NO];
     _permissionsButton.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;
-    // Never disabled: opening Settings is always allowed, even while the game is busy.
-    _permissionsButton.enabled=YES;
+    // Navigation to Settings is available whenever the page is usable; a
+    // starting or ended session greys it with the rest so no gold text is left.
+    _permissionsButton.enabled=!_starting && !_running && !_sessionUsed;
     // Performance & UI Manager. The Forever file rows need a ready Forever
     // installation - and the selected edition must be Forever, because they must
     // never read or write another edition's files - no download, start or
     // session, and no other UI operation in flight. The overlay is a
     // WolkaraForever runtime feature and follows the launcher's non-busy rule.
     NSString *foreverDirectory=[self foreverWorkingDirectory];
-    BOOL foreverReady=foreverDirectory && !_busy && !_starting && !_sessionUsed && !_uiOperation;
+    BOOL foreverReady=foreverDirectory && !_busy && !_starting && !_running && !_sessionUsed && !_uiOperation;
     _gamepadEnabled=foreverDirectory?[TKForeverUI gamepadEnabledInWorkingDirectory:foreverDirectory]:NO;
     NSDictionary *layout=[NSUserDefaults.standardUserDefaults objectForKey:TKForeverLayoutKey];
     _overlayEnabled=[layout isKindOfClass:NSDictionary.class] && [layout[@"performanceOverlayEnabled"] boolValue];
@@ -593,34 +621,43 @@ static NSNotificationName const TKForeverLayoutDidChange = @"AKGamepadLayoutDidC
     // the state.
     _gamepadRow.enabled=foreverReady;
     _gamepadRow.toggle.on=_gamepadEnabled;
-    _overlayRow.enabled=!_busy && !_starting;
+    _overlayRow.enabled=!_busy && !_starting && !_running && !_sessionUsed;
     _overlayRow.toggle.on=_overlayEnabled;
     _compatibilityLabel.text=([_product[@"id"] isEqual:@"wow"] || [_product[@"id"] isEqual:@"wow_beta"] || [_product[@"id"] isEqual:@"wow_classic"])?
         @"Compatibility with this edition is not yet verified.":
         @"";
     _compatibilityLabel.hidden=!_compatibilityLabel.text.length;
-    _editionButton.enabled=!_busy && !_starting && !_sessionUsed;
+    _editionButton.enabled=!_busy && !_starting && !_running && !_sessionUsed;
     _preferencesButton.enabled=_editionButton.enabled;
-    self.navigationItem.rightBarButtonItem.enabled=!_updating && !_starting;
-    _primaryButton.hidden=_starting || _sessionUsed;
-    _updatesLabel.hidden=_starting || _sessionUsed;
-    _startupLabel.hidden=_starting || _sessionUsed;
+    self.navigationItem.rightBarButtonItem.enabled=!_updating && !_starting && !_running;
+    _primaryButton.hidden=_starting || _running;
+    _updatesLabel.hidden=_starting || _running;
+    _startupLabel.hidden=_starting || _running;
     _progressBar.hidden=!_updating || !_updateTotal;
     _progressBar.progress=_updateTotal?(float)((double)_updateDone/_updateTotal):0;
     NSString *title=nil, *detail=nil, *action=nil;
     BOOL enabled=NO;
-    if (_starting) {
+    if (_running) {
+        title=@"Running";
+        detail=@"The game is open. Quit from its own menu to return here.";
+        action=@"Running";
+    } else if (_starting) {
         title=@"Starting…";
         detail=_detailLabel.text.length?_detailLabel.text:@"Preparing to launch. Keep this app open.";
         action=@"Starting…";
     } else if (_startupFailure) {
         title=@"Could not start";
-        detail=_sessionUsed?@"Close this app from the app switcher, then reopen it to try again. Details are available in Diagnostics and logs.":@"Try again. Details are available in Diagnostics and logs.";
-        action=_sessionUsed?@"Reopen to retry":@"Try again"; enabled=!_sessionUsed;
+        if (_sessionUsed) {
+            detail=@"WolkaraForever could not start the game in this session. Close WolkaraForever and reopen it to try again. Details are available in Diagnostics and logs.";
+            action=@"Close WolkaraForever"; enabled=YES;
+        } else {
+            detail=@"Try again. Details are available in Diagnostics and logs.";
+            action=@"Try again"; enabled=YES;
+        }
     } else if (_sessionUsed) {
-        title=@"Reopen to start again";
-        detail=@"Close the app from the app switcher before starting another session.";
-        action=@"Session ended";
+        title=@"Game closed";
+        detail=@"WolkaraForever cannot start the game again in this process. Close WolkaraForever and reopen it to play again.";
+        action=@"Close WolkaraForever"; enabled=YES;
     } else if (_busy && _updating) {
         title=@"Updating your game…";
         NSDictionary *phases=@{@"snapshot":@"Preparing the installation",
@@ -670,7 +707,13 @@ static NSNotificationName const TKForeverLayoutDidChange = @"AKGamepadLayoutDidC
     }
     _stateLabel.text=title; _detailLabel.text=detail;
     [self configureButton:_primaryButton title:action filled:YES]; _primaryButton.enabled=enabled;
-    _refreshItem.enabled=!_busy && !_sessionUsed && !_starting;
+    _refreshItem.enabled=!_busy && !_sessionUsed && !_starting && !_running;
+    for (UIButton *button in @[_editionButton,_preferencesButton,_addonsButton,_macEverButton,_addonsDirectoryButton,
+                                _permissionsButton,_voiceButton,_voiceTestButton,_backupButton,_resetButton,
+                                _restoreButton,_settingsFolderButton])
+        [self stylePlainButton:button];
+    [self stylePrimaryButton];
+    _diagnosticsButton.tintColor=_diagnosticsButton.enabled?Gold():RowGrey();
     if (_busy) [_activity startAnimating]; else [_activity stopAnimating];
     if (_checkedAt) {
         NSString *time=[NSDateFormatter localizedStringFromDate:_checkedAt dateStyle:NSDateFormatterNoStyle timeStyle:NSDateFormatterShortStyle];
@@ -1062,6 +1105,21 @@ static NSNotificationName const TKForeverLayoutDidChange = @"AKGamepadLayoutDidC
     return directory?[directory stringByAppendingPathComponent:@"Interface/AddOns"]:nil;
 }
 
+- (void)previewAddonBrowser {
+    [self loadViewIfNeeded];
+    NSError *error=nil;
+    // The preview can arrive before the first check has finished; resolve the
+    // library's app directly rather than depending on _installation.
+    TKApp *app=_installation.app;
+    if (!app) { [_library discover]; app=_library.defaultApp; }
+    NSString *directory=app?[_library workingDirectoryForApp:app error:&error]:nil;
+    NSString *addons=directory?[directory stringByAppendingPathComponent:@"Interface/AddOns"]:nil;
+    if (!addons) { WKLog("ui", @"addons preview: %@", error.localizedDescription ?: @"no installation"); return; }
+    NSString *edition=_product[@"name"]?:@"Forever · Beta";
+    TKWoWAddonManagerViewController *manager=[[TKWoWAddonManagerViewController alloc]
+        initWithAddOnsDirectory:addons edition:edition browse:YES];
+    [self presentPage:manager];
+}
 - (void)manageAddons {
     NSError *error=nil;
     NSString *addons=[self addOnsDirectoryWithError:&error];
@@ -1072,16 +1130,29 @@ static NSNotificationName const TKForeverLayoutDidChange = @"AKGamepadLayoutDidC
 - (UILabel *)startupStatusLabel { [self loadViewIfNeeded]; return _detailLabel; }
 - (void)beginStartup {
     [self loadViewIfNeeded];
-    [self cancel]; _starting=YES; _startupFailure=nil;
+    [self cancel]; _starting=YES; _running=NO; _startupFailure=nil;
     _detailLabel.text=@"Preparing to launch. Keep this app open.";
     _diagnosticsButton.hidden=YES;
     [self render]; [_launchProgress start];
     [self.view layoutIfNeeded];
 }
 - (void)finishStartupWithMessage:(NSString *)message failed:(BOOL)failed {
-    _starting=NO; _startupFailure=failed?message:nil;
+    _starting=NO; _running=NO; _startupFailure=failed?message:nil;
     [_launchProgress stop]; _diagnosticsButton.hidden=!failed;
     [self render];
+}
+// Called when the guest's own window appears. Until then the page says it is
+// starting; from here the game is running, not loading.
+- (void)guestDidStartRunning {
+    if (!_starting || _running) return;
+    _starting=NO; _running=YES;
+    [_launchProgress stop];
+    WKLog("ui", @"home: the game is running");
+    [self render];
+}
+- (void)closeApp {
+    WKLog("ui", @"home: closing the app at the user's request");
+    exit(0);
 }
 - (void)diagnostics { if (self.showDiagnostics) self.showDiagnostics(); }
 - (void)about {

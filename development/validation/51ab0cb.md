@@ -1,5 +1,8 @@
 # Validation: 51ab0cb
 
+> **Historical record.** Evidence written by `validate.sh` for this commit; it is not
+> current guidance. See [docs/README.md](../../docs/README.md) for the live documents.
+
 - Commit: `51ab0cb82ae1ba60a949683b2e26bd4d523ab498` (branch `rebrand/wolkaraforever`)
 - Recorded: 2026-10-21 20:55:41Z
 - Working tree: clean

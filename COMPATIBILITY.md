@@ -297,7 +297,7 @@ so the next launch aborts with the client's own alert. Before the guest runs,
 `runNativeGame:` rewrites each bucket's newest generation from the newest
 generation that validates and carries rows, using the same validity checks the
 CASC store applies when it opens, and removes the client's leftover
-`<bucket>tempfile.idx` (`TKWoWCASCRepairIndexGenerations`, `launcher/WoW/CASC.m`).
+`<bucket>tempfile.idx` (`TKWoWCASCRepairIndexGenerations`, `wolkaraforever/WoW/CASC.m`).
 Verified on Dadpad by planting the exact damage and launching three times in a
 row: each launch from a planted truncated generation (buckets `0b` and `0c`) logged
 the rewrite and reached the client's intro cinematic with no TACT error and no

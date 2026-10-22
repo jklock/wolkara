@@ -23,6 +23,15 @@ manage add-ons, set up voice input, and start the game.
    content only; they do not change the game's login region.
 3. Keep WolkaraForever open while it downloads or installs an update. **Play** becomes
    available only after the selected client is ready.
+
+While the game is starting, the home page says **Starting…** and the rows that would
+change something are grey; they become gold again when they are usable. Once the game's
+window is up, the page says **Running** and stays that way while you play. Quit the game
+from its own menu and WolkaraForever returns here with **Game closed**: the game can only
+be entered once in a process, so the only way to play again is to close WolkaraForever and
+open it again. The **Close WolkaraForever** button on that state does exactly that — if the
+game's window is still on screen after quitting from inside, closing the app is how you
+get back to the home screen.
 4. Tap **Play**, wait for startup preparation to finish, then sign in to the
    game yourself.
 
@@ -45,9 +54,16 @@ Open **Install Addons (Curse & Direct)** to see the installed packages for the s
   CurseForge Core API key before results can be displayed; enter that key only
   if you have approval to use it. The key is the `$2a$…` string the CurseForge
   developer console issues for the approved application, stored only in this
-  device's Keychain. Once access is configured, search, category,
-  sort, and ordering controls narrow the remote list; their available
-  categories can change with CurseForge.
+  device's Keychain. Once access is configured, the page lists real projects the
+  way the CurseForge site does: artwork, name and current file, downloads, a
+  popularity rank, the last update date, category, game version and author.
+  **Sort** offers Featured, Popularity, Last Updated, Name, Author, Total
+  Downloads and Release Date, and tapping the field in use reverses its order;
+  **Filters** narrows to one game version or category (and can be cleared), and
+  the count above the list follows both. **Columns** chooses which of the six
+  fields the list shows, and the choice is remembered; it never hides the name.
+  Sorting and filtering are the site's own; the rank is CurseForge's, not a
+  position in the current list.
 - The **plus** button opens Files so you can select one add-on archive to
   import. **Open Add-on Directory** opens the app's add-on folder. Neither
   action changes an add-on until you choose an item or complete its action.

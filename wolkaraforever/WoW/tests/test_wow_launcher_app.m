@@ -315,6 +315,14 @@ static void TestAddons(void) {
     [files removeItemAtPath:root error:NULL];
 }
 
+// The project cell is private to AddonManager.m; the fixture builds one by
+// class name and calls its configuration method, so declare it here.
+@interface UITableViewCell (TKAddonProjectCellProbe)
+- (void)configureWithProject:(NSDictionary *)project file:(NSDictionary *)file
+                        rank:(NSString *)rank columns:(NSUInteger)columns
+                 gameVersion:(NSString *)gameVersion compact:(BOOL)compact;
+@end
+
 @interface TKWoWFixtureDelegate : UIResponder <UIWindowSceneDelegate>
 @property(nonatomic) UIWindow *window;
 @property(nonatomic) TKWoWViewController *controller;
@@ -386,7 +394,39 @@ static void TestAddons(void) {
     TKWoWAddonManagerViewController *manager=[[TKWoWAddonManagerViewController alloc] initWithAddOnsDirectory:NSTemporaryDirectory() edition:@"Forever · Beta"];
     [manager loadViewIfNeeded];
     [manager.view layoutIfNeeded];
-    assert(manager.tableView.tableHeaderView.bounds.size.height==178);
+    assert(manager.tableView.tableHeaderView.bounds.size.height==212);
+    // The browser's controls and the project row are part of the same page; the
+    // row renders the site's columns from one API object.
+    assert(Find(manager.view,@"wow.addons.sort") && Find(manager.view,@"wow.addons.filters") &&
+           Find(manager.view,@"wow.addons.columns") && Find(manager.view,@"wow.addons.count"));
+    Class cellClass=NSClassFromString(@"TKAddonProjectCell");
+    assert(cellClass);
+    UITableViewCell *cell=[[cellClass alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"probe"];
+    NSDictionary *probeProject=@{
+        @"id":@61284, @"name":@"Details! Damage Meter", @"summary":@"Combat analysis",
+        @"downloadCount":@371357599,
+        @"logo":@{@"thumbnailUrl":@"https://media.forgecdn.net/avatars/thumbnails/109/996/256/256/example.png"},
+        @"categories":@[@{@"id":@1014,@"name":@"Boss Encounters"}],
+        @"authors":@[@{@"name":@"Terciob"}],
+        @"latestFiles":@[@{@"displayName":@"Details-Details.20261015.15339", @"fileDate":@"2026-10-16T01:41:29.867Z",
+                           @"gameVersions":@[@"1.60.1"], @"isAvailable":@YES}],
+    };
+    NSDictionary *probeFile=probeProject[@"latestFiles"][0];
+    [cell configureWithProject:probeProject file:probeFile rank:@"1" columns:0x3f gameVersion:@"1.60.1" compact:NO];
+    [cell layoutIfNeeded];
+    assert([((UILabel *)Find(cell,@"wow.addons.name")).text isEqual:@"Details! Damage Meter"]);
+    assert([((UILabel *)Find(cell,@"wow.addons.file")).text isEqual:@"Details-Details.20261015.15339"]);
+    assert([((UILabel *)Find(cell,@"wow.addons.value.downloads")).text isEqual:@"371.4M"]);
+    assert([((UILabel *)Find(cell,@"wow.addons.value.top")).text isEqual:@"1"]);
+    assert([((UILabel *)Find(cell,@"wow.addons.value.latest")).text isEqual:@"10/16/2026"]);
+    assert([((UILabel *)Find(cell,@"wow.addons.value.category")).text isEqual:@"Boss Encounters"]);
+    assert([((UILabel *)Find(cell,@"wow.addons.value.game version")).text isEqual:@"1.60.1"]);
+    assert([((UILabel *)Find(cell,@"wow.addons.value.author")).text isEqual:@"Terciob"]);
+    // Turning a column off hides it; compact width keeps only the two that fit.
+    [cell configureWithProject:probeProject file:probeFile rank:@"1" columns:0x3f gameVersion:@"1.60.1" compact:NO];
+    [cell configureWithProject:probeProject file:probeFile rank:@"1" columns:0x3f gameVersion:@"1.60.1" compact:YES];
+    assert(((UILabel *)Find(cell,@"wow.addons.value.downloads")).hidden==NO);
+    assert(((UILabel *)Find(cell,@"wow.addons.value.category")).hidden==YES);
     // The launcher opens the manager over itself as a popup now, so the path to
     // reproduce is a presentation. Loading the manager's view during it must not
     // raise, and its search field must be hit-testable and able to take first
@@ -912,25 +952,41 @@ static NSString *configBeforeReset;
     for (NSString *identifier in @[@"wow.performance.backup", @"wow.performance.reset",
                                    @"wow.performance.restore", @"wow.performance.settingsFolder"])
         assert(![self row:identifier].enabled);
+    // All text is grey while starting, including the two navigation rows that
+    // used to stay gold.
+    assert(![self row:@"wow.addons.macEver"].enabled);
+    assert(![self row:@"wow.permissions"].enabled);
     assert(![self toggle:@"wow.performance.gamepad"].enabled);
     assert(![self toggle:@"wow.performance.overlay"].enabled);
     assert(self.controller.navigationController.viewControllers.count==1);
     unsigned before=atomic_load(&requests);
-    [self.controller refresh]; [self tap];
+    [self.controller refresh];
+    if ([self primary].enabled) [self tap];
     [NSNotificationCenter.defaultCenter postNotificationName:UIApplicationDidBecomeActiveNotification object:nil];
     assert(atomic_load(&requests)==before && self.launches==1);
     [self capture:@"wow-starting.png"];
-    [self.controller finishStartupWithMessage:@"Synthetic startup failure" failed:YES];
-    assert([[self status] isEqual:@"Could not start"] && ![self primary].enabled);
-    assert(self.controller.launchProgress.hidden && !self.controller.diagnosticsButton.hidden);
-    [self capture:@"wow-startup-failed.png"];
+    // The guest's window is the transition from loading to running.
+    [self.controller guestDidStartRunning];
+    assert([[self status] isEqual:@"Running"] && ![self primary].enabled);
+    assert(self.controller.launchProgress.hidden);
+    [self capture:@"wow-running.png"];
     [self.controller finishStartupWithMessage:@"Session ended" failed:NO];
-    assert(![self primary].enabled && self.controller.diagnosticsButton.hidden);
-    // A recoverable preflight error must leave another attempt possible.
+    assert([[self status] isEqual:@"Game closed"] && [self primary].enabled);
+    assert([[self primary].currentTitle isEqual:@"Close WolkaraForever"]);
+    assert(self.controller.diagnosticsButton.hidden);
+    // A full startup that failed also cannot be retried here: the same close
+    // action, not a Play that answers nothing.
+    [self.controller beginStartup];
+    [self.controller finishStartupWithMessage:@"Synthetic startup failure" failed:YES];
+    assert([[self status] isEqual:@"Could not start"] && [self primary].enabled);
+    assert([[self primary].currentTitle isEqual:@"Close WolkaraForever"]);
+    [self capture:@"wow-startup-failed.png"];
+    // A recoverable preflight error, with no session used, must leave another
+    // attempt possible.
     self.controller.sessionUsed=NO;
     [self.controller beginStartup];
     [self.controller finishStartupWithMessage:@"Synthetic missing container" failed:YES];
-    assert([self primary].enabled);
+    assert([self primary].enabled && [[self primary].currentTitle isEqual:@"Try again"]);
     [self.controller about];
     UITextView *credits=(id)self.controller.navigationController.topViewController.view;
     // Our own notice, which carries the licences of what the launcher's readers adapt.

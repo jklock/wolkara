@@ -1,5 +1,10 @@
 # WolkaraForever launcher
 
+> **Paths.** A bare `tools/<script>` in this page means `wolkaraforever/tools/<script>`
+> when the layer provides it, otherwise the platform's `platform/tools/<script>` (or
+> `build/platform/tools/<script>` after `prepare.sh`). The launcher's code is in
+> `wolkaraforever/WoW/`.
+
 Current branch: `main`, based on the touch-controller implementation
 at `b55084a` (2026-10-06). The name, original W/portal icon and home heading are
 now WolkaraForever. The engine, Xcode targets and bundle IDs retain their existing names
@@ -31,7 +36,7 @@ External JIT in the diagnostics/sideload target, before memory reservation.
 An old saved Local signing selection cannot accidentally block an ordinary
 launch. Explicit development arguments retain the previous resolver and can
 still select another mode. Hiding the selector does not remove enrolment, JIT
-or memory requirements; see [the distribution plan](WOLKAREFOREVER_DISTRIBUTION.md).
+or memory requirements; see [the distribution plan](WOLKARAFOREVER_DISTRIBUTION.md).
 
 - Remembers Forever Beta, Classic Era, Classic, Retail or Retail Beta, region
   and language. Forever currently maps to `wow_classic_beta`; a listed edition

@@ -1,5 +1,10 @@
 # Architecture
 
+> **Paths.** The engine is vendored under `platform/` and is never edited by hand; the
+> fork's layer is `wolkaraforever/`. A bare `tools/<script>` below means the platform's
+> `platform/tools/<script>` (or `build/platform/tools/<script>` after `prepare.sh`).
+> `runtime/`, `translation/` and `authorization/` live under `platform/`.
+
 Tolkara has the same shape as Wine: a loader that places an unmodified program
 in memory, and a set of libraries that implement the operating-system interface
 that program expects. macOS and iPadOS share a CPU architecture, a kernel, an
@@ -206,7 +211,7 @@ executable. Nothing of the application is signed.
 ## launcher/ and profiles/
 
 The launcher is a small UIKit app built around a library of applications
-(`launcher/App/AppLibrary.m`). Adding an executable records it once; afterwards
+(`platform/launcher/App/AppLibrary.m`). Adding an executable records it once; afterwards
 it starts with one tap. An executable inside Tolkara's Documents folder runs in
 place, with the folder containing its `.app` bundle as the working directory, so
 it finds its resources. One picked from elsewhere is copied, verified, into

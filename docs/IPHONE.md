@@ -1,5 +1,9 @@
 # Experimental iPhone support
 
+> **Paths.** A bare `tools/<script>` in this page means `wolkaraforever/tools/<script>`
+> when the layer provides it, otherwise the platform's `platform/tools/<script>` (or
+> `build/platform/tools/<script>` after `prepare.sh`).
+
 Tolkara can be built for both iPhone and iPad from the same project. The
 physical iPhone result is limited to an iPhone 16 Pro Max running iOS 27.0
 with Developer service. On 2026-10-02 the user confirmed login and about two

@@ -717,13 +717,18 @@ static void AKSelfTestRunCurseForge(AKSelfTestRecorder *recorder) {
     dispatch_semaphore_t done = dispatch_semaphore_create(0);
     __block NSError *requestError = nil;
     __block NSUInteger projects = 0;
+    __block NSDictionary *first = nil;
     // The search endpoint is authenticated (the categories list is not), so it is
     // the one that says whether this key is actually accepted.
-    [client browseModsWithQuery:@"wow" sortField:2 sortOrder:@"desc" categoryID:nil index:0
+    [client browseModsWithQuery:@"wow" sortField:2 sortOrder:@"desc" categoryID:nil
+                    gameVersion:@"1.60.1" classID:nil index:0
                      completion:^(id value, NSError *failure) {
         requestError = failure;
-        if ([value isKindOfClass:NSDictionary.class] && [value[@"data"] isKindOfClass:NSArray.class])
-            projects = [value[@"data"] count];
+        if ([value isKindOfClass:NSDictionary.class] && [value[@"data"] isKindOfClass:NSArray.class]) {
+            NSArray *data = value[@"data"];
+            projects = [data count];
+            first = [data.firstObject isKindOfClass:NSDictionary.class] ? data.firstObject : nil;
+        }
         dispatch_semaphore_signal(done);
     }];
     dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, 25 * NSEC_PER_SEC));
@@ -731,6 +736,22 @@ static void AKSelfTestRunCurseForge(AKSelfTestRecorder *recorder) {
                  _:@"CurseForge accepts the stored key (authenticated search)"];
     if (requestError)
         WKLog("selftest", @"CurseForge search failed: %@", requestError.localizedDescription);
+    // What the browser draws: artwork, metadata and a file for this version.
+    NSDictionary *logo = [first[@"logo"] isKindOfClass:NSDictionary.class] ? first[@"logo"] : nil;
+    NSString *logoURL = [logo[@"thumbnailUrl"] isKindOfClass:NSString.class] ? logo[@"thumbnailUrl"] : nil;
+    [recorder check:logoURL.length > 0 _:@"the first project carries artwork"];
+    NSArray *authors = [first[@"authors"] isKindOfClass:NSArray.class] ? first[@"authors"] : @[];
+    NSArray *categories = [first[@"categories"] isKindOfClass:NSArray.class] ? first[@"categories"] : @[];
+    [recorder check:authors.count > 0 && categories.count > 0 _:@"the first project carries author and category"];
+    NSArray *files = [first[@"latestFiles"] isKindOfClass:NSArray.class] ? first[@"latestFiles"] : @[];
+    BOOL compatible = NO;
+    for (NSDictionary *file in files) {
+        if (![file isKindOfClass:NSDictionary.class] || ![file[@"isAvailable"] boolValue]) continue;
+        if ([file[@"gameVersions"] isKindOfClass:NSArray.class] && [file[@"gameVersions"] containsObject:@"1.60.1"]) {
+            compatible = YES; break;
+        }
+    }
+    [recorder check:compatible _:@"the first project has an available 1.60.1 file"];
     recorder.detail = [NSString stringWithFormat:@"stored key sha256 %@, %lu projects",
                        hash, (unsigned long)projects];
 }

@@ -28,7 +28,7 @@ protocols and formats. No code was copied or translated from these projects.
 
 `translation/CoreServices/USKeyMap.h` is a table of the characters produced by
 a standard US ANSI keyboard, checked against macOS behaviour. System trust roots
-are not stored in this repository; `tools/export_system_anchors.m` exports the
+are not stored in this repository; `platform/tools/export_system_anchors.m` exports the
 public certificates from the builder's own Mac at build time. The unsigned build
 published with releases leaves them out.
 
@@ -38,7 +38,7 @@ and add its licence here.
 ## Experimental WoW launcher
 
 The BLTE, install-manifest and encoding-manifest readers in
-`launcher/WoW/Manifest.m` and the archive reader in `launcher/WoW/CASC.m` were adapted using TACTSharp's `BLTE.cs`,
+`wolkaraforever/WoW/Manifest.m` and the archive reader in `wolkaraforever/WoW/CASC.m` were adapted using TACTSharp's `BLTE.cs`,
 `InstallInstance.cs`, `EncodingInstance.cs` and `IndexInstance.cs` (https://github.com/wowdev/TACTSharp).
 This implementation adds bounded parsing, checksum validation and synthetic tests.
 TACTSharp itself and its .NET runtime are not bundled. No game files are included.
@@ -66,7 +66,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
-The local CASC index format and archive footer reader in `launcher/WoW/CASC.m`
+The local CASC index format and archive footer reader in `wolkaraforever/WoW/CASC.m`
 were adapted with reference to CascLib's `CascIndexFiles.cpp` and
 `CascStructs.h` (https://github.com/ladislav-zezula/CascLib).
 CascLib is not bundled. Public download/storage format documentation was also
