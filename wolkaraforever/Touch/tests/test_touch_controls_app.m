@@ -6,6 +6,12 @@
 #import "TouchGamepadLayout.h"
 #include <assert.h>
 
+// The keys the layer supplies when iPadOS has no software keyboard to give. The
+// controls keep it private; the fixture asks for it the way the controls do.
+@interface AKTouchControls (LayerKeyboardFixture)
+- (void)showLayerKeyboard;
+@end
+
 @interface AKInputFixtureView : NSView
 @property CATextLayer *heading, *instructions, *result;
 @property NSMutableString *text;
@@ -528,6 +534,30 @@ static void AKFixtureInputSource(void *context) {
                 [controls touchSpecialKey:53 characters:@"\x1b"];
                 AKDrainFixtureEvents();
                 assert(!fixture.text.length);
+                // --- the layer's own keys ------------------------------------
+                //
+                // iPadOS reports the software keyboard with no keys on screen when
+                // it believes a hardware keyboard is attached (measured on Dadpad,
+                // 2026-10-22: "system keyboard shown draftFirstResponder=1
+                // height=0"). A custom input view is shown whatever the hardware
+                // says, so it is the login field's only route to an @.
+                [controls showLayerKeyboard];
+                UIView *layer = [(UITextView *)AKFindInputView(host, @"wolkaraforever.keyboard.draft") inputView];
+                assert(layer != nil && layer.bounds.size.height > 100);
+                UIButton *atKey = (UIButton *)AKFindInputView(layer, @"wolkaraforever.layerkey.@");
+                assert(atKey != nil && [atKey.titleLabel.text isEqual:@"@"]);
+                assert(AKFindInputView(layer, @"wolkaraforever.layerkey.page") != nil);
+                assert(AKFindInputView(layer, @"wolkaraforever.layerkey.delete") != nil);
+                assert(AKFindInputView(layer, @"wolkaraforever.layerkey.system") != nil);
+                [atKey sendActionsForControlEvents:UIControlEventTouchUpInside];
+                AKDrainFixtureEvents();
+                assert([fixture.text isEqual:@"@"]);
+                // The layer's keyboard types into the guest, so put the field back
+                // where the key checks below expect it before going on.
+                [controls dismissKeyboard];
+                [host layoutIfNeeded];
+                [fixture.text setString:@""];
+                fixture.selection = NSMakeRange(0, 0);
                 NSLog(@"native: the announced text target answers dictation and reaches the guest");
                 // The one control that leaves a guest screen with no quit of its own. It asks
                 // the guest's own application object to terminate, which is the game's
