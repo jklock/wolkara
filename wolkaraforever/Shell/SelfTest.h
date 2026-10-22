@@ -40,6 +40,11 @@ extern NSString *const AKSelfTestForeverUIClean;
 /// logs the key's length and SHA-256 prefix - never the key - and the HTTP
 /// outcome, so a rejected key can be told apart from a rejected paste.
 extern NSString *const AKSelfTestCurseForge;
+/// Recovery for an uninstall: the pairing record survives in the Keychain, but
+/// the container (and `TKEnrolledDeviceIdentifier`) does not. This restores that
+/// default from the launch environment (TK_DEVICE). Diagnostic only; it cannot
+/// create trust, only point at a record that already exists.
+extern NSString *const AKSelfTestEnrolledDevice;
 
 // Runs one self-test and logs the verdict the matrix greps:
 //   selftest: <name> PASS <passed>/<total> checks (<what was exercised>)

@@ -169,6 +169,27 @@ struct ForeverUIArchiveTests {
                                                 edition: "wow_classic_beta", error: &error),
               "duplicate manifest paths are refused")
 
+        let badManifestPath = wtf.appendingPathComponent("Backups/WoW-UI-2000-01-06T00-00-00Z.zip")
+        try forge(at: badManifestPath, entries: [("WTF/a.txt", Data("a".utf8))],
+                  manifestFiles: [("WTF/a.txt", Data("a".utf8)), ("../outside.txt", Data("x".utf8))],
+                  edition: "wow_classic_beta")
+        check(!TKForeverUIArchive.restoreBackup(named: badManifestPath.lastPathComponent,
+                                                inWorkingDirectory: root.path,
+                                                edition: "wow_classic_beta", error: &error),
+              "a manifest path outside WTF and Interface is refused")
+
+        // A link in Backups is not a backup, even when it points at a valid ZIP.
+        let real = work.appendingPathComponent("elsewhere.zip")
+        try forge(at: real, entries: [("WTF/a.txt", Data("a".utf8))],
+                  manifestFiles: [("WTF/a.txt", Data("a".utf8))], edition: "wow_classic_beta")
+        let backupLink = wtf.appendingPathComponent("Backups/WoW-UI-2000-01-07T00-00-00Z.zip")
+        try manager.createSymbolicLink(at: backupLink, withDestinationURL: real)
+        check(!TKForeverUIArchive.restoreBackup(named: backupLink.lastPathComponent,
+                                                inWorkingDirectory: root.path,
+                                                edition: "wow_classic_beta", error: &error),
+              "a symbolic link is not accepted as a backup")
+        try manager.removeItem(at: backupLink)
+
         let wrongEdition = wtf.appendingPathComponent("Backups/WoW-UI-2000-01-03T00-00-00Z.zip")
         try forge(at: wrongEdition, entries: [("WTF/a.txt", Data("a".utf8))],
                   manifestFiles: [("WTF/a.txt", Data("a".utf8))], edition: "wow_classic_era")

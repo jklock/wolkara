@@ -34,10 +34,15 @@ except Exception:
     sys.exit(3)
 for app in apps:
     if app.get("bundleIdentifier") == sys.argv[1]:
-        print(app.get("url", ""))
+        url = app.get("url") or ""
+        if not url:
+            sys.exit(4)          # installed, but the catalogue gave no path
+        print(url)
         break
 ' "$bundle") && parse=0 || parse=$?
     if [ "$parse" -ne 0 ]; then
+        # Includes "installed, but no path": never conclude "nothing running"
+        # from a catalogue that did not answer the question.
         pattern=$generic
     elif [ -z "$url" ]; then
         # The catalogue was read and this bundle is not in it: this install has

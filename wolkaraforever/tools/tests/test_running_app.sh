@@ -80,5 +80,11 @@ JSON
 export STUB_APPS="$work/apps-odd"
 expect 111 "an unparsable installation path falls back to the conservative match"
 
+cat > "$work/apps-nourl" <<'JSON'
+{"result":{"apps":[{"bundleIdentifier":"local.target"}]}}
+JSON
+export STUB_APPS="$work/apps-nourl"
+expect 111 "an installed bundle with no catalogue path falls back to the conservative match"
+
 [ "$failed" = 0 ] && echo "RUNNING_APP_PASS: bundle-aware guard, side-by-side builds, plugins and conservative fallback."
 exit "$failed"
