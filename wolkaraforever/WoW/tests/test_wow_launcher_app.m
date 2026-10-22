@@ -738,8 +738,8 @@ static void TestAddons(void) {
         @"wow.box.voice": @[@"wow.heading.voice", @"wow.permissions", @"wow.voice", @"wow.voice.test"],
         @"wow.box.performance": @[@"wow.heading.performance", @"wow.performance.backup",
                                   @"wow.performance.reset", @"wow.performance.restore",
-                                  @"wow.performance.gamepad", @"wow.performance.overlay",
-                                  @"wow.performance.settingsFolder"],
+                                  @"wow.performance.settingsFolder", @"wow.performance.gamepad",
+                                  @"wow.performance.overlay"],
     };
     for (UIView *box in boxes) {
         UIStackView *stack = box.subviews.firstObject;
@@ -780,6 +780,12 @@ static void TestAddons(void) {
         assert([self row:identifier].enabled);
     assert([self toggle:@"wow.performance.gamepad"].enabled);
     assert([self toggle:@"wow.performance.overlay"].enabled);
+    // A usable switch row reads in the same gold as the button rows, not in
+    // white: the two styles used to disagree on the same page.
+    assert(CGColorEqualToColor([(UILabel *)Find(self.controller.view, @"wow.performance.gamepad.label") textColor].CGColor,
+                               [(UIButton *)Find(self.controller.view, @"wow.performance.backup") configuration].baseForegroundColor.CGColor));
+    assert(CGColorEqualToColor([(UILabel *)Find(self.controller.view, @"wow.performance.overlay.label") textColor].CGColor,
+                               [(UIButton *)Find(self.controller.view, @"wow.performance.settingsFolder") configuration].baseForegroundColor.CGColor));
 
     // --- Download Mac-Ever asks for exactly the CurseForge project page, and no browser opens
     __block NSURL *requested = nil;
@@ -958,6 +964,12 @@ static NSString *configBeforeReset;
     assert(![self row:@"wow.permissions"].enabled);
     assert(![self toggle:@"wow.performance.gamepad"].enabled);
     assert(![self toggle:@"wow.performance.overlay"].enabled);
+    // ...and their labels are the same grey as the rows beside them, rather than
+    // keeping the white they use when they are usable.
+    assert(CGColorEqualToColor([(UILabel *)Find(self.controller.view, @"wow.performance.gamepad.label") textColor].CGColor,
+                               [(UIButton *)Find(self.controller.view, @"wow.addons.macEver") configuration].baseForegroundColor.CGColor));
+    assert(CGColorEqualToColor([(UILabel *)Find(self.controller.view, @"wow.performance.overlay.label") textColor].CGColor,
+                               [(UIButton *)Find(self.controller.view, @"wow.permissions") configuration].baseForegroundColor.CGColor));
     assert(self.controller.navigationController.viewControllers.count==1);
     unsigned before=atomic_load(&requests);
     [self.controller refresh];

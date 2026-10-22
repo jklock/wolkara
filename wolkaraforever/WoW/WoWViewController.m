@@ -92,8 +92,9 @@ static NSNotificationName const TKForeverLayoutDidChange = @"AKGamepadLayoutDidC
     _toggle.enabled=enabled;
     // The label follows the row, and the control only shows its own off/on
     // colour: no alpha on the row, which used to make an enabled switch look
-    // the same as a disabled one.
-    _titleLabel.textColor=enabled?UIColor.whiteColor:RowGrey();
+    // the same as a disabled one. Gold is what every other usable row uses, so
+    // an on/off row reads like the buttons above and below it.
+    _titleLabel.textColor=enabled?Gold():RowGrey();
 }
 @end
 
@@ -313,7 +314,7 @@ static NSNotificationName const TKForeverLayoutDidChange = @"AKGamepadLayoutDidC
     UIView *voiceBox=[self sectionBoxWithTitle:@"Voice Manager" identifier:@"wow.box.voice"
         rows:@[_permissionsButton,_voiceButton,_voiceTestButton]];
     UIView *performanceBox=[self sectionBoxWithTitle:@"Performance & UI Manager" identifier:@"wow.box.performance"
-        rows:@[_backupButton,_resetButton,_restoreButton,_gamepadRow,_overlayRow,_settingsFolderButton]];
+        rows:@[_backupButton,_resetButton,_restoreButton,_settingsFolderButton,_gamepadRow,_overlayRow]];
 
     _activity=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
     _activity.color=Gold(); _activity.hidesWhenStopped=YES;
