@@ -487,7 +487,7 @@ static NSNotificationName const TKForeverLayoutDidChange = @"AKGamepadLayoutDidC
     UIButtonConfiguration *configuration=filled?UIButtonConfiguration.filledButtonConfiguration:UIButtonConfiguration.plainButtonConfiguration;
     configuration.title=title; configuration.cornerStyle=UIButtonConfigurationCornerStyleMedium;
     configuration.baseBackgroundColor=Gold(); configuration.baseForegroundColor=filled?[UIColor colorWithRed:0.08 green:0.065 blue:0.035 alpha:1]:Gold();
-    configuration.contentInsets=NSDirectionalEdgeInsetsMake(filled?14:6,12,filled?14:6,12);
+    configuration.contentInsets=NSDirectionalEdgeInsetsMake(filled?14:8,12,filled?14:8,12);
     button.configuration=configuration;
     [button setTitle:title forState:UIControlStateNormal];
 }

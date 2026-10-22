@@ -748,7 +748,7 @@ static void TestAddons(void) {
 - (void)checkFolderPicker {
     // --- nothing backed up yet: Restore says so instead of claiming success
     [[self row:@"wow.performance.restore"] sendActionsForControlEvents:UIControlEventTouchUpInside];
-    [self performSelector:@selector(checkNoBackupYet) withObject:nil afterDelay:0.5];
+    [self performSelector:@selector(checkNoBackupYet) withObject:nil afterDelay:0.9];
 }
 - (void)checkNoBackupYet {
     UIAlertController *alert = (id)self.controller.presentedViewController;
@@ -758,7 +758,7 @@ static void TestAddons(void) {
     [self dismissPresented];
     assert(stubBackups == 0 && stubRestores == 0);
     [[self row:@"wow.performance.backup"] sendActionsForControlEvents:UIControlEventTouchUpInside];
-    [self performSelector:@selector(checkBackup) withObject:nil afterDelay:0.5];
+    [self performSelector:@selector(checkBackup) withObject:nil afterDelay:0.9];
 }
 static NSString *configBeforeReset;
 - (void)checkBackup {
