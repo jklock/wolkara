@@ -543,11 +543,6 @@ static NSString *AKSelfTestCVarName(NSString *line) {
     return tokens[1];
 }
 
-static BOOL AKSelfTestGraphicsLine(NSString *line) {
-    NSString *name = AKSelfTestCVarName(line).lowercaseString;
-    return [name hasPrefix:@"gx"] || [name hasPrefix:@"graphics"];
-}
-
 static NSArray<NSString *> *AKSelfTestLines(NSString *text) {
     NSMutableArray<NSString *> *lines = [[text componentsSeparatedByString:@"\n"] mutableCopy];
     if (lines.count && [lines.lastObject length] == 0) [lines removeLastObject];
@@ -579,15 +574,24 @@ static void AKSelfTestRunForeverUI(AKSelfTestRecorder *recorder) {
     BOOL reset = [TKForeverUI resetGraphicsInWorkingDirectory:directory error:&error];
     [recorder check:reset _:[NSString stringWithFormat:@"reset ran (%@)", error.localizedDescription ?: @"ok"]];
     NSString *afterReset = AKSelfTestReadText(configPath);
-    BOOL anyGraphics = [AKSelfTestLines(afterReset) indexOfObjectPassingTest:^BOOL(NSString *line, NSUInteger index, BOOL *stop) {
-        (void)index; (void)stop;
-        return AKSelfTestGraphicsLine(line);
-    }] != NSNotFound;
-    [recorder check:afterReset != nil && !anyGraphics _:@"no graphics CVar is left in Config.wtf"];
-    NSMutableArray *expectedKept = [NSMutableArray new];
-    for (NSString *line in AKSelfTestLines(before)) if (!AKSelfTestGraphicsLine(line)) [expectedKept addObject:line];
-    [recorder check:[AKSelfTestLines(afterReset) isEqualToArray:expectedKept]
-                 _:@"account, locale, audio, UI, input, gamepad, bindings and unknown settings are byte-identical"];
+    // The contract, stated exactly: the allowlist goes, every other byte stays.
+    // A graphics CVar the allowlist does not name is preserved by design - the
+    // reset never guesses - so the check is the allowlist's own set, not a
+    // prefix. The line parser above is still independent of the production one.
+    NSSet<NSString *> *allowlist = TKForeverUIGraphicsCVars();
+    NSMutableSet<NSString *> *lowercaseAllowlist = [NSMutableSet new];
+    for (NSString *name in allowlist) [lowercaseAllowlist addObject:name.lowercaseString];
+    [recorder check:allowlist.count > 0 _:@"the reset has an explicit graphics allowlist"];
+    NSMutableArray<NSString *> *expectedKept = [NSMutableArray new];
+    NSUInteger removed = 0;
+    for (NSString *line in AKSelfTestLines(before)) {
+        NSString *name = AKSelfTestCVarName(line);
+        if (name && [lowercaseAllowlist containsObject:name.lowercaseString]) removed++;
+        else [expectedKept addObject:line];
+    }
+    [recorder check:removed > 0 _:@"this installation's Config.wtf carries graphics settings to reset"];
+    [recorder check:afterReset != nil && [AKSelfTestLines(afterReset) isEqualToArray:expectedKept]
+                 _:@"the reset removed exactly the allowlist, and every other line is byte-identical"];
 
     // --- restore brings the whole UI back, which is also what leaves the device as it was
     error = nil;
