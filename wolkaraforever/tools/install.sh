@@ -76,10 +76,11 @@ trap finish_install EXIT
 # The main app binary, not its extensions: the path of an extension is
 # .../Tolkara.app/PlugIns/<Name>.appex/<Name>, which does not contain Tolkara.app/Tolkara.
 app_pid() {
-    # grep -E, not sed: BSD sed has no \| alternation, and a pattern that silently matches
-    # nothing would report "nothing running" for a live game - the case this guard is for.
-    xcrun devicectl device info processes --device "$DEVICE" 2>/dev/null |
-        grep -E "Tolkara\.app/Tolkara([[:space:]]|$)" | grep -v "\.appex" | awk 'NR==1 { print $1 }'
+    # Only a process running *this* bundle's installed executable is the game this
+    # install would replace. Another Tolkara build can be installed side by side
+    # (the pre-rename bundle may be the one holding the game); see
+    # running_app.sh. The answer stays conservative when the catalogue is unreadable.
+    "$ROOT/wolkaraforever/tools/running_app.sh" "$DEVICE" "$bundle"
 }
 
 if [ "$build_only" = 1 ]; then
