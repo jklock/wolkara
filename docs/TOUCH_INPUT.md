@@ -183,11 +183,18 @@ than 150 points, which is the shortcut bar alone, or nothing at all), the contro
 put their own keyboard into the draft editor's input view. A custom input view is
 shown whatever the hardware says, so the keys are there: qwerty, a numbers and
 symbols page, shift, backspace, space, return, `@` and `.` - the characters a login
-field needs - and a `⌨` key that gives the input view back to iPadOS for
-dictation's microphone. Typed characters take the same route dictation's do
-(`touchInsertText:`), so the field the game has focused receives ordinary typing;
-each key logs `wolkaraforever.layerkey.*` in the accessibility tree, and the
-transition is logged as `the layer's own keyboard is up`.
+field needs - and two keys of their own. `⌨` gives the input view back to iPadOS
+for the system keyboard's microphone; `🎤` starts and stops WolkaraForever's own
+dictation instead, because the system keyboard's microphone is a key on a keyboard
+iPadOS may not be showing at all. That key posts
+`AKTouchDictationToggleNotification`, which the shell answers by toggling
+`AKDictation` - the keyboard module cannot include the voice module, and the shell
+is where they meet - and it does nothing when no game text input has registered,
+so a microphone is never opened over a loading screen. Typed characters take the
+same route dictation's do (`touchInsertText:`), so the field the game has focused
+receives ordinary typing; each key logs `wolkaraforever.layerkey.*` in the
+accessibility tree, and the transition is logged as `the layer's own keyboard is
+up`.
 
 The state that used to be a dead end is now a keyboard: `hardware keyboard
 attached` and `software keyboard keys are not on screen (height 0 ...)` are

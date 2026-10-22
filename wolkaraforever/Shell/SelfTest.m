@@ -8,6 +8,9 @@
 #import "SelfTest.h"
 #import "WolkaraForeverLog.h"
 #import "../WoW/ForeverUI.h"
+#import "../WoW/AddonCredentialStore.h"
+#import "../WoW/CurseForgeClient.h"
+#import <CommonCrypto/CommonDigest.h>
 #import "../Input/InputElement.h"
 #import "../Input/InputRouter.h"
 #import "../Input/Trigger.h"
@@ -23,6 +26,7 @@ NSString *const AKSelfTestMic = @"mic";
 NSString *const AKSelfTestDictationTarget = @"dictation-target";
 NSString *const AKSelfTestForeverUI = @"forever-ui";
 NSString *const AKSelfTestForeverUIClean = @"forever-ui-clean";
+NSString *const AKSelfTestCurseForge = @"curseforge";
 
 #pragma mark - Recording what happened
 
@@ -543,11 +547,6 @@ static NSString *AKSelfTestCVarName(NSString *line) {
     return tokens[1];
 }
 
-static BOOL AKSelfTestGraphicsLine(NSString *line) {
-    NSString *name = AKSelfTestCVarName(line).lowercaseString;
-    return [name hasPrefix:@"gx"] || [name hasPrefix:@"graphics"];
-}
-
 static NSArray<NSString *> *AKSelfTestLines(NSString *text) {
     NSMutableArray<NSString *> *lines = [[text componentsSeparatedByString:@"\n"] mutableCopy];
     if (lines.count && [lines.lastObject length] == 0) [lines removeLastObject];
@@ -579,13 +578,29 @@ static void AKSelfTestRunForeverUI(AKSelfTestRecorder *recorder) {
     BOOL reset = [TKForeverUI resetGraphicsInWorkingDirectory:directory error:&error];
     [recorder check:reset _:[NSString stringWithFormat:@"reset ran (%@)", error.localizedDescription ?: @"ok"]];
     NSString *afterReset = AKSelfTestReadText(configPath);
-    BOOL graphicsLeft = NO;
-    for (NSString *line in AKSelfTestLines(afterReset)) {
-        if (AKSelfTestGraphicsLine(line)) { graphicsLeft = YES; break; }
+    // The contract, stated exactly: the allowlist goes, every other byte stays. A graphics
+    // CVar the allowlist does not name is preserved by design - the reset never guesses - so
+    // the check is the allowlist's own set, not a name prefix. A prefix test ("gx…") reads
+    // as stricter and is wrong in both directions: it fails on CVars the reset keeps on
+    // purpose, which is what it did on this installation (measured 2026-10-22, 13/15).
+    NSSet<NSString *> *allowlist = TKForeverUIGraphicsCVars();
+    NSMutableSet<NSString *> *lowercaseAllowlist = [NSMutableSet new];
+    for (NSString *name in allowlist) [lowercaseAllowlist addObject:name.lowercaseString];
+    [recorder check:allowlist.count > 0 _:@"the reset has an explicit graphics allowlist"];
+    NSMutableArray<NSString *> *expectedKept = [NSMutableArray new];
+    NSUInteger removed = 0;
+    for (NSString *line in AKSelfTestLines(before)) {
+        NSString *name = AKSelfTestCVarName(line);
+        if (name && [lowercaseAllowlist containsObject:name.lowercaseString]) removed++;
+        else [expectedKept addObject:line];
     }
-    [recorder check:afterReset != nil && !graphicsLeft _:@"no graphics CVar is left in Config.wtf"];
-    NSMutableArray *expectedKept = [NSMutableArray new];
-    for (NSString *line in AKSelfTestLines(before)) if (!AKSelfTestGraphicsLine(line)) [expectedKept addObject:line];
+    NSUInteger leftovers = 0;
+    for (NSString *line in AKSelfTestLines(afterReset)) {
+        NSString *name = AKSelfTestCVarName(line);
+        if (name && [lowercaseAllowlist containsObject:name.lowercaseString]) leftovers++;
+    }
+    [recorder check:removed > 0 _:@"this installation's Config.wtf carries graphics settings to reset"];
+    [recorder check:leftovers == 0 _:@"no graphics CVar is left in Config.wtf"];
     [recorder check:[AKSelfTestLines(afterReset) isEqualToArray:expectedKept]
                  _:@"account, locale, audio, UI, input, gamepad, bindings and unknown settings are byte-identical"];
 
@@ -671,6 +686,74 @@ static void AKSelfTestLogVerdict(AKSelfTestRecorder *recorder, NSString *name) {
           (unsigned long)recorder.passed, (unsigned long)recorder.total, recorder.detail);
 }
 
+// The stored CurseForge key and the page it feeds. It went missing when SelfTest.m was
+// rewritten wholesale and its dispatch entries went with the code: the names stayed in this
+// file, the branches that answer them did not, so `--selftest=curseforge` would have reported
+// the name as unknown while looking like it had run. Restored, with the checks it had.
+static void AKSelfTestRunCurseForge(AKSelfTestRecorder *recorder) {
+    TKAddonCredentialStore *store = [TKAddonCredentialStore new];
+    NSError *error = nil;
+    NSString *key = [store curseForgeKey:&error];
+    if (!key.length) {
+        [recorder check:NO _:@"a CurseForge key is stored in the Keychain"];
+        WKLog("selftest", @"no CurseForge key is stored (%@)", error.localizedDescription ?: @"none");
+        recorder.detail = @"no key stored";
+        return;
+    }
+    unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+    NSData *bytes = [key dataUsingEncoding:NSUTF8StringEncoding];
+    CC_SHA256(bytes.bytes, (CC_LONG)bytes.length, digest);
+    NSMutableString *hash = [NSMutableString new];
+    for (NSUInteger i = 0; i < 8; i++) [hash appendFormat:@"%02x", digest[i]];
+    BOOL coreShape = [key hasPrefix:@"$2a$"];
+    WKLog("selftest", @"stored key length=%lu coreShape=%d sha256=%@",
+          (unsigned long)key.length, coreShape ? 1 : 0, hash);
+    [recorder check:coreShape _:@"the stored key has CurseForge's Core API key shape"];
+    [recorder check:![key hasPrefix:@"cfc_pat_"] _:@"the stored key is not an upload token"];
+
+    TKCurseForgeClient *client = [[TKCurseForgeClient alloc] initWithAPIKey:key];
+    dispatch_semaphore_t done = dispatch_semaphore_create(0);
+    __block NSError *requestError = nil;
+    __block NSUInteger projects = 0;
+    __block NSDictionary *first = nil;
+    // The search endpoint is authenticated (the categories list is not), so it is
+    // the one that says whether this key is actually accepted.
+    [client browseModsWithQuery:@"wow" sortField:2 sortOrder:@"desc" categoryID:nil
+                    gameVersion:@"1.60.1" classID:nil index:0
+                     completion:^(id value, NSError *failure) {
+        requestError = failure;
+        if ([value isKindOfClass:NSDictionary.class] && [value[@"data"] isKindOfClass:NSArray.class]) {
+            NSArray *data = value[@"data"];
+            projects = [data count];
+            first = [data.firstObject isKindOfClass:NSDictionary.class] ? data.firstObject : nil;
+        }
+        dispatch_semaphore_signal(done);
+    }];
+    dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, 25 * NSEC_PER_SEC));
+    [recorder check:requestError == nil && projects > 0
+                 _:@"CurseForge accepts the stored key (authenticated search)"];
+    if (requestError)
+        WKLog("selftest", @"CurseForge search failed: %@", requestError.localizedDescription);
+    // What the browser draws: artwork, metadata and a file for this version.
+    NSDictionary *logo = [first[@"logo"] isKindOfClass:NSDictionary.class] ? first[@"logo"] : nil;
+    NSString *logoURL = [logo[@"thumbnailUrl"] isKindOfClass:NSString.class] ? logo[@"thumbnailUrl"] : nil;
+    [recorder check:logoURL.length > 0 _:@"the first project carries artwork"];
+    NSArray *authors = [first[@"authors"] isKindOfClass:NSArray.class] ? first[@"authors"] : @[];
+    NSArray *categories = [first[@"categories"] isKindOfClass:NSArray.class] ? first[@"categories"] : @[];
+    [recorder check:authors.count > 0 && categories.count > 0 _:@"the first project carries author and category"];
+    NSArray *files = [first[@"latestFiles"] isKindOfClass:NSArray.class] ? first[@"latestFiles"] : @[];
+    BOOL compatible = NO;
+    for (NSDictionary *file in files) {
+        if (![file isKindOfClass:NSDictionary.class] || ![file[@"isAvailable"] boolValue]) continue;
+        if ([file[@"gameVersions"] isKindOfClass:NSArray.class] && [file[@"gameVersions"] containsObject:@"1.60.1"]) {
+            compatible = YES; break;
+        }
+    }
+    [recorder check:compatible _:@"the first project has an available 1.60.1 file"];
+    recorder.detail = [NSString stringWithFormat:@"stored key sha256 %@, %lu projects",
+                       hash, (unsigned long)projects];
+}
+
 void AKRunSelfTest(NSString *name) {
     AKSelfTestRecorder *recorder = [AKSelfTestRecorder new];
     recorder.detail = @"";
@@ -703,6 +786,24 @@ void AKRunSelfTest(NSString *name) {
         // Off the main queue too: it waits for the guest to start, which happens on the main queue.
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
             AKSelfTestRunDictationTarget(recorder);
+            AKSelfTestLogVerdict(recorder, name);
+        });
+        return;
+    }
+    if ([name isEqualToString:AKSelfTestCurseForge]) {
+        // Off the main queue: it waits on a network reply.
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+            AKSelfTestRunCurseForge(recorder);
+            AKSelfTestLogVerdict(recorder, name);
+        });
+        return;
+    }
+    if ([name isEqualToString:AKSelfTestForeverUI] || [name isEqualToString:AKSelfTestForeverUIClean]) {
+        // Off the main queue: it writes and reads files in the Forever UI's own folder.
+        BOOL clean = [name isEqualToString:AKSelfTestForeverUIClean];
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+            if (clean) AKSelfTestRunForeverUIClean(recorder);
+            else AKSelfTestRunForeverUI(recorder);
             AKSelfTestLogVerdict(recorder, name);
         });
         return;

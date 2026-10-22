@@ -36,6 +36,10 @@ extern NSString *const AKSelfTestDictationTarget;
 /// overlay so the in-game HUD can be seen; `forever-ui-clean` turns that back off.
 extern NSString *const AKSelfTestForeverUI;
 extern NSString *const AKSelfTestForeverUIClean;
+/// The CurseForge key in this device's Keychain and the page it feeds: the key's shape, and
+/// that the authenticated search answers with artwork, author, category and a file for the
+/// game version the browser asks for. It reads nothing from the game and changes nothing.
+extern NSString *const AKSelfTestCurseForge;
 
 // Runs one self-test and logs the verdict the matrix greps:
 //   selftest: <name> PASS <passed>/<total> checks (<what was exercised>)

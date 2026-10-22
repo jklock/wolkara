@@ -35,6 +35,10 @@ NSNotificationName const AKTouchKeyboardRequestNotification = @"AKTouchKeyboardR
 // shell's side for the same reason as the two notifications above - the adapter is a dylib the
 // app does not link.
 NSNotificationName const AKTouchCloseAppNotification = @"AKTouchCloseAppNotification";
+// The microphone key on the layer's own keyboard. The voice module is not this one's to
+// include, and the shell is the only place that links both, so the key announces and the
+// shell starts or stops dictation.
+NSNotificationName const AKTouchDictationToggleNotification = @"AKTouchDictationToggleNotification";
 // The keys the launcher's and the platform's switches read. The trackpad string
 // is the one the platform already stored, so an existing choice carries over.
 NSString *const AKTouchControlsDefaultsKey = @"AKTouchControls";
@@ -72,6 +76,7 @@ static BOOL hardwareKeyboardAttached(void) {
 - (void)keyboardViewBackspace;
 - (void)keyboardViewReturn;
 - (void)keyboardViewShowSystemKeyboard;
+- (void)keyboardViewToggleDictation;
 @end
 
 @interface AKTouchControls () <AKTouchKeyboardSink>
@@ -317,7 +322,7 @@ static BOOL hardwareKeyboardAttached(void) {
         rows = @[@[@"1", @"2", @"3", @"4", @"5", @"6", @"7", @"8", @"9", @"0"],
                  @[@"-", @"_", @"+", @"=", @"/", @":", @";", @"(", @")"],
                  @[@"#", @"$", @"%", @"&", @"*", @"\"", @"'", @"!", @"?"],
-                 @[@"ABC", @" ", @"@", @".", @"⌨", @"↵"]];
+                 @[@"ABC", @" ", @"@", @".", @"🎤", @"⌨", @"↵"]];
     } else {
         NSString *top = _shift ? @"QWERTYUIOP" : @"qwertyuiop";
         NSString *home = _shift ? @"ASDFGHJKL" : @"asdfghjkl";
@@ -326,7 +331,7 @@ static BOOL hardwareKeyboardAttached(void) {
         for (NSUInteger i = 0; i < bottom.length; i++) [third addObject:[bottom substringWithRange:NSMakeRange(i, 1)]];
         [third addObject:@"⌫"];
         rows = @[[self keysIn:top], [self keysIn:home], third,
-                 @[@"123", @" ", @"@", @".", @"⌨", @"↵"]];
+                 @[@"123", @" ", @"@", @".", @"🎤", @"⌨", @"↵"]];
     }
     for (NSArray<NSString *> *row in rows) {
         NSMutableArray<UIView *> *buttons = [NSMutableArray new];
@@ -364,6 +369,7 @@ static BOOL hardwareKeyboardAttached(void) {
     if ([title isEqual:@"⇧"]) return @"shift";
     if ([title isEqual:@"⌫"]) return @"delete";
     if ([title isEqual:@"↵"]) return @"return";
+    if ([title isEqual:@"🎤"]) return @"dictate";
     if ([title isEqual:@"⌨"]) return @"system";
     if ([title isEqual:@"123"]) return @"page";
     if ([title isEqual:@"ABC"]) return @"page";
@@ -373,6 +379,7 @@ static BOOL hardwareKeyboardAttached(void) {
     if ([title isEqual:@"⇧"]) return @"Shift";
     if ([title isEqual:@"⌫"]) return @"Backspace";
     if ([title isEqual:@"↵"]) return @"Return";
+    if ([title isEqual:@"🎤"]) return @"Dictate";
     if ([title isEqual:@"⌨"]) return @"System keyboard";
     if ([title isEqual:@"123"]) return @"Numbers and symbols";
     if ([title isEqual:@"ABC"]) return @"Letters";
@@ -388,6 +395,7 @@ static BOOL hardwareKeyboardAttached(void) {
     if ([title isEqual:@"ABC"]) { _symbols = NO; [self rebuild]; return; }
     if ([title isEqual:@"⌫"]) { [sink keyboardViewBackspace]; return; }
     if ([title isEqual:@"↵"]) { [sink keyboardViewReturn]; return; }
+    if ([title isEqual:@"🎤"]) { [sink keyboardViewToggleDictation]; return; }
     if ([title isEqual:@"⌨"]) { [sink keyboardViewShowSystemKeyboard]; return; }
     [sink keyboardViewType:title];
     // A shifted letter is one capital, as on every other keyboard.
@@ -726,6 +734,12 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
 }
 - (void)keyboardViewBackspace { [self.delegate touchSpecialKey:51 characters:@"\x7f"]; }
 - (void)keyboardViewReturn { [self.delegate touchSpecialKey:36 characters:@"\r"]; }
+// The microphone key. Dictation belongs to the voice module, which this one cannot include;
+// the shell links both and is what answers, exactly as it does for Leave game.
+- (void)keyboardViewToggleDictation {
+    AKLog(@"the layer's keyboard asked for dictation");
+    [NSNotificationCenter.defaultCenter postNotificationName:AKTouchDictationToggleNotification object:self];
+}
 - (void)keyboardViewShowSystemKeyboard {
     _ownKeyboard = NO;
     _keyboardInput.inputView = nil;

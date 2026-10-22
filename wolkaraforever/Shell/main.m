@@ -5,6 +5,9 @@
 // AVAudioSession, because the keep-alive for a running game is an active audio session and
 // the one thing this device can prove without a voice is what that session is set to.
 #import <AVFoundation/AVFoundation.h>
+// SFSpeechRecognizer, because the speech permission is asked for here beside the microphone:
+// iPadOS lists a privacy row in Settings only after the app has asked for it once.
+#import <Speech/Speech.h>
 #import "AppLibrary.h"
 #import "Diagnostics.h"
 #import "DiagnosticsViewController.h"
@@ -230,6 +233,23 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     [self showClosingPage:@"Leaving the game"];
 }
 
+// The microphone key on the layer's own keyboard. It asks for the same thing the mapped
+// button does, so dictation does not depend on a system keyboard whose keys iPadOS may not
+// be showing at all.
+- (void)toggleDictationFromTouchKeyboard:(NSNotification *)note {
+    (void)note;
+    AKDictation *dictation = AKDictation.shared;
+    // The controls register the game's text view when the guest starts and it is the only
+    // place a transcript can go. No target means no game to type into, so nothing is opened:
+    // a microphone opened over a loading screen is the shape of bug that leaves it held.
+    if (![AKDictation gameTextTarget]) {
+        WKLog("voice", @"the keyboard's microphone key was pressed with no game text input to type into; nothing opened");
+        return;
+    }
+    WKLog("voice", @"the keyboard's microphone key: dictation %@", dictation.listening ? @"stops" : @"starts");
+    [dictation toggle];
+}
+
 // What the adapter needs to know, and the only thing it can be told: which keys are the
 // user's, so the guest does not see them. Sent on every change to the settings - a mapping,
 // the switch, or voice going off - because each of those changes the answer.
@@ -299,6 +319,34 @@ static NSString *AKAudioStateDescription(void) {
     }
 }
 
+// Speech recognition is a permission of its own, and iPadOS lists it in this app's Settings only
+// after the app has asked for it. Asking only when dictation starts left the Settings page
+// showing Microphone and nothing else - reported on 2026-10-22, after an install put both back
+// to "not determined" - so the permissions row opened a page where the half it names by
+// "Speech" did not exist. It is asked for here, once, beside the microphone, and the answer is
+// in the log so a missing row is a fact rather than a puzzle: a reinstall can reset both.
+- (void)askForSpeechOnce {
+    static BOOL asked = NO;
+    if (asked) return;
+    asked = YES;
+    SFSpeechRecognizerAuthorizationStatus status = SFSpeechRecognizer.authorizationStatus;
+    switch (status) {
+        case SFSpeechRecognizerAuthorizationStatusAuthorized:
+            WKLog("audio", @"speech permission: already granted, nothing to ask");
+            return;
+        case SFSpeechRecognizerAuthorizationStatusNotDetermined:
+            break;
+        default:
+            WKLog("audio", @"speech permission: refused (status %ld); Settings > Privacy & Security > Speech Recognition must allow this app",
+                  (long)status);
+            return;
+    }
+    WKLog("audio", @"speech permission: asking, because it has never been asked");
+    [SFSpeechRecognizer requestAuthorization:^(SFSpeechRecognizerAuthorizationStatus result) {
+        WKLog("audio", @"speech permission: status %ld after asking", (long)result);
+    }];
+}
+
 - (void)sceneDidBecomeActive:(UIScene *)scene {
     (void)scene;
     // What state everything is in when the app is allowed to act again, so "nothing is left
@@ -308,6 +356,7 @@ static NSString *AKAudioStateDescription(void) {
           (long)AKDictation.shared.state, (int)AKDictation.shared.listening,
           (int)AKInputRouter.shared.learning, AKAudioStateDescription());
     [self askForTheMicrophoneOnce];
+    [self askForSpeechOnce];
     [self reserveExecutableMemory];
 }
 
@@ -395,6 +444,11 @@ static NSString *AKAudioStateDescription(void) {
     // reason as the notification above.
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(closeAfterGuestRefusedToQuit:)
                                                name:@"AKTouchCloseAppNotification" object:nil];
+    // The microphone key on the layer's own keyboard: AKTouchDictationToggleNotification in
+    // wolkaraforever/Touch/TouchControls.h, spelled out for the same reason as the two above.
+    // The keyboard module cannot include the voice module, and this is where they meet.
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(toggleDictationFromTouchKeyboard:)
+                                               name:@"AKTouchDictationToggleNotification" object:nil];
     // Tell the adapter which keys are the user's, so it can swallow them before the guest
     // sees them. Every change to the settings re-publishes: a mapping, the switch on the page
     // and switching voice off all change the answer. Published rather than asked because the

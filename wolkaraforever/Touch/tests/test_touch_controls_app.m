@@ -549,6 +549,19 @@ static void AKFixtureInputSource(void *context) {
                 assert(AKFindInputView(layer, @"wolkaraforever.layerkey.page") != nil);
                 assert(AKFindInputView(layer, @"wolkaraforever.layerkey.delete") != nil);
                 assert(AKFindInputView(layer, @"wolkaraforever.layerkey.system") != nil);
+                // Dictation must not be hidden behind the system keyboard this replaces: the
+                // microphone key asks the shell to toggle it, which is the only place that
+                // links the voice module.
+                __block NSUInteger dictationAsked = 0;
+                id dictationObserver = [NSNotificationCenter.defaultCenter
+                    addObserverForName:@"AKTouchDictationToggleNotification" object:nil
+                                queue:NSOperationQueue.mainQueue
+                           usingBlock:^(NSNotification *note) { (void)note; dictationAsked++; }];
+                UIButton *micKey = (UIButton *)AKFindInputView(layer, @"wolkaraforever.layerkey.dictate");
+                assert(micKey != nil);
+                [micKey sendActionsForControlEvents:UIControlEventTouchUpInside];
+                [NSNotificationCenter.defaultCenter removeObserver:dictationObserver];
+                assert(dictationAsked == 1);
                 [atKey sendActionsForControlEvents:UIControlEventTouchUpInside];
                 AKDrainFixtureEvents();
                 assert([fixture.text isEqual:@"@"]);
