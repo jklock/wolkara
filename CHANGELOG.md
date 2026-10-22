@@ -54,9 +54,10 @@ and slide. The on-screen pad has rings around both sticks, a layout editor, size
 and opacity controls, a grid and haptics.
 
 There is a keyboard of our own for the times iPadOS won't show its own one,
-including the `@` an e-mail address needs. Typing goes into the game's focused
-field, and the draft box lets you write a line first and then replace that field
-with it.
+including the `@` an e-mail address needs. It has a microphone key, so dictation
+is one tap away instead of being hidden on a keyboard that isn't on screen.
+Typing goes into the game's focused field, and the draft box lets you write a line
+first and then replace that field with it.
 
 ## Controllers and voice
 
