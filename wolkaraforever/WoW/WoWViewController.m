@@ -39,6 +39,57 @@ static dispatch_queue_t TKForeverUIQueue(void) {
 static NSString *const TKForeverLayoutKey = @"WolkaraForeverTouchLayoutV1";
 static NSNotificationName const TKForeverLayoutDidChange = @"AKGamepadLayoutDidChange";
 
+
+// A settings row that reads as a switch, not as a command: the words stay the
+// same and the control says whether it is on. iOS draws the switch; the row only
+// supplies the label and the state.
+@interface TKWoWSwitchRow : UIView
+@property(nonatomic, readonly) UILabel *titleLabel;
+@property(nonatomic, readonly) UISwitch *toggle;
+@property(nonatomic, getter=isEnabled) BOOL enabled;
+- (instancetype)initWithTitle:(NSString *)title identifier:(NSString *)identifier
+                       target:(id)target action:(SEL)action;
+@end
+@implementation TKWoWSwitchRow
+- (instancetype)initWithTitle:(NSString *)title identifier:(NSString *)identifier
+                       target:(id)target action:(SEL)action {
+    if ((self=[super initWithFrame:CGRectZero])) {
+        self.accessibilityIdentifier=identifier;
+        _titleLabel=Label(15,UIFontWeightRegular,UIColor.whiteColor);
+        _titleLabel.text=title;
+        _titleLabel.accessibilityIdentifier=[identifier stringByAppendingString:@".label"];
+        _titleLabel.isAccessibilityElement=NO;
+        [_titleLabel setContentHuggingPriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
+        _toggle=[UISwitch new];
+        _toggle.accessibilityLabel=title;
+        _toggle.accessibilityIdentifier=[identifier stringByAppendingString:@".switch"];
+        [_toggle addTarget:target action:action forControlEvents:UIControlEventValueChanged];
+        [_toggle setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+        [_toggle setContentCompressionResistancePriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+        UIStackView *row=[[UIStackView alloc] initWithArrangedSubviews:@[_titleLabel,_toggle]];
+        row.axis=UILayoutConstraintAxisHorizontal;
+        row.alignment=UIStackViewAlignmentCenter;
+        row.translatesAutoresizingMaskIntoConstraints=NO;
+        [self addSubview:row];
+        [NSLayoutConstraint activateConstraints:@[
+            // The same 12-point inset the button rows use, so the switch lines up
+            // with their text.
+            [row.leadingAnchor constraintEqualToAnchor:self.leadingAnchor constant:12],
+            [row.trailingAnchor constraintEqualToAnchor:self.trailingAnchor constant:-12],
+            [row.topAnchor constraintEqualToAnchor:self.topAnchor],
+            [row.bottomAnchor constraintEqualToAnchor:self.bottomAnchor],
+            [self.heightAnchor constraintGreaterThanOrEqualToConstant:38],
+        ]];
+    }
+    return self;
+}
+- (void)setEnabled:(BOOL)enabled {
+    _enabled=enabled;
+    _toggle.enabled=enabled;
+    self.alpha=enabled?1:0.45;
+}
+@end
+
 @interface TKWoWViewController () <UIDocumentPickerDelegate>
 @end
 
@@ -71,8 +122,9 @@ static NSNotificationName const TKForeverLayoutDidChange = @"AKGamepadLayoutDidC
     UILabel *_stateLabel, *_detailLabel, *_versionLabel, *_startupLabel, *_compatibilityLabel;
     UIButton *_editionButton, *_preferencesButton, *_addonsButton, *_addonsDirectoryButton,
         *_voiceButton, *_voiceTestButton, *_permissionsButton, *_primaryButton,
-        *_macEverButton, *_backupButton, *_resetButton, *_restoreButton, *_gamepadButton,
-        *_overlayButton, *_settingsFolderButton;
+        *_macEverButton, *_backupButton, *_resetButton, *_restoreButton, *_settingsFolderButton;
+    TKWoWSwitchRow *_gamepadRow, *_overlayRow;
+    NSString *_backupsDirectory;
     UIView *_markView;
     NSLayoutConstraint *_markCap;
     UIBarButtonItem *_refreshItem;
@@ -237,10 +289,10 @@ static NSNotificationName const TKForeverLayoutDidChange = @"AKGamepadLayoutDidC
     [_resetButton setTitle:@"Reset to Default Graphical Settings" forState:UIControlStateNormal];
     _restoreButton=[self button:@"wow.performance.restore" action:@selector(restoreUI)];
     [_restoreButton setTitle:@"Restore WoW UI Configuration" forState:UIControlStateNormal];
-    _gamepadButton=[self button:@"wow.performance.gamepad" action:@selector(enableGamepad)];
-    [_gamepadButton setTitle:@"Enable Gamepad UI" forState:UIControlStateNormal];
-    _overlayButton=[self button:@"wow.performance.overlay" action:@selector(togglePerformanceOverlay)];
-    [_overlayButton setTitle:@"Enable Performance Overlay" forState:UIControlStateNormal];
+    _gamepadRow=[[TKWoWSwitchRow alloc] initWithTitle:@"Gamepad UI" identifier:@"wow.performance.gamepad"
+        target:self action:@selector(gamepadChanged:)];
+    _overlayRow=[[TKWoWSwitchRow alloc] initWithTitle:@"Performance Overlay" identifier:@"wow.performance.overlay"
+        target:self action:@selector(overlayChanged:)];
     _settingsFolderButton=[self button:@"wow.performance.settingsFolder" action:@selector(openSettingsFolder)];
     [_settingsFolderButton setTitle:@"Open Settings Folder" forState:UIControlStateNormal];
 
@@ -254,7 +306,7 @@ static NSNotificationName const TKForeverLayoutDidChange = @"AKGamepadLayoutDidC
     UIView *voiceBox=[self sectionBoxWithTitle:@"Voice Manager" identifier:@"wow.box.voice"
         rows:@[_permissionsButton,_voiceButton,_voiceTestButton]];
     UIView *performanceBox=[self sectionBoxWithTitle:@"Performance & UI Manager" identifier:@"wow.box.performance"
-        rows:@[_backupButton,_resetButton,_restoreButton,_gamepadButton,_overlayButton,_settingsFolderButton]];
+        rows:@[_backupButton,_resetButton,_restoreButton,_gamepadRow,_overlayRow,_settingsFolderButton]];
 
     _activity=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
     _activity.color=Gold(); _activity.hidesWhenStopped=YES;
@@ -537,12 +589,12 @@ static NSNotificationName const TKForeverLayoutDidChange = @"AKGamepadLayoutDidC
     [self configureButton:_resetButton title:@"Reset to Default Graphical Settings" filled:NO];
     [self configureButton:_restoreButton title:@"Restore WoW UI Configuration" filled:NO];
     [self configureButton:_settingsFolderButton title:@"Open Settings Folder" filled:NO];
-    _gamepadButton.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;
-    [self configureButton:_gamepadButton title:_gamepadEnabled?@"Gamepad UI Enabled":@"Enable Gamepad UI" filled:NO];
-    _gamepadButton.enabled=foreverReady;
-    _overlayButton.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;
-    [self configureButton:_overlayButton title:_overlayEnabled?@"Performance Overlay Enabled":@"Enable Performance Overlay" filled:NO];
-    _overlayButton.enabled=!_busy && !_starting;
+    // Switches, not changing commands: the label is fixed and the control shows
+    // the state.
+    _gamepadRow.enabled=foreverReady;
+    _gamepadRow.toggle.on=_gamepadEnabled;
+    _overlayRow.enabled=!_busy && !_starting;
+    _overlayRow.toggle.on=_overlayEnabled;
     _compatibilityLabel.text=([_product[@"id"] isEqual:@"wow"] || [_product[@"id"] isEqual:@"wow_beta"] || [_product[@"id"] isEqual:@"wow_classic"])?
         @"Compatibility with this edition is not yet verified.":
         @"";
@@ -759,10 +811,28 @@ static NSNotificationName const TKForeverLayoutDidChange = @"AKGamepadLayoutDidC
     picker.delegate=self;
     [self presentViewController:picker animated:YES completion:nil];
 }
-// Nothing to take from the picker: the folder was opened so the user can put files
-// in it with the browser's own controls, and the game reads the list from disk.
+// Two pickers come through here. The add-on folder has nothing to take from it:
+// it was opened so the user can put files in it with the browser's own
+// controls. The restore picker's choice is the snapshot to bring back, and only
+// a ZIP inside WTF/Backups is accepted - the archive checks the rest.
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
-    (void)controller; (void)urls;
+    (void)controller;
+    NSString *backups=_backupsDirectory;
+    _backupsDirectory=nil;
+    if (!backups || !urls.count) return;
+    NSURL *url=urls.firstObject;
+    NSString *root=[backups stringByResolvingSymlinksInPath].stringByStandardizingPath;
+    NSString *path=[url.path stringByResolvingSymlinksInPath].stringByStandardizingPath;
+    NSString *name=url.lastPathComponent;
+    if (![path hasPrefix:[root stringByAppendingString:@"/"]] || ![name.lowercaseString hasSuffix:@".zip"]) {
+        [self presentMessage:@"Not a backup" message:@"Choose a WoW-UI ZIP from the game's WTF/Backups folder."];
+        return;
+    }
+    [self restoreBackupNamed:name];
+}
+- (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller {
+    (void)controller;
+    _backupsDirectory=nil;
 }
 #pragma mark - Forever UI file operations
 
@@ -848,9 +918,37 @@ static NSNotificationName const TKForeverLayoutDidChange = @"AKGamepadLayoutDidC
         });
     });
 }
-// One click, newest valid snapshot. A fresh snapshot of the current state is
-// made first, so a restore can itself be undone.
+// The browser opens at the game's WTF/Backups folder and the user picks the
+// snapshot to bring back. A fresh snapshot of the current state is made first,
+// so the restore can itself be undone.
 - (void)restoreUI {
+    if (![self foreverActionAllowed]) return;
+    NSString *directory=[self foreverWorkingDirectory];
+    if (!directory) return;
+    NSError *error=nil;
+    NSString *wtf=[TKForeverUI wtfDirectoryInWorkingDirectory:directory create:NO error:&error];
+    NSString *backups=wtf?[wtf stringByAppendingPathComponent:@"Backups"]:nil;
+    NSArray<NSString *> *zips=backups?[[NSFileManager.defaultManager contentsOfDirectoryAtPath:backups error:NULL]
+        filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSString *name, NSDictionary *bindings) {
+            (void)bindings;
+            return [name.lowercaseString hasSuffix:@".zip"];
+        }]]:@[];
+    if (!zips.count) {
+        [self presentMessage:@"No backup to restore"
+            message:@"Run Backup WoW UI Configuration first; its ZIPs are what this browser shows."];
+        return;
+    }
+    NSURL *folder=[NSURL fileURLWithPath:backups isDirectory:YES];
+    _backupsDirectory=folder.path;
+    if (self.chooseBackupFile) { self.chooseBackupFile(folder); return; }
+    UIDocumentPickerViewController *picker=[[UIDocumentPickerViewController alloc]
+        initForOpeningContentTypes:@[UTTypeZIP]];
+    picker.directoryURL=folder;
+    picker.allowsMultipleSelection=NO;
+    picker.delegate=self;
+    [self presentViewController:picker animated:YES completion:nil];
+}
+- (void)restoreBackupNamed:(NSString *)name {
     if (![self foreverActionAllowed]) return;
     NSString *directory=[self foreverWorkingDirectory];
     if (!directory) return;
@@ -858,59 +956,63 @@ static NSNotificationName const TKForeverLayoutDidChange = @"AKGamepadLayoutDidC
     __weak TKWoWViewController *weakSelf=self;
     dispatch_async(TKForeverUIQueue(), ^{
         NSError *error=nil;
-        NSString *newest=[TKForeverUI newestUIBackupInWorkingDirectory:directory error:&error];
-        NSString *fresh=nil;
+        NSString *fresh=[TKForeverUI createUIBackupInWorkingDirectory:directory edition:TKForeverUIEdition error:&error];
         BOOL restored=NO;
-        if (newest) {
-            fresh=[TKForeverUI createUIBackupInWorkingDirectory:directory edition:TKForeverUIEdition error:&error];
-            if (!fresh) {
-                error=[NSError errorWithDomain:TKForeverUIErrorDomain code:1 userInfo:@{NSLocalizedDescriptionKey:
-                    [NSString stringWithFormat:@"A safety backup could not be created, so nothing was restored. %@",error.localizedDescription?:@""]}];
-            } else {
-                restored=[TKForeverUI restoreUIBackupNamed:newest inWorkingDirectory:directory edition:TKForeverUIEdition error:&error];
-            }
+        if (!fresh) {
+            error=[NSError errorWithDomain:TKForeverUIErrorDomain code:1 userInfo:@{NSLocalizedDescriptionKey:
+                [NSString stringWithFormat:@"A safety backup could not be created, so nothing was restored. %@",error.localizedDescription?:@""]}];
+        } else {
+            restored=[TKForeverUI restoreUIBackupNamed:name inWorkingDirectory:directory edition:TKForeverUIEdition error:&error];
         }
         dispatch_async(dispatch_get_main_queue(), ^{
             TKWoWViewController *self=weakSelf; if(!self) return;
             self->_uiOperation=NO; [self render];
             if (restored) {
-                WKLog("ui", @"restore: completed from the newest snapshot");
-                [self presentMessage:@"Restore complete" message:[NSString stringWithFormat:@"Restored %@. Your complete Forever UI - settings, bindings, SavedVariables, gamepad configuration and add-ons - applies the next time it starts. A snapshot of the previous state was saved as %@.",newest,fresh]];
+                WKLog("ui", @"restore: completed from the selected snapshot");
+                [self presentMessage:@"Restore complete" message:[NSString stringWithFormat:@"Restored %@. Your complete Forever UI - settings, bindings, SavedVariables, gamepad configuration and add-ons - applies the next time it starts. A snapshot of the previous state was saved as %@.",name,fresh]];
             } else {
                 WKLog("ui", @"restore: not completed: %@", error.localizedDescription?:@"unknown reason");
-                [self presentMessage:newest?@"Restore failed":@"No backup to restore" message:error.localizedDescription?:@"Run Backup WoW UI Configuration first."];
+                [self presentMessage:@"Restore failed" message:error.localizedDescription?:@"The selected backup could not be restored."];
             }
         });
     });
 }
-// Exactly one `SET GamePadEnable "1"` in the active Config.wtf. It changes no
-// bindings and touches neither GamePadConfig_*.json nor gamecontrollerdb.txt.
-- (void)enableGamepad {
-    if (![self foreverActionAllowed]) return;
+// Exactly one `SET GamePadEnable "1"` or `"0"` in the active Config.wtf. It
+// changes no bindings and touches neither GamePadConfig_*.json nor
+// gamecontrollerdb.txt.
+- (void)gamepadChanged:(UISwitch *)sender {
+    if (![self foreverActionAllowed]) { sender.on=!_gamepadEnabled; return; }
     NSString *directory=[self foreverWorkingDirectory];
-    if (!directory) return;
+    if (!directory) { sender.on=!_gamepadEnabled; return; }
+    BOOL want=sender.on;
     _uiOperation=YES; [self render];
     __weak TKWoWViewController *weakSelf=self;
     dispatch_async(TKForeverUIQueue(), ^{
         NSError *error=nil;
-        BOOL enabled=[TKForeverUI enableGamepadInWorkingDirectory:directory error:&error];
+        BOOL stored=[TKForeverUI setGamepad:want inWorkingDirectory:directory error:&error];
         dispatch_async(dispatch_get_main_queue(), ^{
             TKWoWViewController *self=weakSelf; if(!self) return;
             self->_uiOperation=NO; [self render];
-            if (enabled) [self presentMessage:@"Gamepad UI enabled" message:@"It takes effect when Forever next starts."];
-            else [self presentMessage:@"Gamepad UI not changed" message:error.localizedDescription?:@"The setting could not be stored."];
+            if (stored) {
+                WKLog("ui", @"gamepad UI: %@", want?@"enabled":@"disabled");
+                [self presentMessage:want?@"Gamepad UI enabled":@"Gamepad UI disabled"
+                    message:@"It takes effect when Forever next starts."];
+            } else {
+                WKLog("ui", @"gamepad UI: not changed: %@", error.localizedDescription?:@"unknown reason");
+                [self presentMessage:@"Gamepad UI not changed" message:error.localizedDescription?:@"The setting could not be stored."];
+            }
         });
     });
 }
 // The HUD preference lives in the touch layout store. Read-modify-write keeps
 // every existing value (opacity, scales, haptics, positions) and the change
 // notification is what the in-game settings page and the host view listen to.
-- (void)togglePerformanceOverlay {
-    if (_busy || _starting) return;
+- (void)overlayChanged:(UISwitch *)sender {
+    if (_busy || _starting) { sender.on=!_overlayEnabled; return; }
+    BOOL enabled=sender.on;
     NSUserDefaults *defaults=NSUserDefaults.standardUserDefaults;
     id stored=[defaults objectForKey:TKForeverLayoutKey];
     NSMutableDictionary *layout=[stored isKindOfClass:NSDictionary.class]?[stored mutableCopy]:[NSMutableDictionary new];
-    BOOL enabled=![layout[@"performanceOverlayEnabled"] boolValue];
     layout[@"performanceOverlayEnabled"]=@(enabled);
     [defaults setObject:layout forKey:TKForeverLayoutKey];
     [NSNotificationCenter.defaultCenter postNotificationName:TKForeverLayoutDidChange object:defaults];

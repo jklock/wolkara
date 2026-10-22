@@ -143,6 +143,10 @@ static BOOL TKWriteConfig(NSString *path, NSString *text, NSError **error) {
 }
 
 + (BOOL)enableGamepadInWorkingDirectory:(NSString *)directory error:(NSError **)error {
+    return [self setGamepad:YES inWorkingDirectory:directory error:error];
+}
+
++ (BOOL)setGamepad:(BOOL)enabled inWorkingDirectory:(NSString *)directory error:(NSError **)error {
     NSString *wtf = [self wtfDirectoryInWorkingDirectory:directory create:YES error:error];
     if (!wtf) return NO;
     NSString *path = [wtf stringByAppendingPathComponent:@"Config.wtf"];
@@ -165,13 +169,14 @@ static BOOL TKWriteConfig(NSString *path, NSString *text, NSError **error) {
         if (TKNameIs(TKCVarName(line), @"GamePadEnable")) continue;
         [kept addObject:line];
     }
+    NSString *value = enabled ? @"1" : @"0";
     NSString *normalised = [kept componentsJoinedByString:@"\n"];
     if (normalised.length && ![normalised hasSuffix:@"\n"]) normalised = [normalised stringByAppendingString:@"\n"];
-    normalised = [normalised stringByAppendingString:@"SET GamePadEnable \"1\"\n"];
+    normalised = [normalised stringByAppendingString:[NSString stringWithFormat:@"SET GamePadEnable \"%@\"\n", value]];
 
     if (!TKWriteConfig(path, normalised, error)) return NO;
 
-    // Re-read rather than trust the write: exactly one assignment, value 1.
+    // Re-read rather than trust the write: exactly one assignment, the value asked for.
     NSError *rereadError = nil;
     NSString *written = TKReadConfig(path, &rereadError);
     if (!written) {
@@ -179,13 +184,13 @@ static BOOL TKWriteConfig(NSString *path, NSString *text, NSError **error) {
         return NO;
     }
     NSUInteger assignments = 0;
-    BOOL enabled = NO;
+    BOOL stored = NO;
     for (NSString *line in [written componentsSeparatedByString:@"\n"]) {
         if (!TKNameIs(TKCVarName(line), @"GamePadEnable")) continue;
         assignments++;
-        enabled = [TKCVarValue(line) isEqualToString:@"1"];
+        stored = [TKCVarValue(line) isEqualToString:value];
     }
-    if (assignments != 1 || !enabled) {
+    if (assignments != 1 || !stored) {
         if (error) *error = TKError(@"The gamepad setting could not be stored.");
         return NO;
     }

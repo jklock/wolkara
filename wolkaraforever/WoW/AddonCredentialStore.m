@@ -21,7 +21,11 @@ static NSString *const Account=@"api-key";
 - (BOOL)storeCurseForgeKey:(NSString *)key error:(NSError **)error {
     NSString *clean=[key stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if(!clean.length||clean.length>1024||[clean rangeOfCharacterFromSet:NSCharacterSet.controlCharacterSet].location!=NSNotFound){if(error)*error=[NSError errorWithDomain:@"WolkaraForever.AddOns" code:1 userInfo:@{NSLocalizedDescriptionKey:@"Enter a valid CurseForge Core API key."}];return NO;}
-    if([clean hasPrefix:@"$2a$"] || [clean hasPrefix:@"cfc_pat_"]){if(error)*error=[NSError errorWithDomain:@"WolkaraForever.AddOns" code:1 userInfo:@{NSLocalizedDescriptionKey:@"This is a password hash or upload personal-access token, not a CurseForge Core API key. Create a Core API key in the CurseForge developer console."}];return NO;}
+    // CurseForge's approved Core API keys are issued in bcrypt's textual shape
+    // ($2a$10$...) - that is the credential, not a password hash, and refusing
+    // it rejected a real approved key. An upload personal-access token is a
+    // different credential and does not work with the Core API.
+    if([clean hasPrefix:@"cfc_pat_"]){if(error)*error=[NSError errorWithDomain:@"WolkaraForever.AddOns" code:1 userInfo:@{NSLocalizedDescriptionKey:@"This is a CurseForge upload personal-access token, not a Core API key. Paste the $2a$... key from the developer console."}];return NO;}
     NSData *data=[clean dataUsingEncoding:NSUTF8StringEncoding]; NSMutableDictionary *attributes=[[self query] mutableCopy];attributes[(__bridge id)kSecAttrAccessible]=(__bridge id)kSecAttrAccessibleWhenUnlockedThisDeviceOnly;attributes[(__bridge id)kSecValueData]=data;
     OSStatus status=SecItemAdd((__bridge CFDictionaryRef)attributes,nil); if(status==errSecDuplicateItem)status=SecItemUpdate((__bridge CFDictionaryRef)[self query],(__bridge CFDictionaryRef)@{(__bridge id)kSecValueData:data,(__bridge id)kSecAttrAccessible:(__bridge id)kSecAttrAccessibleWhenUnlockedThisDeviceOnly});
     if(status==errSecSuccess)return YES;if(error)*error=[NSError errorWithDomain:NSOSStatusErrorDomain code:status userInfo:nil];return NO;

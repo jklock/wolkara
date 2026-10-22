@@ -20,6 +20,9 @@ FOUNDATION_EXPORT NSString *const TKForeverUIEdition;
 // `SET GamePadEnable "1"`. Other lines keep their bytes. Reads the file back and
 // fails unless exactly one assignment with value 1 is present.
 + (BOOL)enableGamepadInWorkingDirectory:(NSString *)directory error:(NSError **)error;
+// The same write with either value, for the switch: exactly one assignment,
+// `"1"` or `"0"`, everything else byte-identical.
++ (BOOL)setGamepad:(BOOL)enabled inWorkingDirectory:(NSString *)directory error:(NSError **)error;
 
 // YES when Config.wtf exists and carries exactly one GamePadEnable assignment,
 // with value 1. A missing or unreadable config reads as NO.
