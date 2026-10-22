@@ -816,10 +816,12 @@ static NSNotificationName const TKForeverLayoutDidChange = @"AKGamepadLayoutDidC
 // controls. The restore picker's choice is the snapshot to bring back, and only
 // a ZIP inside WTF/Backups is accepted - the archive checks the rest.
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
-    (void)controller;
     NSString *backups=_backupsDirectory;
     _backupsDirectory=nil;
-    if (!backups || !urls.count) return;
+    // Only the restore picker resumes a restore. Checking the picker's own
+    // directory as well means a stale flag can never turn an add-on folder
+    // selection into one.
+    if (!backups || !urls.count || ![controller.directoryURL.path isEqual:backups]) return;
     NSURL *url=urls.firstObject;
     NSString *root=[backups stringByResolvingSymlinksInPath].stringByStandardizingPath;
     NSString *path=[url.path stringByResolvingSymlinksInPath].stringByStandardizingPath;
