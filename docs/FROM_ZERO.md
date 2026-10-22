@@ -1,7 +1,7 @@
 # From zero to playing: the complete setup walkthrough
 
 This is the exhaustive, checkpointed route from a Mac with nothing installed to World of
-Warcraft running on your iPhone or iPad through WolkaraForever. Every step says what to run,
+Warcraft running on your iPad through WolkaraForever. Every step says what to run,
 what you should see, and what to do if you do not.
 
 If you only want the short version, [GETTING_STARTED.md](GETTING_STARTED.md) is the condensed
@@ -21,7 +21,7 @@ Print this. You are done when every box is ticked.
 - [ ] Xcode installed and its platform components downloaded; `xcodebuild -version` works.
 - [ ] `xcodegen` and `python3` installed; `xcodegen --version` and `python3 --version` work.
 - [ ] Paid Apple Developer Program membership; your team ID in hand.
-- [ ] iPhone/iPad with enough free space, cable, unlocked, Developer Mode on, Mac trusted.
+- [ ] iPad with enough free space, cable, unlocked, Developer Mode on, Mac trusted.
 - [ ] Repository cloned; `local.env` filled in; `DEVELOPMENT_TEAM`, `TOLKARA_BUNDLE_ID`,
       `TOLKARA_KEYCHAIN_GROUP`, `DEVICE`, `NATIVE_GUEST_SHIMS=GENERIC` set.
 - [ ] `wolkaraforever/tools/check_layers.sh` passes.
@@ -52,10 +52,10 @@ finish setup.
 | Need | Why | How to check |
 | --- | --- | --- |
 | Apple silicon Mac | The engine and its tooling target arm64 macOS; the simulator and device builds assume it. | Apple menu -> About This Mac shows an "Apple M..." chip. |
-| iPhone or iPad | The app runs on your device. The best-recorded result is an iPhone 16 Pro Max on iOS 27; an iPad Pro (M5) on iPadOS 27 is the development device. | Settings -> General -> About. |
+| iPad | The app runs on your iPad. The recorded development device is an iPad Pro M5 on iPadOS 27. | Settings -> General -> About. |
 | Paid Apple Developer membership | The app and its tunnel need the Network Extension, increased-memory-limit and extended-address-space capabilities, which free Personal Team signing cannot provide. | developer.apple.com -> Account -> Membership. |
 | A WoW account with access to the edition | The app downloads the client but does not provide an account. | Your Blizzard account. |
-| Enough free device storage | The tested Forever install is about 70 GB before updates. | Settings -> General -> iPhone/iPad Storage. |
+| Enough free device storage | The tested Forever install is about 70 GB before updates. | Settings -> General -> iPad Storage. |
 
 ### Software, installed exactly like this
 
@@ -83,17 +83,12 @@ git clone https://github.com/fJavierLasso/wolkaraforever.git
 cd wolkaraforever
 ```
 
-The engine (`platform/`) is already vendored in the clone; you do not download Tolkara
-separately.
+The clone carries the most current Tolkara engine in `platform/`; you do not download Tolkara
+separately. WolkaraForever uses the most current pull of Tolkara, not a frozen fork of it.
 
-**Checkpoint:** `wolkaraforever/tools/install.sh` does not need the upstream remote, so you
-can go straight to building. The layer gate (`wolkaraforever/tools/check_layers.sh`) is a
-developer check and is **optional** for setup: it compares `platform/` to your local
-`upstream/main` ref, and a fresh clone has no such ref. If you run it and it says the gate has
-no `upstream/main` ref, that is expected and not a blocker. To use the gate anyway, add the
-remote (`git remote add upstream https://github.com/tolkara/tolkara.git && git fetch upstream`)
-- and if it then says `platform/ differs`, that only means upstream has newer commits than the
-vendored copy; see [MAINTAINING.md](MAINTAINING.md#updating-tolkara-the-engine).
+**Checkpoint:** `wolkaraforever/tools/install.sh` builds straight away. To move to a newer
+Tolkara later, run `wolkaraforever/tools/update_tolkara.sh --check` (and without `--check` to
+update); see [MAINTAINING.md](MAINTAINING.md#updating-tolkara-the-engine).
 
 ## Step 4 - Create `local.env`
 
@@ -118,6 +113,10 @@ Open `local.env` and fill in these values:
 
 Optional: `SIMULATOR` (for simulator-only test runs) and `TOLKARA_DISPLAY_NAME` (defaults to
 `WolkaraForever`).
+
+If the iPad is connected, `wolkaraforever/tools/device_variables.sh --write` fills
+`DEVICE` from it (USB or paired network). `wolkaraforever/tools/preflight.sh` then checks the
+Mac, the device and the app before you build.
 
 **Checkpoint:** `wolkaraforever/tools/env.sh` sources your file without error. A quick way to
 confirm the values are read:
@@ -194,7 +193,7 @@ If it does, setup is done; the rest is downloading and playing.
 2. Tap **Install**. Keep the app in the foreground while it downloads; backgrounding cancels
    the current transfer, though verified objects are kept and reused next time.
 3. When the download and verification finish, the button becomes **Ready to play**.
-4. Tap **Play**. Allow the local VPN-style tunnel if iOS asks - it reaches the device's own
+4. Tap **Play**. Allow the local VPN-style tunnel if iPadOS asks - it reaches the device's own
    developer service for memory preparation, and nothing leaves the device.
 5. Wait for memory preparation. On the current engine this takes several minutes at each
    launch. Keep the app in the foreground until the game's window appears.
@@ -206,6 +205,19 @@ If it does, setup is done; the rest is downloading and playing.
 > **A game process gets one session.** When the game closes, WolkaraForever's process ends too;
 > reopen the app for another session. The toolbar's **Leave game** does this deliberately after
 > a short countdown.
+
+### Optional: push the game instead of downloading it
+
+If the game is already installed on your Mac, copy it to the app:
+
+```bash
+wolkaraforever/tools/push_game.sh --source "/Applications/World of Warcraft"
+wolkaraforever/tools/push_game.sh --source "/Volumes/Storage/World of Warcraft"
+```
+
+`--source` is the folder containing `_classic_beta_`, on any volume. This skips the
+on-device download; the app still verifies what it has. See
+[DEVICE_WORKFLOW.md](DEVICE_WORKFLOW.md) for options and troubleshooting.
 
 ## Step 8 - Confirm it is a healthy install
 
@@ -221,14 +233,13 @@ If it does, setup is done; the rest is downloading and playing.
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | `check_layers.sh` says "no upstream/main ref" | The upstream remote or ref is missing from the clone. | `git remote add upstream https://github.com/tolkara/tolkara.git && git fetch upstream`. |
-| `check_layers.sh` reports `platform/ differs from upstream/main` | You fetched upstream but did not vendor it, or `platform/` was edited by hand. | Vendor it: see [MAINTAINING.md](MAINTAINING.md#updating-tolkara-the-engine). Never edit `platform/`. |
+| `check_layers.sh` reports `platform/ differs from upstream/main` | You fetched a newer Tolkara but did not pull it in, or `platform/` was edited by hand. | Pull the most current Tolkara: see [MAINTAINING.md](MAINTAINING.md#updating-tolkara-the-engine). Never edit `platform/`. |
 | Xcode signing error on `Tolkara` or `LocalAuthorizationTunnel` | Team/capability not set for one target. | Select both targets -> Signing & Capabilities -> your team; let Xcode repair. |
 | `install.sh` cannot see the device | Cable, lock state, trust, or Developer Mode. | Unlock, reconnect, tap Trust, confirm Developer Mode, re-run. |
 | Enrollment does not print "Verified enrollment imported" | Device locked or connection dropped during pairing. | Keep it unlocked and connected, re-run `cd build/platform && tools/enroll.sh`. |
 | Play stays disabled | An update or verification is in progress, or the build is not verified. | Keep the foreground; wait. **Settings -> Verify and repair game files** forces a full check. |
 | Memory preparation seems stuck | It genuinely pauses the host while the service prepares memory. | Keep the foreground and wait minutes; if it fails, reopen. Do not delete the app. |
 | First launch asks for a VPN configuration | That is the app's own packet tunnel. | Allow it; it routes one private address and carries no other traffic. |
-| Wrong region or language in the client | The client's region picker is unsupported. | Set portal/locale as described in [IPHONE.md](IPHONE.md#region-and-language-before-the-first-launch). |
 | Local signing rejects the container after a game update | The container is bound to the executable's pages, which changed. | Rebuild the container (see [MAINTAINING.md](MAINTAINING.md#updating-the-game)). |
 | Something fails and you are tempted to delete the app | Deleting removes the game files, the enrollment and any page container. | Read the Technical details and the log first. Do not delete the app or its data as a first step. |
 

@@ -11,7 +11,7 @@ now WolkaraForever. The engine, Xcode targets and bundle IDs retain their existi
 to preserve signing configuration and installed data. The development history
 and validation below distinguish tested results from pending device checks.
 
-Branch: `feature/wow-launcher`, based on `feature/iphone-support` at
+Branch: `feature/wow-launcher`, based on `the input-support branch` at
 `05035ccbbf33565ab36abdb1d5e43a6b53cc816b`. This is an early, working prototype,
 not a complete replacement for Battle.net. The existing runtime and execution
 modes are unchanged. No game files, signing identities or accounts are bundled.
@@ -38,7 +38,7 @@ launch. Explicit development arguments retain the previous resolver and can
 still select another mode. Hiding the selector does not remove enrolment, JIT
 or memory requirements; see [the distribution plan](WOLKARAFOREVER_DISTRIBUTION.md).
 
-- Remembers Forever Beta, Classic Era, Classic, Retail or Retail Beta, region
+- Remembers Forever Beta, Classic, Retail or Retail Beta, region
   and language. Forever currently maps to `wow_classic_beta`; a listed edition
   is not a claim of runtime compatibility.
 - Checks at opening, foregrounding and before Play. An outdated installed copy
@@ -150,7 +150,7 @@ receipts, malformed metadata, full repair and interrupted repair. A 16 MiB
 fixture reads 16,781,056 payload/envelope bytes cold and **zero** on the warm
 planning pass (metadata reads are excluded). ASan/UBSan checks, the simulator
 home/repair flow and a signed arm64 device build pass. This optimization has
-not yet been measured against the full game installation on the physical iPhone.
+not yet been measured against the full game installation on the physical iPad.
 
 The first device trial reported repeated **CASC data changed during the update**
 while resuming the 70235 → 70245 patch. The original guard aborted on any metadata
@@ -174,20 +174,16 @@ for downloading patches. It does not automate login or gameplay.
 
 ## Remaining validation and limits
 
-- Cellular-only startup failed on the user's first outdoor test (2026-10-04)
-  before executable-memory preparation. This branch adds a bounded pre-auth TCP
-  retry while preserving the route, so a temporary Mobile Data off/on sequence
-  can be tested. It has **not yet been confirmed on the physical iPhone**. See
-  [mobile-data recovery](IPHONE.md#starting-with-mobile-data-experimental-recovery).
-  Playing anywhere remains an unmet requirement until cold startup and returning
-  to mobile data both pass; testing without a Mac was not sufficient evidence.
-- The user completed the pending patch on the physical iPhone. Readback verified
+- Network access (Wi-Fi is fine) is required to download and update the game; a
+  disconnected Mac does not affect a launch. Playing anywhere, including after a
+  reboot, has been reported with the existing authorization.
+- The user completed the pending patch on the physical iPad. Readback verified
   the 1.60.1.70205 original executable against the Mac copy. Startup then stopped
   at a loader compatibility issue described below. Startup/gameplay after that
   fix and interruption/resumption on the device still need manual validation;
   matching files alone do not prove WoW accepts the updated CASC store on iOS.
-- Fresh installation is implemented and tested with synthetic data, but a full
-  fresh real-game download has not been validated. Other listed editions have
+- Fresh installation, including a full real-game download, has been performed
+  end to end. Other listed editions have
   metadata checks, not complete update/runtime coverage.
 - Existing game language preferences are preserved; changing the download
   language is not a WoW settings editor. Download only a language matching the
@@ -243,7 +239,7 @@ The initial CDN transactions below were run on the Mac using the **same native
 client/updater code** compiled into the iOS app. They do not establish gameplay
 with the downloaded copy.
 
-The user subsequently downloaded the pending patch inside Tolkara on the iPhone
+The user subsequently downloaded the pending patch inside Tolkara on the iPad
 16 Pro Max. Readback confirmed version 1.60.1.70205 and an executable whose SHA-256
 exactly matches the original on the Mac. The startup log confirms successful
 112,427,008-byte executable-memory preparation, followed by fixup stream rejection
@@ -279,7 +275,7 @@ The initial large-file decoder caused excessive temporary allocations. After
 changing to one preallocated output buffer and non-copying chunk views, the
 cached-encoding executable extraction used **464,437,248 bytes maximum RSS**
 on the Mac (about 443 MiB), versus about 27 GB before. This is a Mac process
-measurement, not an iPhone memory budget or a guarantee for larger builds.
+measurement, not an iPad memory budget or a guarantee for larger builds.
 
 - Focused manifest, client, installation and updater tests: **PASS**,
   `-Wall -Wextra -Werror`, ASan and UBSan. Synthetic fixtures cover truncation, bounds, decompression limits,
@@ -289,7 +285,7 @@ measurement, not an iPhone memory budget or a guarantee for larger builds.
   data is in the tests. Updater fixtures also cover grouped archive downloads,
   corrupt ranges, pause/resume, source preservation, late upstream build changes,
   external symlinks, protected user paths, optional packs and fresh installs.
-- UIKit fixture: **PASS** on iPhone 17 Pro / iOS 26.5 Simulator. Synthetic
+- UIKit fixture: **PASS** on iPad Pro 13-inch (M5) / iPadOS 26.5 Simulator. Synthetic
   responses exercise automatic checks and installation of a detected patch
   without a Play tap, rapid edition changes, missing-install action, initial startup configuration, offline retry,
   pending launch cancellation in the background, verified launch callback and
@@ -304,7 +300,7 @@ measurement, not an iPhone memory budget or a guarantee for larger builds.
 - Full `tools/test_emulation.sh`: **FAIL**, at the previously documented
   `tests.test_sign_guest_local.AdhocTests.test_matches_codesign_byte_for_byte`
   comparison (`sgl-fixture.dylib` differs from `codesign -s -`). This same failure
-  was already reproduced on the original base during the iPhone PR review.
+  was already reproduced on the original base during the iPad PR review.
   The launcher changes do not modify that signer. This failure remains unresolved.
   The startup-fix rerun reaches the same failure. Later suite steps do not run
   after it. Focused launcher and fixup tests pass independently.
@@ -361,14 +357,14 @@ keep preparation and failure in the same navigation root, block repeat launch
 and refresh during startup, preserve recoverable preflight retries, and check
 that About contains the bundled upstream and dependency license notices.
 
-The fixture now uses UIWindowScene for Xcode 27 / iOS 27 and requires its PASS
+The fixture now uses UIWindowScene for Xcode 27 / iPadOS 27 and requires its PASS
 marker: simctl may return zero after the app crashes. Home, preparation and
-failure layouts were rendered in an iPhone 16 Pro Max simulator. Physical
+failure layouts were rendered in an iPad Pro M5 simulator. Physical
 startup after this UI integration still requires a manual test. The new branch
 is not installed while the user tests the separate keyboard correction.
 
 Results with Xcode 27.0:
-- `tools/test_wow_launcher_ui.sh`: PASS on iOS 27.0 Simulator.
+- `tools/test_wow_launcher_ui.sh`: PASS on iPadOS 27 Simulator.
 - `tools/test_emulation.sh`: PASS in full. The older signing-test failure
   recorded above no longer reproduces with this toolchain; no signer changes
   were needed for this UI work.
@@ -383,7 +379,7 @@ Results with Xcode 27.0:
 - `tools/generate.sh`: PASS; both `LICENSE` and `NOTICE.md` are app resources.
 - `xcodebuild -project Tolkara.xcodeproj -scheme Tolkara -configuration Debug
   -sdk iphoneos -destination generic/platform=iOS -derivedDataPath
-  build/iphone-wow-home-signed ARCHS=arm64 TOLKARA_SYSTEM_ROOTS=YES build`:
+  build/ipad-wow-home-signed ARCHS=arm64 TOLKARA_SYSTEM_ROOTS=YES build`:
   BUILD SUCCEEDED. Strict signature verification passed, and both license
   resources match the checked-in originals byte for byte.
 

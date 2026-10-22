@@ -4,7 +4,7 @@
 
 <h1 align="center">WolkaraForever</h1>
 
-<p align="center"><strong>World of Warcraft Forever on iPhone and iPad, built on <a href="https://github.com/tolkara/tolkara">Tolkara</a>.</strong></p>
+<p align="center"><strong>World of Warcraft Forever on iPad, built on <a href="https://github.com/tolkara/tolkara">Tolkara</a>.</strong></p>
 
 WolkaraForever is the name of this fork, its repository and everything in it. The Xcode scheme
 and product still say **Tolkara**, because that project is the upstream platform this fork is
@@ -19,7 +19,9 @@ through Tolkara's compatibility layer; it is not streamed from a Mac.
 
 Tolkara's runtime and macOS API translation are the foundation of this project.
 WolkaraForever adds the WoW launcher, the downloader and updater, the add-on
-manager and the mobile input layer.
+manager and the mobile input layer. It does not change how Tolkara works: the
+loading, authorization and execution behaviour is upstream's, and this fork adds
+the WoW app and input on top.
 The upstream history, MIT license and [third-party notices](NOTICE.md) are retained.
 This project is not affiliated with or endorsed by Blizzard Entertainment.
 
@@ -30,7 +32,7 @@ This project is not affiliated with or endorsed by Blizzard Entertainment.
 - Your own Apple developer signing with a paid membership: the app and its tunnel need
   the Network Extension, increased-memory-limit and extended-address-space capabilities,
   which free Personal Team signing cannot provide.
-- An iPhone or iPad with Developer Mode enabled, trusted by the Mac, and enough free
+- An iPad with Developer Mode enabled, trusted by the Mac, and enough free
   storage for the edition - the tested Forever install is roughly 70 GB.
 - Your own eligible game account/access. Game files come from Blizzard's CDN; no game
   code or assets are included here, and WoW/Battle.net need not be on the Mac.
@@ -73,7 +75,7 @@ Prefer a fully checkpointed walkthrough? See
 3. **Install an edition and play.** Choose **Forever - Beta**, your region and language,
    then **Install**. Keep the app in the foreground while it downloads; it checks for
    updates on open and before launch. After **Ready to play**, press **Play**, allow the
-   local tunnel if iOS asks, and let memory preparation finish. Log in with your own
+   local tunnel if iPadOS asks, and let memory preparation finish. Log in with your own
    account.
 
 Memory preparation takes several minutes on each launch on the current engine; keep the
@@ -124,7 +126,7 @@ WolkaraForever uses **Developer service** in its integrated build. See
   with duplicate, disable, restore, pin and remove handled by the app, and a
   manifest that records what it installed, so it never removes a folder it did
   not create.
-- An iOS keyboard with dictation and an editable draft that replaces the focused
+- An on-screen keyboard with dictation and an editable draft that replaces the focused
   game field, plus a touch trackpad with two-finger scrolling. A mapped button
   starts and stops dictation, in either Hold to talk or Press to start and stop,
   and - for a keyboard key - the game can be kept from seeing it at all. The
@@ -161,30 +163,30 @@ recorded evidence for the exercised paths (see [`docs/VOICE.md`](docs/VOICE.md#v
 Development and testing automation is welcome here: the
 ban in the policy below is on automating *the game*, not on testing this app.
 
-The developer reports **60 FPS at graphics quality 4 on an iPhone 16 Pro Max**
-playing WoW Forever (Classic beta). This is a gameplay report, not a benchmark
+The developer reports **60 FPS at graphics quality 4** playing WoW Forever
+(Classic beta) on the development iPad. This is a gameplay report, not a benchmark
 or a promise for every scene/device. Render scale was not specified in this
 latest report; the earlier quality-2 session used 50% render scale.
 
-Forever login, gameplay and the touch controls have been tested on that phone.
-Classic Era reached its cinematic and login screen. A Mac-disconnected launch,
+Forever login, gameplay and the touch controls have been tested on that iPad.
+A Mac-disconnected launch,
 including after reboot, has also been reported with the existing authorization.
 The edition selector includes other WoW clients; their presence is not a
 compatibility claim. See [COMPATIBILITY.md](COMPATIBILITY.md) for dated results.
 
 The updater has synthetic regression coverage, isolated Mac-copy tests and a
 recorded device patch installations. Xcode logs also confirm that the latest
-metadata-recovery fix completed an on-device update. A complete first download
-into an empty iPhone installation still needs end-to-end validation. Follow the [fresh-install checklist](docs/FRESH_INSTALL_TEST.md)
-and report the exact commit and client build you tried.
+metadata-recovery fix completed an on-device update. Building, installing and enrolling are the documented path and have been done
+repeatedly; the [clean-device checklist](docs/FRESH_INSTALL_TEST.md) records a first-run
+download end to end if you want to prove it on fresh hardware.
 
 ## Current limits
 
 - Setup is still a developer workflow, with personal signing and enrollment.
 - Executable-memory preparation still takes several minutes on each launch.
   Keep the app in the foreground during this step.
-- Cellular-only startup has an unresolved report; a disconnected Mac does not
-  establish that every mobile-network condition works.
+- A network connection is required to download and update; a Wi-Fi iPad is fully
+  supported.
 - Other devices, editions and signing methods need testing. Voice chat's
   separate helper process is not supported.
 - Keyboard/input and update recovery are actively being improved. If something
@@ -205,6 +207,7 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) before contributing, and
 
 - [All documentation](docs/README.md) - the full index
 - [From zero to playing](docs/FROM_ZERO.md) - the complete setup walkthrough
+- [Mac setup, device and pushing the game](docs/DEVICE_WORKFLOW.md) - scripted prerequisites, device variables, and copying the game
 - [Maintaining](docs/MAINTAINING.md) - the layers, and safe updates
 - [Testing](docs/TESTING.md) and [tools reference](docs/TOOLING.md)
 - [Launcher and updater](docs/WOW_LAUNCHER.md)

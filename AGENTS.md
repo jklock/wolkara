@@ -19,12 +19,17 @@ Requires Xcode, XcodeGen and Python 3. Personal settings (team, bundle ID, devic
 # Ours: each prepares build/platform, then runs the platform's own script on it.
 wolkaraforever/tools/prepare.sh        # platform/ -> build/platform/, patched and overlaid
 wolkaraforever/tools/check_layers.sh   # the gate for the whole split
+wolkaraforever/tools/update_tolkara.sh --check   # is platform/ the most current Tolkara
 wolkaraforever/tools/check_docs.sh     # every fork doc link and image resolves
+wolkaraforever/tools/install_prerequisites.sh --check   # Mac prerequisites (report only)
+wolkaraforever/tools/device_variables.sh --write        # DEVICE from the attached iPad (USB or network)
+wolkaraforever/tools/preflight.sh                       # read-only: is Mac/device/app ready?
 wolkaraforever/tools/test_emulation.sh # sanitizer regression suite on the Mac, then ours
 wolkaraforever/tools/test_translation_sim.sh   # the UIKit-backed adapters' tests, run in the simulator
 wolkaraforever/tools/run.sh sim            # loader diagnostics in the simulator (TolkaraDiagnostics scheme)
 TOLKARA_MODE=local-signing wolkaraforever/tools/run.sh sim   # Local signing: first initializer of testguest (or GUEST_EXE) from an ad-hoc page container
 wolkaraforever/tools/install.sh            # build, sign and install the app on the configured iPad
+wolkaraforever/tools/push_game.sh --source "/Applications/World of Warcraft"   # copy the Mac game to the iPad
 NATIVE_GUEST_SHIMS=GENERIC wolkaraforever/tools/install.sh   # build for no particular application: one adapter per translation/<Framework>/
 wolkaraforever/tools/package_ipa.sh        # unsigned generic TolkaraDiagnostics .ipa for External JIT (sideloaded, e.g. SideStore)
 wolkaraforever/tools/make_wolkaraforever_icon.py  # redraw the app icon at every size and appearance (needs Google Chrome)

@@ -11,15 +11,10 @@ For the WoW-focused WolkaraForever app, start with [GETTING_STARTED.md](GETTING_
 This page covers the shared engine and its advanced development modes.
 
 Tolkara is meant to be built by you: you build it, you sign it with your own
-Apple developer identity, and it runs on your own iPad or iPhone. (External
+Apple developer identity, and it runs on your own iPad. (External
 JIT is the one exception to the signing: you build it unsigned and your
 sideloading tool signs it; see step 4.) This page takes you from a fresh clone
 to a running application.
-
-For the experimental iPhone path, see [IPHONE.md](IPHONE.md). It uses the
-same signing and enrollment procedures below; references to the connected
-iPad also apply to the iPhone. The guide distinguishes tested iPhone behavior
-from the more extensive iPad results.
 
 ## What you need
 
@@ -29,10 +24,9 @@ from the more extensive iPad results.
   app needs the Network Extension (packet tunnel), increased memory limit and
   extended virtual addressing capabilities, which free personal teams cannot
   sign, and free provisioning profiles expire after seven days.
-- An iPad or iPhone. Development and testing so far used an iPad Pro (M5)
-  on iPadOS 27. Experimental iPhone testing used an iPhone 16 Pro Max on iOS
-  27.0; the deployment target alone does not establish compatibility with
-  other devices or OS versions.
+- An iPad. Development and testing so far used an iPad Pro (M5) on iPadOS 27;
+  the deployment target alone does not establish compatibility with other
+  devices or OS versions.
 - A macOS arm64 application that you own, installed on the Mac.
 
 ## 1. Enable Developer Mode on the iPad
@@ -245,7 +239,7 @@ visible in the Files app under On My iPad > Tolkara. A profile says where the
 launcher expects them. For the tested profile:
 
 ```bash
-python3 profiles/wow-classic-era/install.py
+python3 profiles/wow-forever/install.py
 ```
 
 An app whose profile is in `profiles/` appears in Tolkara's library by itself
