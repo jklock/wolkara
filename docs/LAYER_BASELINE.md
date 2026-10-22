@@ -1,5 +1,10 @@
 # Pre-split baseline
 
+> **Historical record.** This page describes the pre-split state and is kept as evidence.
+> It is not current guidance - see [the documentation index](README.md) for the live
+> documents. A bare `tools/<script>` below is a pre-split path; the layer's scripts are
+> in `wolkaraforever/tools/`, the platform's in `platform/tools/`.
+
 Recorded on the pre-split state: branch `feature/wolkaraforever-above-tolkara`, tagged
 `wolkaraforever-pre-layer`, pinned upstream `00a8501`. The layer split must reproduce
 every result below exactly, including the one accepted failure.

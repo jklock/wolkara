@@ -1,5 +1,10 @@
 # Performance & UI implementation plan
 
+> **Historical record, implemented.** This plan has shipped and been validated (see
+> `development/validation/355b0d8.md`, `4b042ba.md` and `02e771e.md`). It is kept as the
+> design record; use [USING_WOLKARAFOREVER.md](docs/USING_WOLKARAFOREVER.md) for how the
+> feature works today.
+
 ## Objective
 
 Create branch `PerformanceUI` from the current `main` checkout. Update the

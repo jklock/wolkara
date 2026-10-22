@@ -17,6 +17,9 @@ NSArray<TKWoWAddon *> *TKWoWAddonsAtDirectory(NSString *directory);
 
 @interface TKWoWAddonManagerViewController : UITableViewController
 - (instancetype)initWithAddOnsDirectory:(NSString *)directory edition:(NSString *)edition;
+// Starts on Browse rather than Installed, for the development preview and for
+// a future direct link from the home page.
+- (instancetype)initWithAddOnsDirectory:(NSString *)directory edition:(NSString *)edition browse:(BOOL)browse;
 @end
 
 NS_ASSUME_NONNULL_END

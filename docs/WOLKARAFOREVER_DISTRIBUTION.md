@@ -118,7 +118,7 @@ code. No PAL-compatible execution permission or successful test is claimed.
    that the full client will fit.
 3. Validate login in the distributable build. The public release workflow sets
    `TOLKARA_SYSTEM_ROOTS=NO` explicitly to exclude roots exported from macOS;
-   running `tools/package_ipa.sh` alone defaults to YES. Public packaging must
+   running `wolkaraforever/tools/package_ipa.sh` alone defaults to YES. Public packaging must
    use NO, unlike the personal build tested here. Provide a redistributable
    trust-store solution if needed; never
    disable TLS validation or bundle private signing/enrolment material.

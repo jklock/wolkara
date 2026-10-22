@@ -64,11 +64,11 @@ replaces the app in place and the device keeps its data.
 ## Open items
 
 - The two touch fixtures still block headless unless run with `--self-test`.
-- Ten root documents are stale forks of upstream's text - `.github/workflows/release.yml`,
-  `AGENTS.md`, `COMPATIBILITY.md`, `NOTICE.md`, `README.md`, `docs/BUILDING.md`,
-  `docs/IPHONE.md`, `docs/TOUCH_INPUT.md`, `local.env.example` and
-  `profiles/wow-forever/README.md`. Documentation and configuration only; upstream's
-  versions stay readable under `platform/`.
+- Documentation: the fork's docs are current. The front door is [README.md](../README.md),
+  the full index is [docs/README.md](../docs/README.md), and the testing and scripts
+  references are [docs/TESTING.md](../docs/TESTING.md) and
+  [docs/TOOLING.md](../docs/TOOLING.md). `platform/` still carries upstream's own docs,
+  unchanged.
 
 The adapter needs no file of ours any more. What it does for us is patch 0009: the
 Control+Option+D dictation trigger, the occlusion a guest window is told about, and the

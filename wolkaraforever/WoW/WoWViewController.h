@@ -25,5 +25,10 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, readonly) UIButton *diagnosticsButton;
 - (void)beginStartup;
 - (void)finishStartupWithMessage:(NSString *)message failed:(BOOL)failed;
+// The guest's own window is on screen: the session is running, not loading.
+- (void)guestDidStartRunning;
+// Development preview: the Add-on Manager, already on Browse. Used by
+// tools, never by a normal launch.
+- (void)previewAddonBrowser;
 @end
 NS_ASSUME_NONNULL_END

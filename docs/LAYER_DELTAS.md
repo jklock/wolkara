@@ -1,5 +1,10 @@
 # Layer deltas: WolkaraForever against tolkara
 
+> **Historical record.** This records the delta set as of the split (2026-10-15). It is
+> kept as evidence and is not current guidance - see [the documentation index](README.md)
+> for the live documents. A bare `tools/<script>` below is a pre-split path; the layer's
+> scripts are in `wolkaraforever/tools/`, the platform's in `platform/tools/`.
+
 This is the single source of truth for the split of WolkaraForever into a layer above
 tolkara. It records what we changed, what upstream changed, where the two ran over
 each other, and the class each path gets in the layer split.

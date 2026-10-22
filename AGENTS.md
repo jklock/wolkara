@@ -19,6 +19,7 @@ Requires Xcode, XcodeGen and Python 3. Personal settings (team, bundle ID, devic
 # Ours: each prepares build/platform, then runs the platform's own script on it.
 wolkaraforever/tools/prepare.sh        # platform/ -> build/platform/, patched and overlaid
 wolkaraforever/tools/check_layers.sh   # the gate for the whole split
+wolkaraforever/tools/check_docs.sh     # every fork doc link and image resolves
 wolkaraforever/tools/test_emulation.sh # sanitizer regression suite on the Mac, then ours
 wolkaraforever/tools/test_translation_sim.sh   # the UIKit-backed adapters' tests, run in the simulator
 wolkaraforever/tools/run.sh sim            # loader diagnostics in the simulator (TolkaraDiagnostics scheme)

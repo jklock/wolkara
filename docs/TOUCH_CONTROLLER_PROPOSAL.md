@@ -1,5 +1,9 @@
 # Automatic touch controller
 
+> **Paths.** A bare `tools/<script>` in this page means `wolkaraforever/tools/<script>`
+> when the layer provides it, otherwise the platform's `platform/tools/<script>`. The
+> controller's code is in `wolkaraforever/Touch/` and `wolkaraforever/Controller/`.
+
 Implemented on `feature/touch-controller` from `feature/wow-home` (`2b87fd8`),
 2026-10-06. This replaces the earlier feasibility-only proposal. The native mouse
 experiment remains separate, and the inherited keyboard correction is retained.

@@ -55,7 +55,7 @@ in the library (it appears once the files are copied), and log in inside the
 game as usual.
 
 **Execution mode.** The execution modes are described in the
-[README](../../README.md#three-ways-to-run-code); choose one. With Local signing,
+[README](../../README.md#three-execution-modes); choose one. With Local signing,
 the client logs in and plays on an iPad Pro M5 (2026-09-27), with no debugger,
 helper or tunnel: the unpacked code matched the signed page container byte for
 byte and all 13,280 initializers ran into the original `main`. Developer

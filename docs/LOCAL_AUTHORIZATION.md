@@ -3,6 +3,9 @@
 > Engineering notes written during bring-up, kept for their protocol detail.
 > They include historical intermediate states. `build/*.log` and `logs/` paths
 > are local evidence files on the author's machine and are not in the repository.
+> A bare `tools/<script>` below means the platform's `platform/tools/<script>`;
+> the engine's `runtime/`, `translation/` and `authorization/` live under
+> `platform/`.
 > For a how-to, read [BUILDING.md](BUILDING.md) first. This is the
 > **Developer service** execution mode; the other modes, Local signing and
 > External JIT, are described in [ARCHITECTURE.md](ARCHITECTURE.md).

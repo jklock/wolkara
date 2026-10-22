@@ -10,7 +10,7 @@ compatibility layer:
 
 - Never commit third-party application code, assets, shaders, captured memory,
   page containers, or anything copied out of macOS or iPadOS. Tests use our own
-  synthetic fixtures from `testguest/` and `tests/`.
+  synthetic fixtures from `platform/testguest/` and `platform/tests/`.
 - Never patch, re-sign or repackage an application's executable. Tolkara's own
   code is signed. With Local signing, each user builds and signs their own page
   container on their own machine, with their own identity, for their own iPad.
@@ -30,13 +30,14 @@ compatibility layer:
 ## Workflow
 
 ```bash
-tools/test_emulation.sh
+wolkaraforever/tools/test_emulation.sh
 ```
 
 must pass; it enforces `-Wall -Wextra -Werror` and runs under ASan and UBSan.
 Add a focused test for memory bounds, malformed input, protocol failures and
 adapter behaviour you touch. Tests are standalone executables or Python
-`unittest` files named `tests/test_*.{c,m,swift,py}`.
+`unittest` files named `test_*.{c,m,swift,py}`, under `platform/tests/` or beside
+the layer code they cover.
 
 Style: four-space indentation in source files, two in YAML; match the code
 around you and do not reformat unrelated lines. Keep the module prefixes
@@ -53,6 +54,6 @@ not prove Metal or native-execution behaviour; say which device you tested on.
    every macOS symbol it imports and which are missing.
 2. Run it and read `Documents/native-guest.log`. Generated stubs log the first
    call to each unimplemented function.
-3. Implement what it needs under `translation/<Framework>/`, with a test.
+3. Implement what it needs under `platform/translation/<Framework>/`, with a test.
 4. Add a profile under `profiles/` and a row in
    [COMPATIBILITY.md](COMPATIBILITY.md).

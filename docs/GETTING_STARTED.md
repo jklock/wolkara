@@ -47,8 +47,8 @@ the app identifier automatically. Leave experimental adapters and captures unset
 ## 2. Open Xcode and Run
 
 ```bash
-tools/generate.sh
-open Tolkara.xcodeproj
+wolkaraforever/tools/generate.sh
+open build/platform/Tolkara.xcodeproj
 ```
 
 Select the **Tolkara** scheme and your physical iPhone/iPad destination, then
@@ -70,7 +70,7 @@ After the app is installed, keep the device unlocked and connected. From the
 same checkout, run:
 
 ```bash
-tools/enroll.sh
+build/platform/tools/enroll.sh
 ```
 
 Approve the system pairing prompt on the device. The command must finish with

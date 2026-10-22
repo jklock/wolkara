@@ -444,9 +444,10 @@ static NSString *AKAudioStateDescription(void) {
     // A plain launch (no arguments, or only a per-launch --execution-mode)
     // shows the WoW home. Any other launch is a development run from
     // tools/: keep its plain status screen and behaviour.
-    BOOL plain=YES;
+    BOOL plain=YES, previewAddons=[arguments containsObject:@"--addons-preview"];
     for(NSUInteger i=1;i<arguments.count;i++) if(![arguments[i] hasPrefix:TKExecutionModeArgumentPrefix] &&
-        ![arguments[i] isEqualToString:TKExecutionModeSaveArgument]) plain=NO;
+        ![arguments[i] isEqualToString:TKExecutionModeSaveArgument] &&
+        ![arguments[i] isEqualToString:@"--addons-preview"]) plain=NO;
     if (plain) {
         self.uiSession=YES;
         self.libraryController=[[TKLibraryViewController alloc] initWithLibrary:self.library];
@@ -465,6 +466,8 @@ static NSString *AKAudioStateDescription(void) {
         self.navigation=[[UINavigationController alloc] initWithRootViewController:self.wowController];
         self.window.rootViewController=self.navigation;
         [self.window makeKeyAndVisible];
+        if (previewAddons) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6*NSEC_PER_SEC)),
+                                          dispatch_get_main_queue(), ^{ [weakSelf.wowController previewAddonBrowser]; });
         WKLog("ui", @"home: the launcher is up (mode=%s source=%@)",
               ModeIdentifier(self.executionMode), self.executionModeSource ?: @"none");
         // The public home has one startup route and no execution-mode chooser.
@@ -975,7 +978,12 @@ static NSString *AKAudioStateDescription(void) {
 }
 - (void)windowBecameVisible:(NSNotification *)notification {
     UIWindow *window=notification.object;
-    if (window!=self.window && window.windowLevel==UIWindowLevelNormal) [self stopStartupActivity];
+    if (window!=self.window && window.windowLevel==UIWindowLevelNormal) {
+        [self stopStartupActivity];
+        // The guest's own window is on screen: this is the moment loading ends
+        // and the game is running.
+        if (self.launchingApp && self.wowController) [self.wowController guestDidStartRunning];
+    }
 }
 - (void)stopStartupActivity {
     [self.startupActivity stop];
@@ -1193,6 +1201,12 @@ static NSString *AKAudioStateDescription(void) {
     self.status.text = ok ? (fullStartup ? [app.name stringByAppendingString:@" closed."] : @"Original client first initializer returned.") : @"Native startup stopped. See runtime log.";
     [self showStartStopped];
     if (ok && fullStartup) [self.wowController finishStartupWithMessage:@"Session ended." failed:NO];
+    // One guest per process: a full startup, whether it ran or not, means Play
+    // cannot work again here. Say so on the home page as well, so the close
+    // action exists even if the closing page cannot appear.
+    if (fullStartup)
+        [self endSession:ok?@"The game has closed. Close WolkaraForever and reopen it to play again.":
+            @"The game did not start. Close WolkaraForever and reopen it to try again."];
     // One guest per process, and the guest has now ended: whatever the outcome, this process
     // can never start another. Leaving the launcher up was a dead end - once a session has
     // been used its Play button answers nothing, and the only way back was to force-quit

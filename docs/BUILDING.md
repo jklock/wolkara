@@ -1,5 +1,12 @@
 # Building and installing Tolkara
 
+> **Paths.** The repository is split into the vendored engine (`platform/`) and the
+> fork's layer (`wolkaraforever/`). A bare `tools/<script>` in this page means
+> `wolkaraforever/tools/<script>` when the layer provides that script, otherwise the
+> platform's `platform/tools/<script>` (or `build/platform/tools/<script>` after
+> `prepare.sh`). `runtime/`, `translation/` and `authorization/` live under `platform/`;
+> the generated `Tolkara.xcodeproj` is in `build/platform/`.
+
 For the WoW-focused WolkaraForever app, start with [GETTING_STARTED.md](GETTING_STARTED.md).
 This page covers the shared engine and its advanced development modes.
 
@@ -269,7 +276,7 @@ tools/run.sh sim
 
 The first runs the sanitizer regression suite on the Mac. The second builds the
 `TolkaraDiagnostics` scheme and runs the loader diagnostics in the simulator
-against a synthetic test application from [`testguest/`](../testguest). To try
+against a synthetic test application from [`testguest/`](../platform/testguest). To try
 Local signing in the simulator:
 
 ```bash

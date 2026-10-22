@@ -1,5 +1,8 @@
 # Game data migration: local.wolkara.johnklock → local.wolkaraforever.johnklock
 
+> **Historical record.** A one-off on-device migration record; it is not current
+> guidance. See [docs/README.md](../../docs/README.md) for the live documents.
+
 - Date: 2026-10-22
 - Device: Dadpad, iPad Pro 12.9-inch (5th generation), iPadOS 27
 - Source container: `local.wolkara.johnklock` (the pre-rename bundle that held the game)

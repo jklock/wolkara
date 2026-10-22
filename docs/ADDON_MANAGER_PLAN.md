@@ -1,10 +1,12 @@
 # WoW Forever add-on manager: implementation plan
 
-Status: partly implemented; plan written 2026-10-12, first implementation
-2026-10-14. The manager, store, ZIP validator and CurseForge client are in the
-launcher; project browsing is populated live from the CurseForge API (search,
-sort, category filter, pagination) instead of a bundled catalog. The sections
-below remain the reference plan.
+Status: implemented. Plan written 2026-10-12, first implementation 2026-10-14.
+The manager (`AddonManager`), ownership store (`AddonStore`), ZIP handler
+(`AddonArchive.swift`), Forever UI archive (`ForeverUIArchive.swift`), credential
+store (`AddonCredentialStore`) and CurseForge client (`CurseForgeClient`) live in
+`wolkaraforever/WoW/`. Project browsing is populated live from the CurseForge API
+(search, sort, category filter, pagination) instead of a bundled catalog. The
+sections below remain the reference design.
 
 ## Intended result
 
@@ -47,7 +49,7 @@ finish or recover before Play becomes available.
    URLs from file IDs. [API access](https://support.curseforge.com/support/solutions/articles/9000208346-about-the-curseforge-api-and-how-to-apply-for-a-key),
    [API reference](https://docs.curseforge.com/rest-api/).
 5. WolkaraForever already preserves `WTF` and `Interface` during game updates.
-   [Updater.m](../launcher/WoW/Updater.m) locks
+   [Updater.m](../wolkaraforever/WoW/Updater.m) locks
    `<game-root-parent>/.tolkara-updates/update.lock`, refreshes user folders in its
    staged installation, then swaps the whole game root. Add-on mutations must
    share this exact lock and re-resolve the active installation after acquiring
@@ -186,7 +188,7 @@ the manager does not translate guide content or rewrite add-on Lua.
 ## Storage and installation transaction
 
 Resolve the target using the registered library installation and the product
-mapping in [Manifest.m](../launcher/WoW/Manifest.m). The normal Forever location is
+mapping in [Manifest.m](../wolkaraforever/WoW/Manifest.m). The normal Forever location is
 `Documents/World of Warcraft/_classic_beta_/Interface/AddOns`; imported game roots
 must work through the same resolver.
 
@@ -243,16 +245,17 @@ package version for rollback; restoring it must not revert unrelated add-ons or
 the game build. Disabled payloads stay outside `Interface/AddOns` and retain user
 additions when re-enabled.
 
-## Proposed code boundaries
+## Code boundaries
 
 | Area | Responsibility |
 | --- | --- |
-| `launcher/WoW/AddOns/Catalog.*` and bundled JSON | Curated identities, categories, source rules and evidence |
-| `Models.*` / `Compatibility.*` / `TOC.*` | Target, release plan, dependency graph, TOC metadata and support status |
-| `Providers/GitHub.*`, `Providers/CurseForge.*`, `HTTPClient.*` | Provider metadata, credentials, compatible asset selection and transfers |
-| `PackageArchive.swift` | Bounded ZIP inspection/extraction through the pinned dependency |
-| `Store.*` / `Installer.*` | Ownership, staging, shared lock, activation, recovery, disable/remove/rollback |
-| `AddOnsViewController.*` | Catalog, installed list, import and explicit user actions |
+| `wolkaraforever/WoW/AddonManager.*` | Catalog/installed UI actions: install, update, pin, disable, remove, rollback |
+| `wolkaraforever/WoW/AddonStore.*` | Ownership records, staging, shared lock, activation and recovery |
+| `wolkaraforever/WoW/AddonArchive.swift` | Bounded ZIP inspection/extraction through the pinned ZIPFoundation |
+| `wolkaraforever/WoW/CurseForgeClient.*` | CurseForge metadata, credential handling and compatible asset selection |
+| `wolkaraforever/WoW/AddonCredentialStore.*` | The builder's CurseForge key, kept in the device Keychain |
+| `wolkaraforever/WoW/ForeverUIArchive.swift` | Forever UI backup/reset/restore archives |
+| `wolkaraforever/WoW/WoWViewController.*` | The Add-ons entry on the WoW home screen |
 | Existing WoW controller/updater integration | Selected installation, operation serialization, Play/session guards and preservation |
 
 Keep the native controller thin. Validate catalog entries against a schema.
