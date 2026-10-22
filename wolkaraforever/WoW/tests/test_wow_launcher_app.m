@@ -702,7 +702,7 @@ static void TestAddons(void) {
     // --- headings, in the order the page is read
     NSArray *headings = @[@[@"wow.heading.edition", @"GAME EDITION"],
                           @[@"wow.heading.addons", @"ADD-ON MANAGER"],
-                          @[@"wow.heading.voice", @"VOICE MANAGER"],
+                          @[@"wow.heading.voice", @"VOICE & INPUT MANAGER"],
                           @[@"wow.heading.performance", @"PERFORMANCE & UI MANAGER"]];
     for (NSArray *pair in headings) {
         UILabel *label = (id)Find(self.controller.view, pair[0]);

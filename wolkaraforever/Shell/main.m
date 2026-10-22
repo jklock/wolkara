@@ -1041,7 +1041,25 @@ static NSString *AKAudioStateDescription(void) {
     countdown.font = [UIFont systemFontOfSize:96 weight:UIFontWeightThin];
     countdown.accessibilityIdentifier = @"wolkaraforever.closing.countdown";
 
-    UIStackView *column = [[UIStackView alloc] initWithArrangedSubviews:@[logo, title, instructions, countdown]];
+    // The countdown is the way out; this is the way out when the countdown cannot
+    // happen. A page that only leaves by itself leaves the user with nothing to
+    // press if it does not, which is exactly the dead end it exists to prevent.
+    UIButton *closeNow = [UIButton buttonWithType:UIButtonTypeSystem];
+    UIButtonConfiguration *closeConfiguration = UIButtonConfiguration.filledButtonConfiguration;
+    closeConfiguration.title = @"Close WolkaraForever";
+    closeConfiguration.baseBackgroundColor = [UIColor colorWithRed:0.88 green:0.73 blue:0.43 alpha:1];
+    closeConfiguration.baseForegroundColor = [UIColor colorWithRed:0.08 green:0.065 blue:0.035 alpha:1];
+    closeConfiguration.cornerStyle = UIButtonConfigurationCornerStyleMedium;
+    closeConfiguration.contentInsets = NSDirectionalEdgeInsetsMake(14, 18, 14, 18);
+    closeNow.configuration = closeConfiguration;
+    closeNow.accessibilityIdentifier = @"wolkaraforever.closing.close";
+    [closeNow addAction:[UIAction actionWithHandler:^(__kindof UIAction *action) {
+        (void)action;
+        WKLog("host", @"closing now: the user pressed Close WolkaraForever");
+        exit(0);
+    }] forControlEvents:UIControlEventTouchUpInside];
+
+    UIStackView *column = [[UIStackView alloc] initWithArrangedSubviews:@[logo, title, instructions, countdown, closeNow]];
     column.axis = UILayoutConstraintAxisVertical;
     column.alignment = UIStackViewAlignmentCenter;
     column.spacing = 24;

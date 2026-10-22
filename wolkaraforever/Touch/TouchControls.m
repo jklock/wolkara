@@ -57,10 +57,24 @@ static BOOL hardwareKeyboardAttached(void) {
 - (void)updateKeyboardButton;
 - (void)updateDraftButtons;
 - (void)replaceGameText:(NSString *)text;
+// Brings up the layer's own keys when iPadOS has no software keyboard to give.
+- (void)showLayerKeyboard;
 // YES while the user has asked for the draft keyboard and it has not been
 // dismissed: the draft editor uses it to decide whether to take focus back when
 // a system panel (dictation) has finished with it.
 - (BOOL)keyboardRequested;
+@end
+
+// What the layer's keyboard asks its owner to do. Words go to the game the same
+// way dictation's do; the special keys are the guest's own key events.
+@protocol AKTouchKeyboardSink <NSObject>
+- (void)keyboardViewType:(NSString *)text;
+- (void)keyboardViewBackspace;
+- (void)keyboardViewReturn;
+- (void)keyboardViewShowSystemKeyboard;
+@end
+
+@interface AKTouchControls () <AKTouchKeyboardSink>
 @end
 
 // A normal, visible UIKit document. Editing and dictation stay local until
@@ -254,13 +268,141 @@ static BOOL hardwareKeyboardAttached(void) {
 }
 @end
 
+// The layer's own keyboard.
+//
+// iPadOS hides the software keyboard when it believes a hardware keyboard is
+// attached, and what it reports then is the shortcut bar alone or nothing at all.
+// Measured on Dadpad, 2026-10-22: "system keyboard shown draftFirstResponder=1
+// height=0", with the game's login field unable to take the @ an e-mail address
+// needs, and no other route to type one. A custom input view is shown whatever
+// the hardware says, so these keys are always there. They type through the same
+// delegate dictation uses, which turns text into the guest's own key events, so
+// the game's field sees ordinary typing. The system-keyboard key hands the input
+// view back for dictation's microphone when iPadOS will show it.
+@interface AKTouchKeyboardView : UIView
+@property (nonatomic, weak) id<AKTouchKeyboardSink> sink;
+@end
+
+@implementation AKTouchKeyboardView {
+    BOOL _shift, _symbols;
+    UIStackView *_column;
+    NSArray<NSDictionary *> *_specs;
+}
+- (instancetype)initWithFrame:(CGRect)frame {
+    if ((self = [super initWithFrame:frame])) {
+        self.backgroundColor = [UIColor colorWithWhite:0.12 alpha:1];
+        _column = [UIStackView new];
+        _column.axis = UILayoutConstraintAxisVertical;
+        _column.spacing = 6;
+        _column.distribution = UIStackViewDistributionFillEqually;
+        _column.translatesAutoresizingMaskIntoConstraints = NO;
+        [self addSubview:_column];
+        [NSLayoutConstraint activateConstraints:@[
+            [_column.topAnchor constraintEqualToAnchor:self.topAnchor constant:8],
+            [_column.bottomAnchor constraintEqualToAnchor:self.bottomAnchor constant:-8],
+            [_column.leadingAnchor constraintEqualToAnchor:self.leadingAnchor constant:8],
+            [_column.trailingAnchor constraintEqualToAnchor:self.trailingAnchor constant:-8],
+        ]];
+        self.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+        [self rebuild];
+    }
+    return self;
+}
+- (CGSize)intrinsicContentSize { return CGSizeMake(UIViewNoIntrinsicMetric, 236); }
+- (void)rebuild {
+    for (UIView *view in _column.arrangedSubviews) { [_column removeArrangedSubview:view]; [view removeFromSuperview]; }
+    NSMutableArray<NSDictionary *> *specs = [NSMutableArray new];
+    NSArray<NSArray<NSString *> *> *rows;
+    if (_symbols) {
+        rows = @[@[@"1", @"2", @"3", @"4", @"5", @"6", @"7", @"8", @"9", @"0"],
+                 @[@"-", @"_", @"+", @"=", @"/", @":", @";", @"(", @")"],
+                 @[@"#", @"$", @"%", @"&", @"*", @"\"", @"'", @"!", @"?"],
+                 @[@"ABC", @" ", @"@", @".", @"⌨", @"↵"]];
+    } else {
+        NSString *top = _shift ? @"QWERTYUIOP" : @"qwertyuiop";
+        NSString *home = _shift ? @"ASDFGHJKL" : @"asdfghjkl";
+        NSString *bottom = _shift ? @"ZXCVBNM" : @"zxcvbnm";
+        NSMutableArray<NSString *> *third = [NSMutableArray arrayWithObject:@"⇧"];
+        for (NSUInteger i = 0; i < bottom.length; i++) [third addObject:[bottom substringWithRange:NSMakeRange(i, 1)]];
+        [third addObject:@"⌫"];
+        rows = @[[self keysIn:top], [self keysIn:home], third,
+                 @[@"123", @" ", @"@", @".", @"⌨", @"↵"]];
+    }
+    for (NSArray<NSString *> *row in rows) {
+        NSMutableArray<UIView *> *buttons = [NSMutableArray new];
+        for (NSString *title in row) {
+            UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
+            [button setTitle:title forState:UIControlStateNormal];
+            button.titleLabel.font = [UIFont systemFontOfSize:title.length > 1 ? 15 : 20];
+            button.tintColor = UIColor.whiteColor;
+            button.backgroundColor = [self actionTitle:title] ? [UIColor colorWithWhite:0.34 alpha:1]
+                                                              : [UIColor colorWithWhite:0.26 alpha:1];
+            button.layer.cornerRadius = 6;
+            button.tag = (NSInteger)specs.count;
+            button.accessibilityIdentifier = [@"wolkaraforever.layerkey." stringByAppendingString:
+                [self actionTitle:title] ?: [self accessibilityNameFor:title]];
+            button.accessibilityLabel = [self accessibilityNameFor:title];
+            [button addTarget:self action:@selector(keyTapped:) forControlEvents:UIControlEventTouchUpInside];
+            [specs addObject:@{@"title": title}];
+            [buttons addObject:button];
+        }
+        UIStackView *line = [[UIStackView alloc] initWithArrangedSubviews:buttons];
+        line.axis = UILayoutConstraintAxisHorizontal;
+        line.spacing = 5;
+        line.distribution = UIStackViewDistributionFillEqually;
+        [_column addArrangedSubview:line];
+    }
+    _specs = specs;
+}
+- (NSArray<NSString *> *)keysIn:(NSString *)letters {
+    NSMutableArray<NSString *> *keys = [NSMutableArray new];
+    for (NSUInteger i = 0; i < letters.length; i++) [keys addObject:[letters substringWithRange:NSMakeRange(i, 1)]];
+    return keys;
+}
+// The keys that are actions rather than characters, by the title drawn on them.
+- (NSString *)actionTitle:(NSString *)title {
+    if ([title isEqual:@"⇧"]) return @"shift";
+    if ([title isEqual:@"⌫"]) return @"delete";
+    if ([title isEqual:@"↵"]) return @"return";
+    if ([title isEqual:@"⌨"]) return @"system";
+    if ([title isEqual:@"123"]) return @"page";
+    if ([title isEqual:@"ABC"]) return @"page";
+    return nil;
+}
+- (NSString *)accessibilityNameFor:(NSString *)title {
+    if ([title isEqual:@"⇧"]) return @"Shift";
+    if ([title isEqual:@"⌫"]) return @"Backspace";
+    if ([title isEqual:@"↵"]) return @"Return";
+    if ([title isEqual:@"⌨"]) return @"System keyboard";
+    if ([title isEqual:@"123"]) return @"Numbers and symbols";
+    if ([title isEqual:@"ABC"]) return @"Letters";
+    if ([title isEqual:@" "]) return @"Space";
+    return title;
+}
+- (void)keyTapped:(UIButton *)button {
+    if (button.tag < 0 || button.tag >= (NSInteger)_specs.count) return;
+    NSString *title = _specs[(NSUInteger)button.tag][@"title"];
+    id<AKTouchKeyboardSink> sink = self.sink;
+    if ([title isEqual:@"⇧"]) { _shift = !_shift; [self rebuild]; return; }
+    if ([title isEqual:@"123"]) { _symbols = YES; [self rebuild]; return; }
+    if ([title isEqual:@"ABC"]) { _symbols = NO; [self rebuild]; return; }
+    if ([title isEqual:@"⌫"]) { [sink keyboardViewBackspace]; return; }
+    if ([title isEqual:@"↵"]) { [sink keyboardViewReturn]; return; }
+    if ([title isEqual:@"⌨"]) { [sink keyboardViewShowSystemKeyboard]; return; }
+    [sink keyboardViewType:title];
+    // A shifted letter is one capital, as on every other keyboard.
+    if (_shift && !_symbols) { _shift = NO; [self rebuild]; }
+}
+@end
+
 @implementation AKTouchControls {
     UIButton *_keyboardButton, *_trackpadButton, *_gamepadButton, *_settingsButton, *_leaveButton;
     UIButton *_insertDraftButton, *_clearDraftButton;
     UILabel *_composerLabel;
-    BOOL _gamepadEnabled, _keyboardRequested, _systemKeyboardSeen;
+    BOOL _gamepadEnabled, _keyboardRequested, _systemKeyboardSeen, _ownKeyboard;
     CGFloat _systemKeyboardHeight;
     UIView *_accessory, *_composer;
+    AKTouchKeyboardView *_layerKeyboard;
     NSTimer *_holdTimer;
     AKKeyboardTextView *_keyboardInput;
     AKTrackpad _pad;
@@ -514,18 +656,19 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
     BOOL accepted = [_keyboardInput becomeFirstResponder];
     [self updateKeyboardButton];
     // A hardware keyboard hides the software keyboard, and with it the dictation
-    // button. Record it once instead of leaving a keyboard that cannot dictate,
-    // and point at the keyboard key when only the shortcut bar is on screen.
+    // button. When that happens the layer supplies the keys itself: a login field
+    // that cannot be typed into is not a state to leave the user in.
     __weak AKTouchControls *weakSelf = self;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         AKTouchControls *controls = weakSelf;
-        if (!controls || !controls.keyboardVisible) return;
+        if (!controls || !controls.keyboardVisible || controls->_ownKeyboard) return;
         AKLog(@"hardware keyboard %@", hardwareKeyboardAttached() ? @"attached" : @"absent");
         if (!controls->_systemKeyboardSeen) {
-            AKLog(@"software keyboard did not appear (hardware keyboard attached?); it carries the dictation button");
+            AKLog(@"software keyboard did not appear; showing the layer's own keys");
+            [controls showLayerKeyboard];
         } else if (controls->_systemKeyboardHeight < AKKeyboardKeysHeight) {
-            AKLog(@"software keyboard keys are not on screen (height %.0f, hardware keyboard attached?); pressing the keyboard key shows them", controls->_systemKeyboardHeight);
-            controls->_composerLabel.text = @"Draft · Press the keyboard key (⌘K) for the keyboard's microphone; a hardware keyboard hides it";
+            AKLog(@"software keyboard keys are not on screen (height %.0f); showing the layer's own keys", controls->_systemKeyboardHeight);
+            [controls showLayerKeyboard];
         }
     });
     return accepted;
@@ -550,8 +693,52 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
     if (self.keyboardVisible) [self dismissKeyboard];
     else [self becomeFirstResponder];
 }
+// iPadOS has no software keyboard to give (it believes a hardware keyboard is
+// attached), so the layer supplies the keys itself. A custom input view is shown
+// whatever the hardware says, and it keeps the game's field usable: without it
+// there is no way to type the @ an e-mail address needs at the login screen.
+- (void)showLayerKeyboard {
+    if (!_layerKeyboard) {
+        _layerKeyboard = [[AKTouchKeyboardView alloc] initWithFrame:CGRectMake(0, 0, self.bounds.size.width, 236)];
+        _layerKeyboard.sink = self;
+    }
+    _ownKeyboard = YES;
+    _keyboardInput.inputView = _layerKeyboard;
+    _composer.hidden = NO;
+    BOOL focused = _keyboardInput.isFirstResponder || [_keyboardInput becomeFirstResponder];
+    if (!focused) AKLog(@"the draft editor could not take focus (window=%@)", _keyboardInput.window ? @"yes" : @"no");
+    [_keyboardInput reloadInputViews];
+    // The layer's keys are the size of a keyboard's keys, so the "no keys on
+    // screen" test must not read them as the shortcut bar next time.
+    _systemKeyboardHeight = 0;
+    [self updateKeyboardButton];
+    AKLog(@"the layer's own keyboard is up (iPadOS has no software keyboard to give)");
+}
+- (void)keyboardViewType:(NSString *)text {
+    // The same route dictation takes: the adapter turns the words into the
+    // guest's own key events, so the field the game has focused takes them.
+    if ([self.delegate respondsToSelector:@selector(touchInsertText:)]) {
+        [self.delegate touchInsertText:text];
+    } else {
+        // No game behind the controls: keep the words in the draft instead.
+        [_keyboardInput setText:[_keyboardInput.text stringByAppendingString:text]];
+    }
+}
+- (void)keyboardViewBackspace { [self.delegate touchSpecialKey:51 characters:@"\x7f"]; }
+- (void)keyboardViewReturn { [self.delegate touchSpecialKey:36 characters:@"\r"]; }
+- (void)keyboardViewShowSystemKeyboard {
+    _ownKeyboard = NO;
+    _keyboardInput.inputView = nil;
+    if (!_keyboardInput.isFirstResponder) [_keyboardInput becomeFirstResponder];
+    [_keyboardInput reloadInputViews];
+    [self updateKeyboardButton];
+    AKLog(@"the keyboard is iPadOS's again (for dictation)");
+}
 - (void)dismissKeyboard {
     _keyboardRequested = NO;
+    // Back to iPadOS's own keyboard for the next request: dictation's microphone
+    // only exists on it.
+    if (_ownKeyboard) { _ownKeyboard = NO; _keyboardInput.inputView = nil; [_keyboardInput reloadInputViews]; }
     if (self.keyboardVisible) {
         [self resignFirstResponder];
         [self.superview becomeFirstResponder];

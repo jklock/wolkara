@@ -34,7 +34,7 @@ against the installed Forever client 1.60.1 (70450):
   `Frame Rate: 60.2 FPS (12.5 ms)`, with the expansion and position the
   preference store held. `--selftest=forever-ui-clean` then returned the overlay
   preference to its default off state.
-- The home page rendered the Add-On Manager, Voice Manager and Performance & UI
+- The home page rendered the Add-On Manager, Voice & Input Manager and Performance & UI
   Manager rows in the documented order.
 
 Not verified on the device: the gamepad setting across a full client launch

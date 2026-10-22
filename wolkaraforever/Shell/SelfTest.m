@@ -579,9 +579,11 @@ static void AKSelfTestRunForeverUI(AKSelfTestRecorder *recorder) {
     BOOL reset = [TKForeverUI resetGraphicsInWorkingDirectory:directory error:&error];
     [recorder check:reset _:[NSString stringWithFormat:@"reset ran (%@)", error.localizedDescription ?: @"ok"]];
     NSString *afterReset = AKSelfTestReadText(configPath);
-    [recorder check:afterReset != nil && ![AKSelfTestLines(afterReset) containsObjectPassing:^BOOL(NSString *line) {
-        return AKSelfTestGraphicsLine(line);
-    }] _:@"no graphics CVar is left in Config.wtf"];
+    BOOL graphicsLeft = NO;
+    for (NSString *line in AKSelfTestLines(afterReset)) {
+        if (AKSelfTestGraphicsLine(line)) { graphicsLeft = YES; break; }
+    }
+    [recorder check:afterReset != nil && !graphicsLeft _:@"no graphics CVar is left in Config.wtf"];
     NSMutableArray *expectedKept = [NSMutableArray new];
     for (NSString *line in AKSelfTestLines(before)) if (!AKSelfTestGraphicsLine(line)) [expectedKept addObject:line];
     [recorder check:[AKSelfTestLines(afterReset) isEqualToArray:expectedKept]
@@ -655,7 +657,7 @@ static void AKSelfTestRunForeverUIClean(AKSelfTestRecorder *recorder) {
     NSDictionary *saved = [defaults objectForKey:@"WolkaraForeverTouchLayoutV1"];
     [recorder check:![saved[@"performanceOverlayEnabled"] boolValue]
                  _:@"the overlay preference is off again"];
-    [recorder check:[defaults objectForKey:@"WolkaraForeverPerformanceOverlayPosition"] == nil]
+    [recorder check:([defaults objectForKey:@"WolkaraForeverPerformanceOverlayPosition"] == nil)
                  _:@"the HUD position is cleared, so it starts at its default corner"];
     recorder.detail = @"overlay preference returned to its default off state";
 }

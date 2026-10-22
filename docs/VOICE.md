@@ -12,7 +12,7 @@ right page instead of describing where it is.
 
 ## The shape
 
-1. **A section in the launcher** called **Voice Manager**, with two rows:
+1. **A section in the launcher** called **Voice & Input Manager**, with two rows:
    **Key / Button Configuration** and **Test Voice**. Both open as popups over the
    home page rather than pushing the user away from it, with a Done button.
 2. The first row starts with a switch. **Voice is off until the user turns it on**, and

@@ -58,7 +58,7 @@ static NSNotificationName const TKForeverLayoutDidChange = @"AKGamepadLayoutDidC
                        target:(id)target action:(SEL)action {
     if ((self=[super initWithFrame:CGRectZero])) {
         self.accessibilityIdentifier=identifier;
-        _titleLabel=Label(15,UIFontWeightRegular,UIColor.whiteColor);
+        _titleLabel=Label(17,UIFontWeightRegular,UIColor.whiteColor);
         _titleLabel.text=title;
         _titleLabel.accessibilityIdentifier=[identifier stringByAppendingString:@".label"];
         _titleLabel.isAccessibilityElement=NO;
@@ -159,7 +159,7 @@ static NSNotificationName const TKForeverLayoutDidChange = @"AKGamepadLayoutDidC
 // The page's own section heading: the small uppercase label the edition line
 // always used, now naming each group of rows.
 - (UILabel *)heading:(NSString *)text {
-    UILabel *label=Label(11,UIFontWeightSemibold,Muted());
+    UILabel *label=Label(17,UIFontWeightSemibold,Muted());
     label.text=text.uppercaseString;
     return label;
 }
@@ -290,7 +290,7 @@ static NSNotificationName const TKForeverLayoutDidChange = @"AKGamepadLayoutDidC
     [_voiceButton setTitle:@"Key / Button Configuration" forState:UIControlStateNormal];
     _voiceTestButton=[self button:@"wow.voice.test" action:@selector(testVoice)];
     [_voiceTestButton setTitle:@"Test Voice & Dictation" forState:UIControlStateNormal];
-    _compatibilityLabel=Label(12,UIFontWeightRegular,Muted());
+    _compatibilityLabel=Label(17,UIFontWeightRegular,Muted());
     _backupButton=[self button:@"wow.performance.backup" action:@selector(backupUI)];
     [_backupButton setTitle:@"Backup WoW UI Configuration" forState:UIControlStateNormal];
     _resetButton=[self button:@"wow.performance.reset" action:@selector(resetGraphics)];
@@ -311,22 +311,22 @@ static NSNotificationName const TKForeverLayoutDidChange = @"AKGamepadLayoutDidC
         rows:@[_editionButton,_preferencesButton,_compatibilityLabel]];
     UIView *addonsBox=[self sectionBoxWithTitle:@"Add-On Manager" identifier:@"wow.box.addons"
         rows:@[_addonsButton,_macEverButton,_addonsDirectoryButton]];
-    UIView *voiceBox=[self sectionBoxWithTitle:@"Voice Manager" identifier:@"wow.box.voice"
+    UIView *voiceBox=[self sectionBoxWithTitle:@"Voice & Input Manager" identifier:@"wow.box.voice"
         rows:@[_permissionsButton,_voiceButton,_voiceTestButton]];
     UIView *performanceBox=[self sectionBoxWithTitle:@"Performance & UI Manager" identifier:@"wow.box.performance"
         rows:@[_backupButton,_resetButton,_restoreButton,_settingsFolderButton,_gamepadRow,_overlayRow]];
 
     _activity=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
     _activity.color=Gold(); _activity.hidesWhenStopped=YES;
-    _stateLabel=Label(23,UIFontWeightSemibold,UIColor.whiteColor); _stateLabel.accessibilityIdentifier=@"wow.status";
+    _stateLabel=Label(17,UIFontWeightSemibold,UIColor.whiteColor); _stateLabel.accessibilityIdentifier=@"wow.status";
     UIStackView *stateRow=[[UIStackView alloc] initWithArrangedSubviews:@[_activity,_stateLabel]];
     stateRow.axis=UILayoutConstraintAxisHorizontal; stateRow.spacing=10;
     // A hidden activity indicator retains its 20pt intrinsic height. Center
     // it rather than stretching/compressing both views to that same height.
     stateRow.alignment=UIStackViewAlignmentCenter;
     [_activity setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
-    _detailLabel=Label(15,UIFontWeightRegular,Muted()); _detailLabel.accessibilityIdentifier=@"wow.detail";
-    _versionLabel=Label(12,UIFontWeightRegular,Muted()); _versionLabel.accessibilityIdentifier=@"wow.version";
+    _detailLabel=Label(17,UIFontWeightRegular,Muted()); _detailLabel.accessibilityIdentifier=@"wow.detail";
+    _versionLabel=Label(17,UIFontWeightRegular,Muted()); _versionLabel.accessibilityIdentifier=@"wow.version";
     _progressBar=[[UIProgressView alloc] initWithProgressViewStyle:UIProgressViewStyleDefault];
     _progressBar.progressTintColor=Gold(); _progressBar.accessibilityIdentifier=@"wow.progress";
     _launchProgress=[TKLaunchProgressView new];
@@ -341,9 +341,9 @@ static NSNotificationName const TKForeverLayoutDidChange = @"AKGamepadLayoutDidC
     status.layer.borderColor=[Gold() colorWithAlphaComponent:0.24].CGColor;
     _primaryButton=[self button:@"wow.primary" action:@selector(primaryAction)];
     [_primaryButton.heightAnchor constraintGreaterThanOrEqualToConstant:52].active=YES;
-    _updatesLabel=Label(12,UIFontWeightRegular,Muted()); _updatesLabel.accessibilityIdentifier=@"wow.updates";
+    _updatesLabel=Label(17,UIFontWeightRegular,Muted()); _updatesLabel.accessibilityIdentifier=@"wow.updates";
     _updatesLabel.text=@"Updates automatically. Keep this app open while downloading.";
-    _startupLabel=Label(12,UIFontWeightRegular,Muted()); _startupLabel.accessibilityIdentifier=@"wow.startup";
+    _startupLabel=Label(17,UIFontWeightRegular,Muted()); _startupLabel.accessibilityIdentifier=@"wow.startup";
     UIStackView *right=Stack(@[status,_primaryButton,_updatesLabel,_startupLabel],12);
     // The top of the page: the mark on the left, what the launcher is doing and
     // the Play button on the right. The boxes go underneath both.
