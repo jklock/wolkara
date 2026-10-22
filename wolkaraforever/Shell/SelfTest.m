@@ -7,6 +7,7 @@
 
 #import "SelfTest.h"
 #import "WolkaraForeverLog.h"
+#import "../WoW/ForeverUI.h"
 #import "../Input/InputElement.h"
 #import "../Input/InputRouter.h"
 #import "../Input/Trigger.h"
@@ -20,6 +21,8 @@ NSString *const AKSelfTestInput = @"input";
 NSString *const AKSelfTestVoice = @"voice";
 NSString *const AKSelfTestMic = @"mic";
 NSString *const AKSelfTestDictationTarget = @"dictation-target";
+NSString *const AKSelfTestForeverUI = @"forever-ui";
+NSString *const AKSelfTestForeverUIClean = @"forever-ui-clean";
 
 #pragma mark - Recording what happened
 
@@ -503,8 +506,163 @@ static void AKSelfTestRunDictationTarget(AKSelfTestRecorder *recorder) {
                  _:@"<and keys (touchSpecialKey:characters:) for Return>"];
 }
 
-static void AKSelfTestLogVerdict(AKSelfTestRecorder *recorder, NSString *name) {
-    if (recorder.firstFailure) {
+#pragma mark - The Forever UI rows, on the installation actually on the device
+
+static NSString *AKSelfTestDocuments(void) {
+    return NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+}
+
+// The Forever edition's working directory, where the launcher's rows would resolve it. Only the
+// installed folder is needed here: this exercises the file operations themselves.
+static NSString *AKSelfTestForeverDirectory(void) {
+    NSString *documents = AKSelfTestDocuments();
+    for (NSString *candidate in @[@"World of Warcraft/_classic_beta_", @"_classic_beta_"]) {
+        NSString *path = [documents stringByAppendingPathComponent:candidate];
+        BOOL directory = NO;
+        if ([NSFileManager.defaultManager fileExistsAtPath:path isDirectory:&directory] && directory)
+            return path;
+    }
+    return nil;
+}
+
+static NSString *AKSelfTestConfigPath(NSString *directory) {
+    return [directory stringByAppendingPathComponent:@"WTF/Config.wtf"];
+}
+
+static NSString *AKSelfTestReadText(NSString *path) {
+    return [NSString stringWithContentsOfFile:path encoding:NSISOLatin1StringEncoding error:NULL];
+}
+
+// Deliberately a second, smaller parser: a test that reuses the code under test cannot catch a
+// mistake in it.
+static NSString *AKSelfTestCVarName(NSString *line) {
+    NSMutableArray<NSString *> *tokens = [NSMutableArray new];
+    for (NSString *token in [line componentsSeparatedByCharactersInSet:NSCharacterSet.whitespaceCharacterSet])
+        if (token.length) [tokens addObject:token];
+    if (tokens.count < 2 || ![tokens[0].uppercaseString isEqualToString:@"SET"]) return nil;
+    return tokens[1];
+}
+
+static BOOL AKSelfTestGraphicsLine(NSString *line) {
+    NSString *name = AKSelfTestCVarName(line).lowercaseString;
+    return [name hasPrefix:@"gx"] || [name hasPrefix:@"graphics"];
+}
+
+static NSArray<NSString *> *AKSelfTestLines(NSString *text) {
+    NSMutableArray<NSString *> *lines = [[text componentsSeparatedByString:@"\n"] mutableCopy];
+    if (lines.count && [lines.lastObject length] == 0) [lines removeLastObject];
+    return lines;
+}
+
+static void AKSelfTestRunForeverUI(AKSelfTestRecorder *recorder) {
+    NSString *directory = AKSelfTestForeverDirectory();
+    [recorder check:directory != nil _:@"a Forever installation is present on this device"];
+    if (!directory) return;
+    NSString *configPath = AKSelfTestConfigPath(directory);
+    NSString *before = AKSelfTestReadText(configPath);
+    [recorder check:before.length > 0 _:@"its Config.wtf is readable"];
+    if (!before.length) return;
+
+    // --- backup
+    NSError *error = nil;
+    NSString *backup = [TKForeverUI createUIBackupInWorkingDirectory:directory edition:TKForeverUIEdition error:&error];
+    [recorder check:backup.length > 0 _:[NSString stringWithFormat:@"backup created (%@)", error.localizedDescription ?: @"no name"]];
+    if (!backup.length) return;
+    [recorder check:[NSFileManager.defaultManager fileExistsAtPath:
+        [directory stringByAppendingPathComponent:[@"WTF/Backups" stringByAppendingPathComponent:backup]]]
+                 _:@"the backup is a file in WTF/Backups"];
+    [recorder check:[[TKForeverUI newestUIBackupInWorkingDirectory:directory error:NULL] isEqual:backup]
+                 _:@"it is the newest valid backup"];
+
+    // --- reset removes graphics and keeps everything else
+    error = nil;
+    BOOL reset = [TKForeverUI resetGraphicsInWorkingDirectory:directory error:&error];
+    [recorder check:reset _:[NSString stringWithFormat:@"reset ran (%@)", error.localizedDescription ?: @"ok"]];
+    NSString *afterReset = AKSelfTestReadText(configPath);
+    BOOL graphicsLeft = NO;
+    for (NSString *line in AKSelfTestLines(afterReset)) {
+        if (AKSelfTestGraphicsLine(line)) { graphicsLeft = YES; break; }
+    }
+    [recorder check:afterReset != nil && !graphicsLeft _:@"no graphics CVar is left in Config.wtf"];
+    NSMutableArray *expectedKept = [NSMutableArray new];
+    for (NSString *line in AKSelfTestLines(before)) if (!AKSelfTestGraphicsLine(line)) [expectedKept addObject:line];
+    [recorder check:[AKSelfTestLines(afterReset) isEqualToArray:expectedKept]
+                 _:@"account, locale, audio, UI, input, gamepad, bindings and unknown settings are byte-identical"];
+
+    // --- restore brings the whole UI back, which is also what leaves the device as it was
+    error = nil;
+    BOOL restored = [TKForeverUI restoreUIBackupNamed:backup inWorkingDirectory:directory
+                                              edition:TKForeverUIEdition error:&error];
+    [recorder check:restored _:[NSString stringWithFormat:@"restore ran (%@)", error.localizedDescription ?: @"ok"]];
+    [recorder check:[AKSelfTestReadText(configPath) isEqual:before]
+                 _:@"the restored Config.wtf is byte-identical to the original"];
+
+    // --- the gamepad write adds exactly one answer and changes nothing else
+    error = nil;
+    BOOL gamepad = [TKForeverUI enableGamepadInWorkingDirectory:directory error:&error];
+    [recorder check:gamepad _:[NSString stringWithFormat:@"gamepad write ran (%@)", error.localizedDescription ?: @"ok"]];
+    NSString *afterGamepad = AKSelfTestReadText(configPath);
+    NSUInteger assignments = 0;
+    BOOL enabled = NO;
+    NSMutableArray *expectedGamepad = [NSMutableArray new];
+    for (NSString *line in AKSelfTestLines(afterGamepad)) {
+        NSString *name = AKSelfTestCVarName(line);
+        if ([name caseInsensitiveCompare:@"GamePadEnable"] == NSOrderedSame) {
+            assignments++;
+            enabled = [line containsString:@"\"1\""];
+        } else {
+            [expectedGamepad addObject:line];
+        }
+    }
+    [recorder check:assignments == 1 && enabled _:@"exactly one GamePadEnable assignment, value 1"];
+    NSMutableArray *originalNonGamepad = [NSMutableArray new];
+    for (NSString *line in AKSelfTestLines(before))
+        if ([AKSelfTestCVarName(line) caseInsensitiveCompare:@"GamePadEnable"] != NSOrderedSame)
+            [originalNonGamepad addObject:line];
+    [recorder check:[expectedGamepad isEqualToArray:originalNonGamepad]
+                 _:@"no other Config.wtf line changed"];
+
+    // Undo the gamepad write the same way, so the user's configuration is untouched.
+    error = nil;
+    [recorder check:[TKForeverUI restoreUIBackupNamed:backup inWorkingDirectory:directory
+                                              edition:TKForeverUIEdition error:&error]
+                 _:@"the final restore leaves the user's UI as it was"];
+
+    // --- leave the overlay on and expanded so the in-game HUD can be seen on this device
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    id stored = [defaults objectForKey:@"WolkaraForeverTouchLayoutV1"];
+    NSMutableDictionary *layout = [stored isKindOfClass:NSDictionary.class] ? [stored mutableCopy]
+                                                                           : [NSMutableDictionary new];
+    layout[@"performanceOverlayEnabled"] = @YES;
+    [defaults setObject:layout forKey:@"WolkaraForeverTouchLayoutV1"];
+    [defaults setBool:YES forKey:@"WolkaraForeverPerformanceOverlayExpanded"];
+    [defaults setObject:@[@0.55, @0.35] forKey:@"WolkaraForeverPerformanceOverlayPosition"];
+    NSDictionary *saved = [defaults objectForKey:@"WolkaraForeverTouchLayoutV1"];
+    [recorder check:[saved[@"performanceOverlayEnabled"] boolValue]
+                 _:@"the overlay preference is on in the shared layout store"];
+
+    recorder.detail = [NSString stringWithFormat:@"backup, reset, restore and gamepad on the real installation; overlay left on for the HUD check (backup %@)", backup];
+}
+
+static void AKSelfTestRunForeverUIClean(AKSelfTestRecorder *recorder) {
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    id stored = [defaults objectForKey:@"WolkaraForeverTouchLayoutV1"];
+    if ([stored isKindOfClass:NSDictionary.class]) {
+        NSMutableDictionary *layout = [stored mutableCopy];
+        layout[@"performanceOverlayEnabled"] = @NO;
+        [defaults setObject:layout forKey:@"WolkaraForeverTouchLayoutV1"];
+    }
+    [defaults removeObjectForKey:@"WolkaraForeverPerformanceOverlayExpanded"];
+    [defaults removeObjectForKey:@"WolkaraForeverPerformanceOverlayPosition"];
+    NSDictionary *saved = [defaults objectForKey:@"WolkaraForeverTouchLayoutV1"];
+    [recorder check:![saved[@"performanceOverlayEnabled"] boolValue]
+                 _:@"the overlay preference is off again"];
+    [recorder check:([defaults objectForKey:@"WolkaraForeverPerformanceOverlayPosition"] == nil)
+                 _:@"the HUD position is cleared, so it starts at its default corner"];
+    recorder.detail = @"overlay preference returned to its default off state";
+}
+
+static void AKSelfTestLogVerdict(AKSelfTestRecorder *recorder, NSString *name) {    if (recorder.firstFailure) {
         WKLog("selftest", @"selftest: %@ FAIL %lu/%lu checks: %@",
               name, (unsigned long)recorder.passed, (unsigned long)recorder.total, recorder.firstFailure);
         return;

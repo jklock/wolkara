@@ -18,7 +18,7 @@ no patches, no settings for the application itself.
 - `workingDirectory`: folder under Documents that becomes the working directory.
 - `executable`: path of the macOS executable, relative to `workingDirectory`.
   Keeping the `.app` bundle structure lets the application find its resources.
-- Both paths must be relative and stay inside Documents; `tools/check_profile.py`
+- Both paths must be relative and stay inside Documents; `platform/tools/check_profile.py`
   rejects anything else and any unknown key.
 - `caseAliases` (optional): `{"archive/mac": "Mac"}` means the application
   opens `archive/mac/…` while its installer wrote `archive/Mac`. macOS's file
@@ -66,7 +66,7 @@ program under Wine, say) names that runtime instead of a macOS `.app`:
   service), so ask for what the runtime needs. Only with `runtime`; Local
   signing cannot provide it.
 
-Every profile in `profiles/` is built into the app. When the files a profile
+Every profile in `profiles/` that carries a profile file is built into the app. When the files a profile
 describes are present in Documents, the launcher adds that app to its library
 under the profile's name. A profile outside this folder can be added with
 `TOLKARA_PROFILE=/path/to/profile.json` in `local.env`.

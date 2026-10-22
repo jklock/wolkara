@@ -1,5 +1,10 @@
 # Layer deltas: WolkaraForever against tolkara
 
+> **Historical record.** This records the delta set as of the split (2026-10-15). It is
+> kept as evidence and is not current guidance - see [the documentation index](README.md)
+> for the live documents. A bare `tools/<script>` below is a pre-split path; the layer's
+> scripts are in `wolkaraforever/tools/`, the platform's in `platform/tools/`.
+
 This is the single source of truth for the split of WolkaraForever into a layer above
 tolkara. It records what we changed, what upstream changed, where the two ran over
 each other, and the class each path gets in the layer split.
@@ -9,7 +14,7 @@ each other, and the class each path gets in the layer split.
 | Item | Value |
 | --- | --- |
 | Our branch | `feature/wolkaraforever-above-tolkara` (fork of the pre-split state, tagged `wolkaraforever-pre-layer`) |
-| Merge base with upstream | `05035cc` *Document confirmed iPhone keyboard and trackpad use* |
+| Merge base with upstream | `05035cc` *Document confirmed on-device keyboard and trackpad use* |
 | Pinned upstream | `00a8501` *Compatibility: WoW Forever water renders on the iPad Pro M5* (`upstream/main`) |
 | Our side | 37 commits, 109 files, +9737 / -356 |
 | Upstream side | 30 commits, 107 files, +9737 / -580 |
@@ -81,7 +86,7 @@ authorization/Tunnel/LocalPacketProvider.m
 authorization/Tunnel/PacketServiceProbe.swift
 docs/ARCHITECTURE.md
 docs/BUILDING.md
-docs/IPHONE.md
+docs/BUILDING.md
 docs/TOUCH_INPUT.md
 launcher/App/AppLibrary.h
 launcher/App/AppLibrary.m
@@ -201,7 +206,7 @@ same as differing now - see "The measured delta set" below for what actually dif
 | `tests/test_appkit_views.m`, `tests/test_touch_controls_app.m` | platform-owned + new layer tests | Upstream's assert the platform's two-button layout; the layer ships its own fixtures for its toolbar, drafts and dictation |
 | `tests/test_execution_mode.m` | platform-owned + new layer test | Mode machinery is platform; the layer tests its own glue |
 | `tools/test_emulation.sh` | patch | Add the layer's suites to the run |
-| `README.md`, `COMPATIBILITY.md`, `NOTICE.md`, `docs/BUILDING.md`, `docs/IPHONE.md`, `docs/TOUCH_INPUT.md`, `profiles/wow-forever/README.md`, `local.env.example`, `.github/workflows/release.yml` | layer | Root-level documents, profiles, settings contract and CI belong to the repository we own; upstream's live untouched under `platform/` and are merged in by hand when their content matters |
+| `README.md`, `COMPATIBILITY.md`, `NOTICE.md`, `docs/BUILDING.md`, `docs/TOUCH_INPUT.md`, `profiles/wow-forever/README.md`, `local.env.example`, `.github/workflows/release.yml` | layer | Root-level documents, profiles, settings contract and CI belong to the repository we own; upstream's live untouched under `platform/` and are merged in by hand when their content matters |
 
 ## Ours only: 16 platform files we modified (upstream never touched)
 

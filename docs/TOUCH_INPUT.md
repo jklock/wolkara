@@ -139,7 +139,7 @@ discarded when the keyboard closes or the app enters the background.
 
 There are two dictation paths and they stay separate. The one above is the system
 keyboard's microphone writing into the draft, with Replace as the user's decision. The other
-is the **Voice Manager**'s mapped trigger ([`VOICE.md`](VOICE.md)): it records through the
+is the **Voice & Input Manager**'s mapped trigger ([`VOICE.md`](VOICE.md)): it records through the
 app's own session and types the transcript straight into the field the guest has focused,
 through the controls' `touchInsertText:`, with no draft and no Replace. The draft editor is
 never announced as the game's text input - that mistake aborted the app the first time a
@@ -153,14 +153,13 @@ background, still discards it.
 
 Dictation is only reachable while the **software** keyboard is on screen: the
 microphone is a key of that keyboard. With a hardware keyboard attached iPadOS
-hides the software keyboard, so the mic key cannot be reached and only our
-accessory row stays visible — the app cannot force the software keyboard back.
-That state is now recorded instead of being guessed at: the adapter logs
-`software keyboard did not appear (hardware keyboard attached?)` when the draft
-editor becomes first responder and `UIKeyboardDidShowNotification` never
-arrives. Press ⌘K (or the hardware keyboard's keyboard key) to bring the software
-keyboard back, then dictate. Check this first when a report says dictation does
-nothing.
+hides the software keyboard, and the app cannot force it back. Measured on
+Dadpad, 2026-10-22 (`system keyboard shown draftFirstResponder=1 height=0`): the
+keyboard frame was empty, so there were no keys at all and the login field could
+not be given the `@` an e-mail address needs. The layer therefore supplies the
+keys itself in that state - see **The keyboard the layer supplies** below - and
+its `⌨` key hands the input view back to iPadOS when the user wants dictation's
+microphone.
 
 The dictation path logs into `Documents/native-guest.log` so a device attempt can
 be read afterwards: `dictation placeholder inserted/removed`, `dictation result:
@@ -175,13 +174,24 @@ same at guest start, for a device check of the keyboard and its microphone.
 
 Apple's dictation is reached through the iOS keyboard's own microphone. A hardware
 keyboard attached to the iPad makes iPadOS hide those keys, and the microphone with
-them - the touch row above them is ours and stays. Rather than leave a keyboard
-that cannot dictate, WolkaraForever says so in the draft's label and in
-`native-guest.log` (`hardware keyboard attached`, `software keyboard keys are not
-on screen (height 0 ...)`): pressing the keyboard key (**⌘K**, or the keyboard key
-on our own row) brings the keys and the microphone back. With no hardware keyboard
-the keyboard appears with its microphone, and a Magic Keyboard's own dictation key
-starts dictation directly.
+them - the touch row above them is ours and stays.
+
+## The keyboard the layer supplies
+
+When iPadOS reports the software keyboard with no keys on screen (a frame shorter
+than 150 points, which is the shortcut bar alone, or nothing at all), the controls
+put their own keyboard into the draft editor's input view. A custom input view is
+shown whatever the hardware says, so the keys are there: qwerty, a numbers and
+symbols page, shift, backspace, space, return, `@` and `.` - the characters a login
+field needs - and a `⌨` key that gives the input view back to iPadOS for
+dictation's microphone. Typed characters take the same route dictation's do
+(`touchInsertText:`), so the field the game has focused receives ordinary typing;
+each key logs `wolkaraforever.layerkey.*` in the accessibility tree, and the
+transition is logged as `the layer's own keyboard is up`.
+
+The state that used to be a dead end is now a keyboard: `hardware keyboard
+attached` and `software keyboard keys are not on screen (height 0 ...)` are
+followed by the layer's keys instead of an instruction to press ⌘K and hope.
 
 The app declares the **audio** background mode and keeps its audio session active,
 so iPadOS treats a running guest as an audio app and does not suspend it when the

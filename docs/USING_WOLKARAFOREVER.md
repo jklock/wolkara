@@ -23,6 +23,15 @@ manage add-ons, set up voice input, and start the game.
    content only; they do not change the game's login region.
 3. Keep WolkaraForever open while it downloads or installs an update. **Play** becomes
    available only after the selected client is ready.
+
+While the game is starting, the home page says **Starting…** and the rows that would
+change something are grey; they become gold again when they are usable. Once the game's
+window is up, the page says **Running** and stays that way while you play. Quit the game
+from its own menu and WolkaraForever returns here with **Game closed**: the game can only
+be entered once in a process, so the only way to play again is to close WolkaraForever and
+open it again. The **Close WolkaraForever** button on that state does exactly that — if the
+game's window is still on screen after quitting from inside, closing the app is how you
+get back to the home screen.
 4. Tap **Play**, wait for startup preparation to finish, then sign in to the
    game yourself.
 
@@ -33,7 +42,7 @@ few minutes even when the client is already up to date.
 
 ![Add-on Manager installed list](screenshots/addon-manager.jpg)
 
-Open **Addon Manager** to see the installed packages for the selected edition.
+Open **Install Addons (Curse & Direct)** to see the installed packages for the selected edition.
 
 - **Installed** lists the packages on this device. Use the search field to
   narrow the list. The circular-arrow button refreshes the displayed list.
@@ -43,9 +52,18 @@ Open **Addon Manager** to see the installed packages for the selected edition.
   **Cancel** to make no change.
 - **Browse CurseForge** searches available add-ons. It requires an approved
   CurseForge Core API key before results can be displayed; enter that key only
-  if you have approval to use it. Once access is configured, search, category,
-  sort, and ordering controls narrow the remote list; their available
-  categories can change with CurseForge.
+  if you have approval to use it. The key is the `$2a$…` string the CurseForge
+  developer console issues for the approved application, stored only in this
+  device's Keychain. Once access is configured, the page lists real projects the
+  way the CurseForge site does: artwork, name and current file, downloads, a
+  popularity rank, the last update date, category, game version and author.
+  **Sort** offers Featured, Popularity, Last Updated, Name, Author, Total
+  Downloads and Release Date, and tapping the field in use reverses its order;
+  **Filters** narrows to one game version or category (and can be cleared), and
+  the count above the list follows both. **Columns** chooses which of the six
+  fields the list shows, and the choice is remembered; it never hides the name.
+  Sorting and filtering are the site's own; the rank is CurseForge's, not a
+  position in the current list.
 - The **plus** button opens Files so you can select one add-on archive to
   import. **Open Add-on Directory** opens the app's add-on folder. Neither
   action changes an add-on until you choose an item or complete its action.
@@ -54,6 +72,30 @@ Open **Addon Manager** to see the installed packages for the selected edition.
 The installed list identifies add-ons managed by WolkaraForever. Existing add-ons are
 preserved; WolkaraForever removes only package folders it installed and recorded.
 Do not change an add-on while an update or game-start preparation is underway.
+
+## Performance & UI Manager
+
+The last box on the home page holds Forever's own file operations and two
+WolkaraForever switches. The file operations need an installed, ready Forever
+edition and no update, start or session in progress.
+
+- **Backup WoW UI Configuration** writes a verified ZIP of `WTF` (without its
+  `Backups` folder) and `Interface` into `WTF/Backups`, and names it.
+- **Reset to Default Graphical Settings** asks first. It makes a backup, then
+  removes only the graphics and display settings from `Config.wtf`; accounts,
+  locale, audio, input, gamepad configuration, bindings, SavedVariables and
+  unknown settings are kept byte for byte. Forever regenerates its graphics
+  defaults when it next starts.
+- **Restore WoW UI Configuration** opens Files at `WTF/Backups`; choose the
+  `WoW-UI-…zip` to bring back. A snapshot of the current state is made first,
+  so a restore can itself be undone, and every other backup is kept.
+- **Gamepad UI** is a switch that writes `SET GamePadEnable` in `Config.wtf`.
+  It changes no bindings and takes effect when Forever next starts.
+- **Performance Overlay** is a switch for the in-game HUD (frame rate, frame
+  time, thermal state, battery, memory and Low Power Mode). It is off by
+  default and applies immediately. The in-game controller settings have the
+  same switch.
+- **Open Settings Folder** opens Files at the Forever `WTF` folder.
 
 ## Voice input
 

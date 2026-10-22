@@ -6,11 +6,15 @@
 #import "../App/WolkaraForeverLog.h"
 #import "../App/WolkaraForeverTheme.h"
 #import "Installation.h"
+#import "ForeverUI.h"
 #import "Updater.h"
 #import "../App/LaunchProgressView.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 static UIColor *Gold(void) { return [UIColor colorWithRed:0.88 green:0.73 blue:0.43 alpha:1]; }
+// One grey for every row that cannot be used, so a page in a transient state
+// reads as one thing instead of a mix of dimmed and full-strength text.
+static UIColor *RowGrey(void) { return [UIColor colorWithWhite:0.55 alpha:1]; }
 static UIColor *Muted(void) { return [UIColor colorWithRed:0.66 green:0.72 blue:0.78 alpha:1]; }
 static UILabel *Label(CGFloat size, UIFontWeight weight, UIColor *color) {
     UILabel *label=[UILabel new]; label.numberOfLines=0; label.textColor=color;
@@ -23,6 +27,76 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     UIStackView *stack=[[UIStackView alloc] initWithArrangedSubviews:views];
     stack.axis=UILayoutConstraintAxisVertical; stack.spacing=spacing; return stack;
 }
+// The Forever UI file operations are disk work: a backup reads the whole WTF and
+// Interface trees, and a restore extracts and checks them. None of it belongs on
+// the main thread, so every one runs here and reports back on the main thread.
+static dispatch_queue_t TKForeverUIQueue(void) {
+    static dispatch_queue_t queue; static dispatch_once_t once;
+    dispatch_once(&once, ^{ queue=dispatch_queue_create("org.tolkara.forever-ui", DISPATCH_QUEUE_SERIAL); });
+    return queue;
+}
+// The touch layout store's key and change notification, by value. The Touch
+// module owns both, but WoW must not import it: the layer gate keeps these
+// modules apart. Writing the dictionary read-modify-write is what preserves the
+// layout's own values, which the store then reads back unchanged.
+static NSString *const TKForeverLayoutKey = @"WolkaraForeverTouchLayoutV1";
+static NSNotificationName const TKForeverLayoutDidChange = @"AKGamepadLayoutDidChange";
+
+
+// A settings row that reads as a switch, not as a command: the words stay the
+// same and the control says whether it is on. iOS draws the switch; the row only
+// supplies the label and the state.
+@interface TKWoWSwitchRow : UIView
+@property(nonatomic, readonly) UILabel *titleLabel;
+@property(nonatomic, readonly) UISwitch *toggle;
+@property(nonatomic, getter=isEnabled) BOOL enabled;
+- (instancetype)initWithTitle:(NSString *)title identifier:(NSString *)identifier
+                       target:(id)target action:(SEL)action;
+@end
+@implementation TKWoWSwitchRow
+- (instancetype)initWithTitle:(NSString *)title identifier:(NSString *)identifier
+                       target:(id)target action:(SEL)action {
+    if ((self=[super initWithFrame:CGRectZero])) {
+        self.accessibilityIdentifier=identifier;
+        _titleLabel=Label(17,UIFontWeightRegular,UIColor.whiteColor);
+        _titleLabel.text=title;
+        _titleLabel.accessibilityIdentifier=[identifier stringByAppendingString:@".label"];
+        _titleLabel.isAccessibilityElement=NO;
+        [_titleLabel setContentHuggingPriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
+        _toggle=[UISwitch new];
+        _toggle.onTintColor=Gold();
+        _toggle.accessibilityLabel=title;
+        _toggle.accessibilityIdentifier=[identifier stringByAppendingString:@".switch"];
+        [_toggle addTarget:target action:action forControlEvents:UIControlEventValueChanged];
+        [_toggle setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+        [_toggle setContentCompressionResistancePriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+        UIStackView *row=[[UIStackView alloc] initWithArrangedSubviews:@[_titleLabel,_toggle]];
+        row.axis=UILayoutConstraintAxisHorizontal;
+        row.alignment=UIStackViewAlignmentCenter;
+        row.translatesAutoresizingMaskIntoConstraints=NO;
+        [self addSubview:row];
+        [NSLayoutConstraint activateConstraints:@[
+            // The same 12-point inset the button rows use, so the switch lines up
+            // with their text.
+            [row.leadingAnchor constraintEqualToAnchor:self.leadingAnchor constant:12],
+            [row.trailingAnchor constraintEqualToAnchor:self.trailingAnchor constant:-12],
+            [row.topAnchor constraintEqualToAnchor:self.topAnchor],
+            [row.bottomAnchor constraintEqualToAnchor:self.bottomAnchor],
+            [self.heightAnchor constraintGreaterThanOrEqualToConstant:38],
+        ]];
+    }
+    return self;
+}
+- (void)setEnabled:(BOOL)enabled {
+    _enabled=enabled;
+    _toggle.enabled=enabled;
+    // The label follows the row, and the control only shows its own off/on
+    // colour: no alpha on the row, which used to make an enabled switch look
+    // the same as a disabled one. Gold is what every other usable row uses, so
+    // an on/off row reads like the buttons above and below it.
+    _titleLabel.textColor=enabled?Gold():RowGrey();
+}
+@end
 
 @interface TKWoWViewController () <UIDocumentPickerDelegate>
 @end
@@ -36,7 +110,11 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     NSError *_error;
     NSDate *_checkedAt;
     NSUInteger _generation;
-    BOOL _busy, _updating, _updateError, _starting;
+    BOOL _busy, _updating, _updateError, _starting, _running;
+    // A Forever UI file operation is running (backup, reset, restore, gamepad).
+    // The rows are disabled while it runs and every handler rechecks it.
+    BOOL _uiOperation;
+    BOOL _gamepadEnabled, _overlayEnabled;
     // The game files are read once, when the launcher first appears. Not on every
     // appearance: leaving a popup used to send us straight back to the network.
     BOOL _checkedThisLaunch;
@@ -47,10 +125,14 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     UIProgressView *_progressBar;
     CAGradientLayer *_background;
     UIStackView *_columns;
-    NSLayoutConstraint *_leftWidth;
+    NSLayoutConstraint *_markWidth;
+    UIStackView *_gridRow1, *_gridRow2;
     UILabel *_stateLabel, *_detailLabel, *_versionLabel, *_startupLabel, *_compatibilityLabel;
     UIButton *_editionButton, *_preferencesButton, *_addonsButton, *_addonsDirectoryButton,
-        *_voiceButton, *_voiceTestButton, *_permissionsButton, *_primaryButton;
+        *_voiceButton, *_voiceTestButton, *_permissionsButton, *_primaryButton,
+        *_macEverButton, *_backupButton, *_resetButton, *_restoreButton, *_settingsFolderButton;
+    TKWoWSwitchRow *_gamepadRow, *_overlayRow;
+    NSString *_backupsDirectory;
     UIView *_markView;
     NSLayoutConstraint *_markCap;
     UIBarButtonItem *_refreshItem;
@@ -77,14 +159,56 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
 // The page's own section heading: the small uppercase label the edition line
 // always used, now naming each group of rows.
 - (UILabel *)heading:(NSString *)text {
-    UILabel *label=Label(11,UIFontWeightSemibold,Muted());
+    UILabel *label=Label(17,UIFontWeightSemibold,Muted());
     label.text=text.uppercaseString;
     return label;
 }
-// The layer's mark, where the wordmark used to sit. It is drawn at the column's
-// own width, so it grows and shrinks with the window, with one cap: it may never
-// take more than a third of the height, so a short window still shows the rows
-// below it. The aspect constraint is optional for that reason — when the cap
+// One section, in its own box: the heading and its rows share a panel with the
+// page's own border and fill, so the eye can find a group without a long column
+// of loose rows.
+- (UIView *)sectionBoxWithTitle:(NSString *)title identifier:(NSString *)identifier rows:(NSArray<UIView *> *)rows {
+    UIView *box=[UIView new];
+    box.accessibilityIdentifier=identifier;
+    box.translatesAutoresizingMaskIntoConstraints=NO;
+    box.backgroundColor=[UIColor colorWithRed:0.055 green:0.085 blue:0.125 alpha:1];
+    box.layer.cornerRadius=14;
+    box.layer.borderWidth=1;
+    box.layer.borderColor=[Gold() colorWithAlphaComponent:0.18].CGColor;
+    UILabel *heading=[self heading:title];
+    heading.accessibilityIdentifier=[identifier stringByReplacingOccurrencesOfString:@"wow.box."
+                                                                          withString:@"wow.heading."];
+    UIStackView *stack=Stack([@[heading] arrayByAddingObjectsFromArray:rows],8);
+    stack.translatesAutoresizingMaskIntoConstraints=NO;
+    // A box in the taller row is stretched to match its neighbour; without a
+    // spacer the extra height would be shared out among the rows and drift them
+    // apart. The spacer takes all of it, so the rows stay together at the top.
+    UIView *spacer=[UIView new];
+    spacer.accessibilityIdentifier=@"wow.box.spacer";
+    [spacer setContentHuggingPriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisVertical];
+    [spacer setContentCompressionResistancePriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisVertical];
+    [stack addArrangedSubview:spacer];
+    [box addSubview:stack];
+    [NSLayoutConstraint activateConstraints:@[
+        [stack.topAnchor constraintEqualToAnchor:box.topAnchor constant:14],
+        [stack.leadingAnchor constraintEqualToAnchor:box.leadingAnchor constant:16],
+        [stack.trailingAnchor constraintEqualToAnchor:box.trailingAnchor constant:-16],
+        [stack.bottomAnchor constraintEqualToAnchor:box.bottomAnchor constant:-14],
+    ]];
+    return box;
+}
+// Two boxes side by side on a wide screen, stacked when there is no room.
+- (UIStackView *)boxRow:(NSArray<UIView *> *)boxes {
+    UIStackView *row=[[UIStackView alloc] initWithArrangedSubviews:boxes];
+    row.axis=UILayoutConstraintAxisHorizontal;
+    row.distribution=UIStackViewDistributionFillEqually;
+    row.alignment=UIStackViewAlignmentFill;
+    row.spacing=16;
+    return row;
+}
+// The layer's mark, where the wordmark used to sit. It is drawn at the top
+// row's width, so it grows and shrinks with the window, with one cap: it may
+// never take more than a fifth of the height, so the boxes below it always have
+// room. The aspect constraint is optional for that reason — when the cap
 // applies, the picture letterboxes rather than fighting the column's width.
 //
 // The cap spans this view and the controller's, so it can only be activated once
@@ -109,11 +233,14 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
         aspect.priority=999;
         aspect.active=YES;
         _markCap=[view.heightAnchor constraintLessThanOrEqualToAnchor:self.view.heightAnchor
-            multiplier:0.30];
+            multiplier:0.20];
         return view;
     }
     // No artwork in this build: say the name rather than show an empty gap.
     UILabel *label=Label(37,UIFontWeightBold,Gold()); label.text=@"WOLKAREFOREVER";
+    label.numberOfLines=1;
+    label.adjustsFontSizeToFitWidth=YES;
+    label.minimumScaleFactor=0.45;
     UIFontDescriptor *serif=[[UIFont systemFontOfSize:37 weight:UIFontWeightBold].fontDescriptor fontDescriptorWithDesign:UIFontDescriptorSystemDesignSerif];
     if (serif) label.font=[[UIFontMetrics metricsForTextStyle:UIFontTextStyleLargeTitle] scaledFontForFont:[UIFont fontWithDescriptor:serif size:37]];
     label.accessibilityIdentifier=@"wow.title";
@@ -139,46 +266,67 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     _refreshItem.accessibilityIdentifier=@"wow.refresh";
     self.navigationItem.leftBarButtonItem=_refreshItem;
 
-    // Three groups, in the order the page is read: the edition, the add-ons, and
-    // voice. The mark takes the wordmark's place at the top of the column.
+    // Identity and the play surface share the top of the page; the four
+    // sections sit in boxes underneath both, so the whole page fits without
+    // scrolling on an iPad instead of a column that has to be scrolled.
     _markView=[self markView];
-    UILabel *editionHeading=[self heading:@"Game edition"];
     _editionButton=[self button:@"wow.edition" action:@selector(chooseEdition)];
     _preferencesButton=[self button:@"wow.preferences" action:@selector(preferences)];
-    UILabel *addonsHeading=[self heading:@"Add-ons"];
     _addonsButton=[self button:@"wow.addons.manage" action:@selector(manageAddons)];
-    [_addonsButton setTitle:@"Addon Manager" forState:UIControlStateNormal];
+    [_addonsButton setTitle:@"Install Addons (Curse & Direct)" forState:UIControlStateNormal];
+    // Mac-Ever is a Forever-compatible add-on that is downloaded from CurseForge
+    // by the person using Safari, then installed with the row above. No scrape,
+    // no embedded download URL, and opening the page is not an installation.
+    _macEverButton=[self button:@"wow.addons.macEver" action:@selector(downloadMacEver)];
+    [_macEverButton setTitle:@"Download Mac-Ever" forState:UIControlStateNormal];
     _addonsDirectoryButton=[self button:@"wow.addons.directory" action:@selector(openAddonDirectory)];
     [_addonsDirectoryButton setTitle:@"Open Add-on Directory" forState:UIControlStateNormal];
-    UILabel *voiceHeading=[self heading:@"Voice manager"];
-    _voiceButton=[self button:@"wow.voice" action:@selector(manageVoice)];
-    [_voiceButton setTitle:@"Key / Button Configuration" forState:UIControlStateNormal];
-    _voiceTestButton=[self button:@"wow.voice.test" action:@selector(testVoice)];
-    [_voiceTestButton setTitle:@"Test Voice" forState:UIControlStateNormal];
     // Straight to this app's own page in Settings, which is where the Microphone and Speech Recognition
     // switches live. Available before the game is installed, because it is a setting and not a game
     // action - and it is the only place those switches can be changed.
     _permissionsButton=[self button:@"wow.permissions" action:@selector(openPermissions)];
-    [_permissionsButton setTitle:@"Permissions (Microphone, Speech)" forState:UIControlStateNormal];
-    _compatibilityLabel=Label(12,UIFontWeightRegular,Muted());
-    UIStackView *left=Stack(@[_markView,editionHeading,_editionButton,_preferencesButton,
-        addonsHeading,_addonsButton,_addonsDirectoryButton,
-        voiceHeading,_voiceButton,_voiceTestButton,_permissionsButton,_compatibilityLabel],12);
-    [left setCustomSpacing:24 afterView:_markView];
-    [left setCustomSpacing:24 afterView:_preferencesButton];
-    [left setCustomSpacing:24 afterView:_addonsDirectoryButton];
+    [_permissionsButton setTitle:@"Toggle Permissions (Mic & Speech)" forState:UIControlStateNormal];
+    _voiceButton=[self button:@"wow.voice" action:@selector(manageVoice)];
+    [_voiceButton setTitle:@"Key / Button Configuration" forState:UIControlStateNormal];
+    _voiceTestButton=[self button:@"wow.voice.test" action:@selector(testVoice)];
+    [_voiceTestButton setTitle:@"Test Voice & Dictation" forState:UIControlStateNormal];
+    _compatibilityLabel=Label(17,UIFontWeightRegular,Muted());
+    _backupButton=[self button:@"wow.performance.backup" action:@selector(backupUI)];
+    [_backupButton setTitle:@"Backup WoW UI Configuration" forState:UIControlStateNormal];
+    _resetButton=[self button:@"wow.performance.reset" action:@selector(resetGraphics)];
+    [_resetButton setTitle:@"Reset to Default Graphical Settings" forState:UIControlStateNormal];
+    _restoreButton=[self button:@"wow.performance.restore" action:@selector(restoreUI)];
+    [_restoreButton setTitle:@"Restore WoW UI Configuration" forState:UIControlStateNormal];
+    _gamepadRow=[[TKWoWSwitchRow alloc] initWithTitle:@"Gamepad UI" identifier:@"wow.performance.gamepad"
+        target:self action:@selector(gamepadChanged:)];
+    _overlayRow=[[TKWoWSwitchRow alloc] initWithTitle:@"Performance Overlay" identifier:@"wow.performance.overlay"
+        target:self action:@selector(overlayChanged:)];
+    _settingsFolderButton=[self button:@"wow.performance.settingsFolder" action:@selector(openSettingsFolder)];
+    [_settingsFolderButton setTitle:@"Open Settings Folder" forState:UIControlStateNormal];
+
+    // The four sections, as boxes. Their order is the order they are read in.
+    // The compatibility note belongs to the edition it is about, so it lives in
+    // that box rather than loose on the page.
+    UIView *editionBox=[self sectionBoxWithTitle:@"Game Edition" identifier:@"wow.box.edition"
+        rows:@[_editionButton,_preferencesButton,_compatibilityLabel]];
+    UIView *addonsBox=[self sectionBoxWithTitle:@"Add-On Manager" identifier:@"wow.box.addons"
+        rows:@[_addonsButton,_macEverButton,_addonsDirectoryButton]];
+    UIView *voiceBox=[self sectionBoxWithTitle:@"Voice & Input Manager" identifier:@"wow.box.voice"
+        rows:@[_permissionsButton,_voiceButton,_voiceTestButton]];
+    UIView *performanceBox=[self sectionBoxWithTitle:@"Performance & UI Manager" identifier:@"wow.box.performance"
+        rows:@[_backupButton,_resetButton,_restoreButton,_settingsFolderButton,_gamepadRow,_overlayRow]];
 
     _activity=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
     _activity.color=Gold(); _activity.hidesWhenStopped=YES;
-    _stateLabel=Label(23,UIFontWeightSemibold,UIColor.whiteColor); _stateLabel.accessibilityIdentifier=@"wow.status";
+    _stateLabel=Label(17,UIFontWeightSemibold,UIColor.whiteColor); _stateLabel.accessibilityIdentifier=@"wow.status";
     UIStackView *stateRow=[[UIStackView alloc] initWithArrangedSubviews:@[_activity,_stateLabel]];
     stateRow.axis=UILayoutConstraintAxisHorizontal; stateRow.spacing=10;
     // A hidden activity indicator retains its 20pt intrinsic height. Center
     // it rather than stretching/compressing both views to that same height.
     stateRow.alignment=UIStackViewAlignmentCenter;
     [_activity setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
-    _detailLabel=Label(15,UIFontWeightRegular,Muted()); _detailLabel.accessibilityIdentifier=@"wow.detail";
-    _versionLabel=Label(12,UIFontWeightRegular,Muted()); _versionLabel.accessibilityIdentifier=@"wow.version";
+    _detailLabel=Label(17,UIFontWeightRegular,Muted()); _detailLabel.accessibilityIdentifier=@"wow.detail";
+    _versionLabel=Label(17,UIFontWeightRegular,Muted()); _versionLabel.accessibilityIdentifier=@"wow.version";
     _progressBar=[[UIProgressView alloc] initWithProgressViewStyle:UIProgressViewStyleDefault];
     _progressBar.progressTintColor=Gold(); _progressBar.accessibilityIdentifier=@"wow.progress";
     _launchProgress=[TKLaunchProgressView new];
@@ -193,13 +341,23 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     status.layer.borderColor=[Gold() colorWithAlphaComponent:0.24].CGColor;
     _primaryButton=[self button:@"wow.primary" action:@selector(primaryAction)];
     [_primaryButton.heightAnchor constraintGreaterThanOrEqualToConstant:52].active=YES;
-    _updatesLabel=Label(12,UIFontWeightRegular,Muted()); _updatesLabel.accessibilityIdentifier=@"wow.updates";
+    _updatesLabel=Label(17,UIFontWeightRegular,Muted()); _updatesLabel.accessibilityIdentifier=@"wow.updates";
     _updatesLabel.text=@"Updates automatically. Keep this app open while downloading.";
-    _startupLabel=Label(12,UIFontWeightRegular,Muted()); _startupLabel.accessibilityIdentifier=@"wow.startup";
+    _startupLabel=Label(17,UIFontWeightRegular,Muted()); _startupLabel.accessibilityIdentifier=@"wow.startup";
     UIStackView *right=Stack(@[status,_primaryButton,_updatesLabel,_startupLabel],12);
-    _columns=Stack(@[left,right],32); _columns.accessibilityIdentifier=@"wow.columns";
-    _columns.alignment=UIStackViewAlignmentTop;
-    _leftWidth=[left.widthAnchor constraintEqualToAnchor:_columns.widthAnchor multiplier:0.38];
+    // The top of the page: the mark on the left, what the launcher is doing and
+    // the Play button on the right. The boxes go underneath both.
+    UIStackView *top=[[UIStackView alloc] initWithArrangedSubviews:@[_markView,right]];
+    top.axis=UILayoutConstraintAxisHorizontal; top.spacing=28; top.alignment=UIStackViewAlignmentTop;
+    top.accessibilityIdentifier=@"wow.top";
+    _markWidth=[_markView.widthAnchor constraintEqualToAnchor:top.widthAnchor multiplier:0.30];
+    _markWidth.active=YES;
+    _gridRow1=[self boxRow:@[editionBox,addonsBox]];
+    _gridRow2=[self boxRow:@[voiceBox,performanceBox]];
+    UIStackView *grid=Stack(@[_gridRow1,_gridRow2],16);
+    grid.accessibilityIdentifier=@"wow.grid";
+    _columns=Stack(@[top,grid],20); _columns.accessibilityIdentifier=@"wow.columns";
+    _columns.alignment=UIStackViewAlignmentFill;
 
     UIScrollView *scroll=[UIScrollView new]; scroll.accessibilityIdentifier=@"wow.scroll";
     scroll.translatesAutoresizingMaskIntoConstraints=NO; [self.view addSubview:scroll];
@@ -241,9 +399,12 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     // switched on; once only, because switching it on lays out again.
     if (_markCap && !_markCap.active) _markCap.active=YES;
     BOOL horizontal=self.view.bounds.size.width>=700 && !UIContentSizeCategoryIsAccessibilityCategory(self.traitCollection.preferredContentSizeCategory);
-    _leftWidth.active=horizontal;
-    _columns.axis=horizontal?UILayoutConstraintAxisHorizontal:UILayoutConstraintAxisVertical;
-    _columns.alignment=horizontal?UIStackViewAlignmentTop:UIStackViewAlignmentFill;
+    // Two boxes side by side when there is room, one column otherwise. The page
+    // itself is always a single vertical column, and the boxes keep their order.
+    _gridRow1.axis=horizontal?UILayoutConstraintAxisHorizontal:UILayoutConstraintAxisVertical;
+    _gridRow2.axis=_gridRow1.axis;
+    _gridRow1.distribution=horizontal?UIStackViewDistributionFillEqually:UIStackViewDistributionFill;
+    _gridRow2.distribution=_gridRow1.distribution;
 }
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
@@ -267,7 +428,7 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
 - (void)background:(NSNotification *)note { (void)note; [self cancel]; }
 - (void)cancel { [_client cancel]; _client=nil; _generation++; _busy=NO; }
 - (void)setExecutionMode:(TKExecutionMode)mode { _executionMode=mode; if (self.isViewLoaded) [self render]; }
-- (void)setSessionUsed:(BOOL)used { _sessionUsed=used; if (used) [self cancel]; if (self.isViewLoaded) [self render]; }
+- (void)setSessionUsed:(BOOL)used { _sessionUsed=used; if (used) { _running=NO; [self cancel]; } if (self.isViewLoaded) [self render]; }
 - (void)selectProduct:(NSDictionary *)product {
     if (_starting || _sessionUsed) return;
     if (![TKWoWProducts() containsObject:product]) return;
@@ -346,6 +507,15 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
             NSLog(@"[wow-update] Verification bytes read=%llu reused=%llu",updater.verificationBytesRead,updater.verificationBytesReused);
         }
 
+        // Before the home page is exposed again: finish or roll back a restore
+        // that a previous launch interrupted. This is the one place that runs
+        // early enough to be ahead of the page, and it runs only for Forever.
+        if(installation.state==TKWoWInstallationReady && installation.app &&
+           [self->_product[@"id"] isEqual:TKForeverUIEdition]) {
+            NSString *directory=[self->_library workingDirectoryForApp:installation.app error:NULL];
+            if(directory && ![TKForeverUI recoverInterruptedRestoreInWorkingDirectory:directory error:NULL])
+                NSLog(@"[wow-ui] an interrupted restore could not be resolved; the game files were left as they were");
+        }
         dispatch_async(dispatch_get_main_queue(),^{
             if (generation!=self->_generation) return;
             self->_plan=plan; self->_installation=installation; self->_error=error;
@@ -358,7 +528,12 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     });
 }
 - (void)primaryAction {
-    if (_busy || _sessionUsed || _starting) return;
+    // Starting and running own the button; nothing else may close or start.
+    if (_starting || _running) return;
+    // After a session the only useful action is to leave: this process cannot
+    // start a second guest, and the user must be able to close it from here.
+    if (_sessionUsed) { [self closeApp]; return; }
+    if (_busy) return;
     if (_startupFailure) { _startupFailure=nil; [self render]; }
     if (_error || !_plan) { [self refresh]; return; }
     if (_installation.state==TKWoWInstallationMissing || _installation.state==TKWoWInstallationNeedsRepair) {
@@ -377,8 +552,23 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     UIButtonConfiguration *configuration=filled?UIButtonConfiguration.filledButtonConfiguration:UIButtonConfiguration.plainButtonConfiguration;
     configuration.title=title; configuration.cornerStyle=UIButtonConfigurationCornerStyleMedium;
     configuration.baseBackgroundColor=Gold(); configuration.baseForegroundColor=filled?[UIColor colorWithRed:0.08 green:0.065 blue:0.035 alpha:1]:Gold();
-    configuration.contentInsets=NSDirectionalEdgeInsetsMake(filled?14:6,12,filled?14:6,12);
+    configuration.contentInsets=NSDirectionalEdgeInsetsMake(filled?14:8,12,filled?14:8,12);
     button.configuration=configuration;
+    [button setTitle:title forState:UIControlStateNormal];
+}
+// Disabled rows use one explicit grey rather than the system's dimming, so a
+// starting page, a session page and an ended session all read the same.
+- (void)stylePlainButton:(UIButton *)button {
+    UIButtonConfiguration *configuration=button.configuration;
+    configuration.baseForegroundColor=button.enabled?Gold():RowGrey();
+    button.configuration=configuration;
+}
+- (void)stylePrimaryButton {
+    UIButtonConfiguration *configuration=_primaryButton.configuration;
+    BOOL enabled=_primaryButton.enabled;
+    configuration.baseBackgroundColor=enabled?Gold():[UIColor colorWithWhite:0.28 alpha:1];
+    configuration.baseForegroundColor=enabled?[UIColor colorWithRed:0.08 green:0.065 blue:0.035 alpha:1]:[UIColor colorWithWhite:0.62 alpha:1];
+    _primaryButton.configuration=configuration;
 }
 - (void)render {
     if (!self.isViewLoaded) return;
@@ -387,49 +577,88 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     _editionButton.backgroundColor=[UIColor colorWithWhite:1 alpha:0.055]; _editionButton.layer.cornerRadius=10;
     [self configureButton:_preferencesButton title:[NSString stringWithFormat:@"%@  ·  %@  ▾",_region.uppercaseString,[_locale isEqual:@"esES"]?@"Spanish":@"English"] filled:NO];
     _preferencesButton.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;
-    [self configureButton:_addonsButton title:_installation.app?@"Addon Manager":@"Addon Manager (install game first)" filled:NO];
+    [self configureButton:_addonsButton title:_installation.app?@"Install Addons (Curse & Direct)":@"Install Addons (Curse & Direct) (install game first)" filled:NO];
     _addonsButton.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;
-    _addonsButton.enabled=_installation.app && !_busy && !_starting && !_sessionUsed;
+    _addonsButton.enabled=_installation.app && !_busy && !_starting && !_running && !_sessionUsed;
+    [self configureButton:_macEverButton title:@"Download Mac-Ever" filled:NO];
+    _macEverButton.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;
+    // Navigation only: the page is opened for the user to download the ZIP.
+    // Starting and an ended session grey it with everything else.
+    _macEverButton.enabled=!_starting && !_running && !_sessionUsed;
     [self configureButton:_addonsDirectoryButton title:_installation.app?@"Open Add-on Directory":@"Open Add-on Directory (install game first)" filled:NO];
     _addonsDirectoryButton.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;
     _addonsDirectoryButton.enabled=_addonsButton.enabled;
     [self configureButton:_voiceButton title:@"Key / Button Configuration" filled:NO];
     _voiceButton.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;
     // Available before the game is installed: it is a setting, not a game action.
-    _voiceButton.enabled=!_busy && !_starting;
-    [self configureButton:_voiceTestButton title:@"Test Voice" filled:NO];
+    _voiceButton.enabled=!_busy && !_starting && !_running && !_sessionUsed;
+    [self configureButton:_voiceTestButton title:@"Test Voice & Dictation" filled:NO];
     _voiceTestButton.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;
     _voiceTestButton.enabled=_voiceButton.enabled;
-    [self configureButton:_permissionsButton title:@"Permissions (Microphone, Speech)" filled:NO];
+    [self configureButton:_permissionsButton title:@"Toggle Permissions (Mic & Speech)" filled:NO];
     _permissionsButton.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;
-    // Never disabled: opening Settings is always allowed, even while the game is busy.
-    _permissionsButton.enabled=YES;
+    // Navigation to Settings is available whenever the page is usable; a
+    // starting or ended session greys it with the rest so no gold text is left.
+    _permissionsButton.enabled=!_starting && !_running && !_sessionUsed;
+    // Performance & UI Manager. The Forever file rows need a ready Forever
+    // installation - and the selected edition must be Forever, because they must
+    // never read or write another edition's files - no download, start or
+    // session, and no other UI operation in flight. The overlay is a
+    // WolkaraForever runtime feature and follows the launcher's non-busy rule.
+    NSString *foreverDirectory=[self foreverWorkingDirectory];
+    BOOL foreverReady=foreverDirectory && !_busy && !_starting && !_running && !_sessionUsed && !_uiOperation;
+    _gamepadEnabled=foreverDirectory?[TKForeverUI gamepadEnabledInWorkingDirectory:foreverDirectory]:NO;
+    NSDictionary *layout=[NSUserDefaults.standardUserDefaults objectForKey:TKForeverLayoutKey];
+    _overlayEnabled=[layout isKindOfClass:NSDictionary.class] && [layout[@"performanceOverlayEnabled"] boolValue];
+    for (UIButton *button in @[_backupButton,_resetButton,_restoreButton,_settingsFolderButton]) {
+        button.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;
+        button.enabled=foreverReady;
+    }
+    [self configureButton:_backupButton title:@"Backup WoW UI Configuration" filled:NO];
+    [self configureButton:_resetButton title:@"Reset to Default Graphical Settings" filled:NO];
+    [self configureButton:_restoreButton title:@"Restore WoW UI Configuration" filled:NO];
+    [self configureButton:_settingsFolderButton title:@"Open Settings Folder" filled:NO];
+    // Switches, not changing commands: the label is fixed and the control shows
+    // the state.
+    _gamepadRow.enabled=foreverReady;
+    _gamepadRow.toggle.on=_gamepadEnabled;
+    _overlayRow.enabled=!_busy && !_starting && !_running && !_sessionUsed;
+    _overlayRow.toggle.on=_overlayEnabled;
     _compatibilityLabel.text=([_product[@"id"] isEqual:@"wow"] || [_product[@"id"] isEqual:@"wow_beta"] || [_product[@"id"] isEqual:@"wow_classic"])?
         @"Compatibility with this edition is not yet verified.":
         @"";
     _compatibilityLabel.hidden=!_compatibilityLabel.text.length;
-    _editionButton.enabled=!_busy && !_starting && !_sessionUsed;
+    _editionButton.enabled=!_busy && !_starting && !_running && !_sessionUsed;
     _preferencesButton.enabled=_editionButton.enabled;
-    self.navigationItem.rightBarButtonItem.enabled=!_updating && !_starting;
-    _primaryButton.hidden=_starting || _sessionUsed;
-    _updatesLabel.hidden=_starting || _sessionUsed;
-    _startupLabel.hidden=_starting || _sessionUsed;
+    self.navigationItem.rightBarButtonItem.enabled=!_updating && !_starting && !_running;
+    _primaryButton.hidden=_starting || _running;
+    _updatesLabel.hidden=_starting || _running;
+    _startupLabel.hidden=_starting || _running;
     _progressBar.hidden=!_updating || !_updateTotal;
     _progressBar.progress=_updateTotal?(float)((double)_updateDone/_updateTotal):0;
     NSString *title=nil, *detail=nil, *action=nil;
     BOOL enabled=NO;
-    if (_starting) {
+    if (_running) {
+        title=@"Running";
+        detail=@"The game is open. Quit from its own menu to return here.";
+        action=@"Running";
+    } else if (_starting) {
         title=@"Starting…";
         detail=_detailLabel.text.length?_detailLabel.text:@"Preparing to launch. Keep this app open.";
         action=@"Starting…";
     } else if (_startupFailure) {
         title=@"Could not start";
-        detail=_sessionUsed?@"Close this app from the app switcher, then reopen it to try again. Details are available in Diagnostics and logs.":@"Try again. Details are available in Diagnostics and logs.";
-        action=_sessionUsed?@"Reopen to retry":@"Try again"; enabled=!_sessionUsed;
+        if (_sessionUsed) {
+            detail=@"WolkaraForever could not start the game in this session. Close WolkaraForever and reopen it to try again. Details are available in Diagnostics and logs.";
+            action=@"Close WolkaraForever"; enabled=YES;
+        } else {
+            detail=@"Try again. Details are available in Diagnostics and logs.";
+            action=@"Try again"; enabled=YES;
+        }
     } else if (_sessionUsed) {
-        title=@"Reopen to start again";
-        detail=@"Close the app from the app switcher before starting another session.";
-        action=@"Session ended";
+        title=@"Game closed";
+        detail=@"WolkaraForever cannot start the game again in this process. Close WolkaraForever and reopen it to play again.";
+        action=@"Close WolkaraForever"; enabled=YES;
     } else if (_busy && _updating) {
         title=@"Updating your game…";
         NSDictionary *phases=@{@"snapshot":@"Preparing the installation",
@@ -479,7 +708,13 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     }
     _stateLabel.text=title; _detailLabel.text=detail;
     [self configureButton:_primaryButton title:action filled:YES]; _primaryButton.enabled=enabled;
-    _refreshItem.enabled=!_busy && !_sessionUsed && !_starting;
+    _refreshItem.enabled=!_busy && !_sessionUsed && !_starting && !_running;
+    for (UIButton *button in @[_editionButton,_preferencesButton,_addonsButton,_macEverButton,_addonsDirectoryButton,
+                                _permissionsButton,_voiceButton,_voiceTestButton,_backupButton,_resetButton,
+                                _restoreButton,_settingsFolderButton])
+        [self stylePlainButton:button];
+    [self stylePrimaryButton];
+    _diagnosticsButton.tintColor=_diagnosticsButton.enabled?Gold():RowGrey();
     if (_busy) [_activity startAnimating]; else [_activity stopAnimating];
     if (_checkedAt) {
         NSString *time=[NSDateFormatter localizedStringFromDate:_checkedAt dateStyle:NSDateFormatterNoStyle timeStyle:NSDateFormatterShortStyle];
@@ -620,10 +855,244 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     picker.delegate=self;
     [self presentViewController:picker animated:YES completion:nil];
 }
-// Nothing to take from the picker: the folder was opened so the user can put files
-// in it with the browser's own controls, and the game reads the list from disk.
+// Two pickers come through here. The add-on folder has nothing to take from it:
+// it was opened so the user can put files in it with the browser's own
+// controls. The restore picker's choice is the snapshot to bring back, and only
+// a ZIP inside WTF/Backups is accepted - the archive checks the rest.
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
-    (void)controller; (void)urls;
+    NSString *backups=_backupsDirectory;
+    _backupsDirectory=nil;
+    // Only the restore picker resumes a restore. Checking the picker's own
+    // directory as well means a stale flag can never turn an add-on folder
+    // selection into one.
+    if (!backups || !urls.count || ![controller.directoryURL.path isEqual:backups]) return;
+    NSURL *url=urls.firstObject;
+    NSString *root=[backups stringByResolvingSymlinksInPath].stringByStandardizingPath;
+    NSString *path=[url.path stringByResolvingSymlinksInPath].stringByStandardizingPath;
+    NSString *name=url.lastPathComponent;
+    if (![path hasPrefix:[root stringByAppendingString:@"/"]] || ![name.lowercaseString hasSuffix:@".zip"]) {
+        [self presentMessage:@"Not a backup" message:@"Choose a WoW-UI ZIP from the game's WTF/Backups folder."];
+        return;
+    }
+    [self restoreBackupNamed:name];
+}
+- (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller {
+    (void)controller;
+    _backupsDirectory=nil;
+}
+#pragma mark - Forever UI file operations
+
+// The working directory of the inspected Forever installation, or nil when the
+// selected edition is not Forever or is not ready. These rows are about Forever
+// only: another edition's files are never read or written by them.
+- (nullable NSString *)foreverWorkingDirectory {
+    if (![_product[@"id"] isEqualToString:TKForeverUIEdition]) return nil;
+    if (_installation.state!=TKWoWInstallationReady || !_installation.app) return nil;
+    return [_library workingDirectoryForApp:_installation.app error:NULL];
+}
+- (BOOL)foreverActionAllowed {
+    return [self foreverWorkingDirectory]!=nil && !_busy && !_starting && !_sessionUsed && !_uiOperation;
+}
+- (void)presentMessage:(NSString *)title message:(nullable NSString *)message {
+    UIAlertController *alert=[UIAlertController alertControllerWithTitle:title message:message
+        preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+// A snapshot of the complete Forever UI. It is an explicit user action here, and
+// it is also the rollback point the two destructive rows make for themselves.
+- (void)backupUI {
+    if (![self foreverActionAllowed]) return;
+    NSString *directory=[self foreverWorkingDirectory];
+    if (!directory) return;
+    WKLog("ui", @"backup: starting");
+    _uiOperation=YES; [self render];
+    __weak TKWoWViewController *weakSelf=self;
+    dispatch_async(TKForeverUIQueue(), ^{
+        NSError *error=nil;
+        NSString *name=[TKForeverUI createUIBackupInWorkingDirectory:directory edition:TKForeverUIEdition error:&error];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            TKWoWViewController *self=weakSelf; if(!self) return;
+            self->_uiOperation=NO; [self render];
+            if (name) {
+                WKLog("ui", @"backup: wrote a snapshot");
+                [self presentMessage:@"Backup complete" message:[NSString stringWithFormat:@"Saved %@ in the game's WTF/Backups folder.",name]];
+            } else {
+                WKLog("ui", @"backup: failed: %@", error.localizedDescription?:@"unknown reason");
+                [self presentMessage:@"Backup failed" message:error.localizedDescription?:@"The backup could not be created."];
+            }
+        });
+    });
+}
+// Destructive, so it is confirmed first. Forever regenerates its graphics
+// defaults on the next launch; everything else in the UI is backable and kept.
+- (void)resetGraphics {
+    if (![self foreverActionAllowed]) return;
+    NSString *directory=[self foreverWorkingDirectory];
+    if (!directory) return;
+    UIAlertController *sheet=[UIAlertController alertControllerWithTitle:@"Reset to default graphics settings?"
+        message:@"Forever will regenerate its graphics defaults when it next starts. A complete backup of WTF and Interface is made first, and Restore WoW UI Configuration can bring everything back."
+        preferredStyle:UIAlertControllerStyleAlert];
+    __weak TKWoWViewController *weakSelf=self;
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Reset graphics" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
+        (void)action; [weakSelf performGraphicsReset:directory];
+    }]];
+    [self presentSheet:sheet anchor:_resetButton];
+}
+- (void)performGraphicsReset:(NSString *)directory {
+    if (_busy || _starting || _sessionUsed || _uiOperation) return;
+    _uiOperation=YES; [self render];
+    __weak TKWoWViewController *weakSelf=self;
+    dispatch_async(TKForeverUIQueue(), ^{
+        NSError *error=nil;
+        // No backup, no reset: the destructive half never runs alone.
+        NSString *backup=[TKForeverUI createUIBackupInWorkingDirectory:directory edition:TKForeverUIEdition error:&error];
+        BOOL reset=backup?[TKForeverUI resetGraphicsInWorkingDirectory:directory error:&error]:NO;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            TKWoWViewController *self=weakSelf; if(!self) return;
+            self->_uiOperation=NO; [self render];
+            if (!backup) {
+                WKLog("ui", @"reset: aborted, no backup: %@", error.localizedDescription?:@"unknown reason");
+                [self presentMessage:@"Nothing was changed" message:[NSString stringWithFormat:@"The backup could not be created, so the graphics settings were left alone. %@",error.localizedDescription?:@""]];
+            } else if (!reset) {
+                WKLog("ui", @"reset: backup kept, settings not reset: %@", error.localizedDescription?:@"unknown reason");
+                [self presentMessage:@"Reset incomplete" message:[NSString stringWithFormat:@"The backup is %@, but the graphics settings could not be reset. %@",backup,error.localizedDescription?:@""]];
+            } else {
+                WKLog("ui", @"reset: graphics removed, backup kept");
+                [self presentMessage:@"Graphics reset" message:[NSString stringWithFormat:@"Default graphics settings take effect when Forever next launches. Backup: %@.",backup]];
+            }
+        });
+    });
+}
+// The browser opens at the game's WTF/Backups folder and the user picks the
+// snapshot to bring back. A fresh snapshot of the current state is made first,
+// so the restore can itself be undone.
+- (void)restoreUI {
+    if (![self foreverActionAllowed]) return;
+    NSString *directory=[self foreverWorkingDirectory];
+    if (!directory) return;
+    NSError *error=nil;
+    NSString *wtf=[TKForeverUI wtfDirectoryInWorkingDirectory:directory create:NO error:&error];
+    NSString *backups=wtf?[wtf stringByAppendingPathComponent:@"Backups"]:nil;
+    NSArray<NSString *> *zips=backups?[[NSFileManager.defaultManager contentsOfDirectoryAtPath:backups error:NULL]
+        filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSString *name, NSDictionary *bindings) {
+            (void)bindings;
+            return [name.lowercaseString hasSuffix:@".zip"];
+        }]]:@[];
+    if (!zips.count) {
+        [self presentMessage:@"No backup to restore"
+            message:@"Run Backup WoW UI Configuration first; its ZIPs are what this browser shows."];
+        return;
+    }
+    NSURL *folder=[NSURL fileURLWithPath:backups isDirectory:YES];
+    _backupsDirectory=folder.path;
+    if (self.chooseBackupFile) { self.chooseBackupFile(folder); return; }
+    UIDocumentPickerViewController *picker=[[UIDocumentPickerViewController alloc]
+        initForOpeningContentTypes:@[UTTypeZIP]];
+    picker.directoryURL=folder;
+    picker.allowsMultipleSelection=NO;
+    picker.delegate=self;
+    [self presentViewController:picker animated:YES completion:nil];
+}
+- (void)restoreBackupNamed:(NSString *)name {
+    if (![self foreverActionAllowed]) return;
+    NSString *directory=[self foreverWorkingDirectory];
+    if (!directory) return;
+    _uiOperation=YES; [self render];
+    __weak TKWoWViewController *weakSelf=self;
+    dispatch_async(TKForeverUIQueue(), ^{
+        NSError *error=nil;
+        NSString *fresh=[TKForeverUI createUIBackupInWorkingDirectory:directory edition:TKForeverUIEdition error:&error];
+        BOOL restored=NO;
+        if (!fresh) {
+            error=[NSError errorWithDomain:TKForeverUIErrorDomain code:1 userInfo:@{NSLocalizedDescriptionKey:
+                [NSString stringWithFormat:@"A safety backup could not be created, so nothing was restored. %@",error.localizedDescription?:@""]}];
+        } else {
+            restored=[TKForeverUI restoreUIBackupNamed:name inWorkingDirectory:directory edition:TKForeverUIEdition error:&error];
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            TKWoWViewController *self=weakSelf; if(!self) return;
+            self->_uiOperation=NO; [self render];
+            if (restored) {
+                WKLog("ui", @"restore: completed from the selected snapshot");
+                [self presentMessage:@"Restore complete" message:[NSString stringWithFormat:@"Restored %@. Your complete Forever UI - settings, bindings, SavedVariables, gamepad configuration and add-ons - applies the next time it starts. A snapshot of the previous state was saved as %@.",name,fresh]];
+            } else {
+                WKLog("ui", @"restore: not completed: %@", error.localizedDescription?:@"unknown reason");
+                [self presentMessage:@"Restore failed" message:error.localizedDescription?:@"The selected backup could not be restored."];
+            }
+        });
+    });
+}
+// Exactly one `SET GamePadEnable "1"` or `"0"` in the active Config.wtf. It
+// changes no bindings and touches neither GamePadConfig_*.json nor
+// gamecontrollerdb.txt.
+- (void)gamepadChanged:(UISwitch *)sender {
+    if (![self foreverActionAllowed]) { sender.on=!_gamepadEnabled; return; }
+    NSString *directory=[self foreverWorkingDirectory];
+    if (!directory) { sender.on=!_gamepadEnabled; return; }
+    BOOL want=sender.on;
+    _uiOperation=YES; [self render];
+    __weak TKWoWViewController *weakSelf=self;
+    dispatch_async(TKForeverUIQueue(), ^{
+        NSError *error=nil;
+        BOOL stored=[TKForeverUI setGamepad:want inWorkingDirectory:directory error:&error];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            TKWoWViewController *self=weakSelf; if(!self) return;
+            self->_uiOperation=NO; [self render];
+            if (stored) {
+                WKLog("ui", @"gamepad UI: %@", want?@"enabled":@"disabled");
+                [self presentMessage:want?@"Gamepad UI enabled":@"Gamepad UI disabled"
+                    message:@"It takes effect when Forever next starts."];
+            } else {
+                WKLog("ui", @"gamepad UI: not changed: %@", error.localizedDescription?:@"unknown reason");
+                [self presentMessage:@"Gamepad UI not changed" message:error.localizedDescription?:@"The setting could not be stored."];
+            }
+        });
+    });
+}
+// The HUD preference lives in the touch layout store. Read-modify-write keeps
+// every existing value (opacity, scales, haptics, positions) and the change
+// notification is what the in-game settings page and the host view listen to.
+- (void)overlayChanged:(UISwitch *)sender {
+    if (_busy || _starting) { sender.on=!_overlayEnabled; return; }
+    BOOL enabled=sender.on;
+    NSUserDefaults *defaults=NSUserDefaults.standardUserDefaults;
+    id stored=[defaults objectForKey:TKForeverLayoutKey];
+    NSMutableDictionary *layout=[stored isKindOfClass:NSDictionary.class]?[stored mutableCopy]:[NSMutableDictionary new];
+    layout[@"performanceOverlayEnabled"]=@(enabled);
+    [defaults setObject:layout forKey:TKForeverLayoutKey];
+    [NSNotificationCenter.defaultCenter postNotificationName:TKForeverLayoutDidChange object:defaults];
+    WKLog("ui", @"performance overlay: %@", enabled?@"enabled":@"disabled");
+    [self render];
+}
+// Navigation only: the Files browser opens at Forever's WTF folder. The folder is
+// created only here, only for a ready Forever installation, and nothing else is.
+- (void)openSettingsFolder {
+    if (![self foreverActionAllowed]) return;
+    NSString *directory=[self foreverWorkingDirectory];
+    if (!directory) return;
+    NSError *error=nil;
+    NSString *wtf=[TKForeverUI wtfDirectoryInWorkingDirectory:directory create:YES error:&error];
+    if (!wtf) { [self presentMessage:@"Settings folder unavailable" message:error.localizedDescription?:@"The game's settings folder could not be opened."]; return; }
+    NSURL *folder=[NSURL fileURLWithPath:wtf isDirectory:YES];
+    if (self.openSettingsFolderURL) { self.openSettingsFolderURL(folder); return; }
+    UIDocumentPickerViewController *picker=[[UIDocumentPickerViewController alloc]
+        initForOpeningContentTypes:@[UTTypeFolder]];
+    picker.directoryURL=folder;
+    picker.allowsMultipleSelection=NO;
+    picker.delegate=self;
+    [self presentViewController:picker animated:YES completion:nil];
+}
+// Mac-Ever's CurseForge page, in the browser. The user downloads the ZIP there
+// and comes back to Install Addons (Curse & Direct); opening the page is not an
+// installation and is never reported as one.
+- (void)downloadMacEver {
+    NSURL *url=[NSURL URLWithString:@"https://www.curseforge.com/wow/addons/mac-ever"];
+    if (!url) return;
+    if (self.openExternalURL) { self.openExternalURL(url); return; }
+    [UIApplication.sharedApplication openURL:url options:@{} completionHandler:^(BOOL opened) {
+        WKLog("host", @"mac-ever: download page opened: %@", opened?@"yes":@"no");
+    }];
 }
 - (void)presentAddonsUnavailable:(nullable NSError *)error {
     UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Add-ons unavailable"
@@ -637,6 +1106,21 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     return directory?[directory stringByAppendingPathComponent:@"Interface/AddOns"]:nil;
 }
 
+- (void)previewAddonBrowser {
+    [self loadViewIfNeeded];
+    NSError *error=nil;
+    // The preview can arrive before the first check has finished; resolve the
+    // library's app directly rather than depending on _installation.
+    TKApp *app=_installation.app;
+    if (!app) { [_library discover]; app=_library.defaultApp; }
+    NSString *directory=app?[_library workingDirectoryForApp:app error:&error]:nil;
+    NSString *addons=directory?[directory stringByAppendingPathComponent:@"Interface/AddOns"]:nil;
+    if (!addons) { WKLog("ui", @"addons preview: %@", error.localizedDescription ?: @"no installation"); return; }
+    NSString *edition=_product[@"name"]?:@"Forever · Beta";
+    TKWoWAddonManagerViewController *manager=[[TKWoWAddonManagerViewController alloc]
+        initWithAddOnsDirectory:addons edition:edition browse:YES];
+    [self presentPage:manager];
+}
 - (void)manageAddons {
     NSError *error=nil;
     NSString *addons=[self addOnsDirectoryWithError:&error];
@@ -647,16 +1131,29 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
 - (UILabel *)startupStatusLabel { [self loadViewIfNeeded]; return _detailLabel; }
 - (void)beginStartup {
     [self loadViewIfNeeded];
-    [self cancel]; _starting=YES; _startupFailure=nil;
+    [self cancel]; _starting=YES; _running=NO; _startupFailure=nil;
     _detailLabel.text=@"Preparing to launch. Keep this app open.";
     _diagnosticsButton.hidden=YES;
     [self render]; [_launchProgress start];
     [self.view layoutIfNeeded];
 }
 - (void)finishStartupWithMessage:(NSString *)message failed:(BOOL)failed {
-    _starting=NO; _startupFailure=failed?message:nil;
+    _starting=NO; _running=NO; _startupFailure=failed?message:nil;
     [_launchProgress stop]; _diagnosticsButton.hidden=!failed;
     [self render];
+}
+// Called when the guest's own window appears. Until then the page says it is
+// starting; from here the game is running, not loading.
+- (void)guestDidStartRunning {
+    if (!_starting || _running) return;
+    _starting=NO; _running=YES;
+    [_launchProgress stop];
+    WKLog("ui", @"home: the game is running");
+    [self render];
+}
+- (void)closeApp {
+    WKLog("ui", @"home: closing the app at the user's request");
+    exit(0);
 }
 - (void)diagnostics { if (self.showDiagnostics) self.showDiagnostics(); }
 - (void)about {

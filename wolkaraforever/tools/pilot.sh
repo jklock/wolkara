@@ -278,9 +278,10 @@ verdict() {
 }
 
 app_pid() {
-    xcrun devicectl device info processes --device "$DEVICE" 2>/dev/null \
-        | grep -E "Tolkara\.app/Tolkara([[:space:]]|$)" | grep -v "\.appex" \
-        | awk 'NR==1 {print $1}'
+    # Only a process running this bundle's installed executable. A second Tolkara
+    # build on the same iPad is not the app this command is about; see
+    # running_app.sh.
+    "$root/wolkaraforever/tools/running_app.sh" "$DEVICE" "$BUNDLE"
 }
 
 # The client is the only thing here that writes to its own store, and it does so

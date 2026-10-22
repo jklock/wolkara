@@ -11,6 +11,12 @@ typedef void (^TKCurseForgeCompletion)(id _Nullable value, NSError *_Nullable er
 - (instancetype)initWithAPIKey:(NSString *)key;
 - (void)categoriesForGameID:(NSInteger)gameID completion:(TKCurseForgeCompletion)completion;
 - (void)browseModsWithQuery:(NSString *)query sortField:(NSInteger)sortField sortOrder:(NSString *)sortOrder categoryID:(nullable NSNumber *)categoryID index:(NSUInteger)index completion:(TKCurseForgeCompletion)completion;
+// The same search with the filters the CurseForge site offers for this list:
+// a game version tag and the add-on class. Nil means no filter.
+- (void)browseModsWithQuery:(NSString *)query sortField:(NSInteger)sortField sortOrder:(NSString *)sortOrder
+                 categoryID:(nullable NSNumber *)categoryID gameVersion:(nullable NSString *)gameVersion
+                    classID:(nullable NSNumber *)classID index:(NSUInteger)index
+                 completion:(TKCurseForgeCompletion)completion;
 - (void)latestFileForModID:(NSNumber *)modID gameVersion:(NSString *)gameVersion completion:(TKCurseForgeCompletion)completion;
 - (void)downloadURLForModID:(NSNumber *)modID fileID:(NSNumber *)fileID completion:(TKCurseForgeCompletion)completion;
 - (nullable NSURLRequest *)assetRequestForURL:(NSString *)url error:(NSError **)error;

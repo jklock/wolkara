@@ -1,8 +1,16 @@
 // Original UIKit/AppKit fixture for manual touch/keyboard testing. No guest.
 #import "AppKit.h"
+#import "AKPerformanceOverlay.h"
 #import "TouchControls.h"
 #import "TouchGamepad.h"
+#import "TouchGamepadLayout.h"
 #include <assert.h>
+
+// The keys the layer supplies when iPadOS has no software keyboard to give. The
+// controls keep it private; the fixture asks for it the way the controls do.
+@interface AKTouchControls (LayerKeyboardFixture)
+- (void)showLayerKeyboard;
+@end
 
 @interface AKInputFixtureView : NSView
 @property CATextLayer *heading, *instructions, *result;
@@ -470,6 +478,33 @@ static void AKFixtureInputSource(void *context) {
                 [controls setGamepadVisible:NO]; [host layoutIfNeeded];
                 assert(CGRectEqualToRect(toolbarFrame, controls.frame));
 
+                // --- the optional performance HUD -----------------------------------
+                AKPerformanceOverlay *overlay = [host valueForKey:@"_performanceOverlay"];
+                AKGamepadLayout *prefs = [[AKGamepadLayout alloc] initWithDefaults:NSUserDefaults.standardUserDefaults];
+                assert(overlay != nil);
+                assert(overlay.hidden == !prefs.performanceOverlayEnabled);
+                assert(overlay.isAccessibilityElement);
+                [overlay updateMetrics];
+                assert(overlay.accessibilityValue.length > 0);
+                // No timer and no display link while it is hidden, even in a window.
+                assert([overlay valueForKey:@"_pollTimer"] == nil);
+                assert([overlay valueForKey:@"_displayLink"] == nil);
+                [overlay setExpanded:YES];
+                assert(overlay.isExpanded);
+                [overlay setExpanded:NO];
+                assert(!overlay.isExpanded);
+                overlay.hidden = NO; [host layoutIfNeeded];
+                assert([overlay valueForKey:@"_pollTimer"] != nil);
+                assert([overlay valueForKey:@"_displayLink"] != nil);
+                // A position pushed off screen comes back into the safe area on layout.
+                overlay.center = CGPointMake(-500, -500);
+                [overlay setNeedsLayout]; [overlay layoutIfNeeded];
+                CGRect safe = UIEdgeInsetsInsetRect(host.bounds, host.safeAreaInsets);
+                assert(CGRectContainsPoint(safe, overlay.center));
+                overlay.hidden = YES;
+                assert([overlay valueForKey:@"_pollTimer"] == nil);
+                assert([overlay valueForKey:@"_displayLink"] == nil);
+
                 // --- a key the user took for dictation must not reach the game -------
                 //
                 // This drives the one place the adapter posts guest key events, because that
@@ -499,6 +534,30 @@ static void AKFixtureInputSource(void *context) {
                 [controls touchSpecialKey:53 characters:@"\x1b"];
                 AKDrainFixtureEvents();
                 assert(!fixture.text.length);
+                // --- the layer's own keys ------------------------------------
+                //
+                // iPadOS reports the software keyboard with no keys on screen when
+                // it believes a hardware keyboard is attached (measured on Dadpad,
+                // 2026-10-22: "system keyboard shown draftFirstResponder=1
+                // height=0"). A custom input view is shown whatever the hardware
+                // says, so it is the login field's only route to an @.
+                [controls showLayerKeyboard];
+                UIView *layer = [(UITextView *)AKFindInputView(host, @"wolkaraforever.keyboard.draft") inputView];
+                assert(layer != nil && layer.bounds.size.height > 100);
+                UIButton *atKey = (UIButton *)AKFindInputView(layer, @"wolkaraforever.layerkey.@");
+                assert(atKey != nil && [atKey.titleLabel.text isEqual:@"@"]);
+                assert(AKFindInputView(layer, @"wolkaraforever.layerkey.page") != nil);
+                assert(AKFindInputView(layer, @"wolkaraforever.layerkey.delete") != nil);
+                assert(AKFindInputView(layer, @"wolkaraforever.layerkey.system") != nil);
+                [atKey sendActionsForControlEvents:UIControlEventTouchUpInside];
+                AKDrainFixtureEvents();
+                assert([fixture.text isEqual:@"@"]);
+                // The layer's keyboard types into the guest, so put the field back
+                // where the key checks below expect it before going on.
+                [controls dismissKeyboard];
+                [host layoutIfNeeded];
+                [fixture.text setString:@""];
+                fixture.selection = NSMakeRange(0, 0);
                 NSLog(@"native: the announced text target answers dictation and reaches the guest");
                 // The one control that leaves a guest screen with no quit of its own. It asks
                 // the guest's own application object to terminate, which is the game's

@@ -10,11 +10,25 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, copy, nullable) void (^showDiagnostics)(void);
 @property(nonatomic) TKExecutionMode executionMode;
 @property(nonatomic) BOOL sessionUsed;
+// Opening an external page (Download Mac-Ever). Injectable so a test can prove
+// the exact URL is requested without a browser opening on the simulator.
+@property(nonatomic, copy, nullable) void (^openExternalURL)(NSURL *url);
+// The folder the Settings browser would open. Injectable for the same reason:
+// a fixture proves the destination without a system file provider.
+@property(nonatomic, copy, nullable) void (^openSettingsFolderURL)(NSURL *url);
+// The folder Restore's file browser would open, holding the backups to pick
+// from. Injectable for the same reason as the two above.
+@property(nonatomic, copy, nullable) void (^chooseBackupFile)(NSURL *directory);
 // Reuse this home screen throughout startup; the runtime retains its execution path.
 @property(nonatomic, readonly) UILabel *startupStatusLabel;
 @property(nonatomic, readonly) TKLaunchProgressView *launchProgress;
 @property(nonatomic, readonly) UIButton *diagnosticsButton;
 - (void)beginStartup;
 - (void)finishStartupWithMessage:(NSString *)message failed:(BOOL)failed;
+// The guest's own window is on screen: the session is running, not loading.
+- (void)guestDidStartRunning;
+// Development preview: the Add-on Manager, already on Browse. Used by
+// tools, never by a normal launch.
+- (void)previewAddonBrowser;
 @end
 NS_ASSUME_NONNULL_END
