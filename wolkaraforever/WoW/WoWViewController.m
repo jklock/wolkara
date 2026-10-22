@@ -66,7 +66,8 @@ static NSNotificationName const TKForeverLayoutDidChange = @"AKGamepadLayoutDidC
     UIProgressView *_progressBar;
     CAGradientLayer *_background;
     UIStackView *_columns;
-    NSLayoutConstraint *_leftWidth;
+    NSLayoutConstraint *_markWidth;
+    UIStackView *_gridRow1, *_gridRow2;
     UILabel *_stateLabel, *_detailLabel, *_versionLabel, *_startupLabel, *_compatibilityLabel;
     UIButton *_editionButton, *_preferencesButton, *_addonsButton, *_addonsDirectoryButton,
         *_voiceButton, *_voiceTestButton, *_permissionsButton, *_primaryButton,
@@ -102,10 +103,52 @@ static NSNotificationName const TKForeverLayoutDidChange = @"AKGamepadLayoutDidC
     label.text=text.uppercaseString;
     return label;
 }
-// The layer's mark, where the wordmark used to sit. It is drawn at the column's
-// own width, so it grows and shrinks with the window, with one cap: it may never
-// take more than a third of the height, so a short window still shows the rows
-// below it. The aspect constraint is optional for that reason — when the cap
+// One section, in its own box: the heading and its rows share a panel with the
+// page's own border and fill, so the eye can find a group without a long column
+// of loose rows.
+- (UIView *)sectionBoxWithTitle:(NSString *)title identifier:(NSString *)identifier rows:(NSArray<UIView *> *)rows {
+    UIView *box=[UIView new];
+    box.accessibilityIdentifier=identifier;
+    box.translatesAutoresizingMaskIntoConstraints=NO;
+    box.backgroundColor=[UIColor colorWithRed:0.055 green:0.085 blue:0.125 alpha:1];
+    box.layer.cornerRadius=14;
+    box.layer.borderWidth=1;
+    box.layer.borderColor=[Gold() colorWithAlphaComponent:0.18].CGColor;
+    UILabel *heading=[self heading:title];
+    heading.accessibilityIdentifier=[identifier stringByReplacingOccurrencesOfString:@"wow.box."
+                                                                          withString:@"wow.heading."];
+    UIStackView *stack=Stack([@[heading] arrayByAddingObjectsFromArray:rows],8);
+    stack.translatesAutoresizingMaskIntoConstraints=NO;
+    // A box in the taller row is stretched to match its neighbour; without a
+    // spacer the extra height would be shared out among the rows and drift them
+    // apart. The spacer takes all of it, so the rows stay together at the top.
+    UIView *spacer=[UIView new];
+    spacer.accessibilityIdentifier=@"wow.box.spacer";
+    [spacer setContentHuggingPriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisVertical];
+    [spacer setContentCompressionResistancePriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisVertical];
+    [stack addArrangedSubview:spacer];
+    [box addSubview:stack];
+    [NSLayoutConstraint activateConstraints:@[
+        [stack.topAnchor constraintEqualToAnchor:box.topAnchor constant:14],
+        [stack.leadingAnchor constraintEqualToAnchor:box.leadingAnchor constant:16],
+        [stack.trailingAnchor constraintEqualToAnchor:box.trailingAnchor constant:-16],
+        [stack.bottomAnchor constraintEqualToAnchor:box.bottomAnchor constant:-14],
+    ]];
+    return box;
+}
+// Two boxes side by side on a wide screen, stacked when there is no room.
+- (UIStackView *)boxRow:(NSArray<UIView *> *)boxes {
+    UIStackView *row=[[UIStackView alloc] initWithArrangedSubviews:boxes];
+    row.axis=UILayoutConstraintAxisHorizontal;
+    row.distribution=UIStackViewDistributionFillEqually;
+    row.alignment=UIStackViewAlignmentFill;
+    row.spacing=16;
+    return row;
+}
+// The layer's mark, where the wordmark used to sit. It is drawn at the top
+// row's width, so it grows and shrinks with the window, with one cap: it may
+// never take more than a fifth of the height, so the boxes below it always have
+// room. The aspect constraint is optional for that reason — when the cap
 // applies, the picture letterboxes rather than fighting the column's width.
 //
 // The cap spans this view and the controller's, so it can only be activated once
@@ -130,11 +173,14 @@ static NSNotificationName const TKForeverLayoutDidChange = @"AKGamepadLayoutDidC
         aspect.priority=999;
         aspect.active=YES;
         _markCap=[view.heightAnchor constraintLessThanOrEqualToAnchor:self.view.heightAnchor
-            multiplier:0.30];
+            multiplier:0.20];
         return view;
     }
     // No artwork in this build: say the name rather than show an empty gap.
     UILabel *label=Label(37,UIFontWeightBold,Gold()); label.text=@"WOLKAREFOREVER";
+    label.numberOfLines=1;
+    label.adjustsFontSizeToFitWidth=YES;
+    label.minimumScaleFactor=0.45;
     UIFontDescriptor *serif=[[UIFont systemFontOfSize:37 weight:UIFontWeightBold].fontDescriptor fontDescriptorWithDesign:UIFontDescriptorSystemDesignSerif];
     if (serif) label.font=[[UIFontMetrics metricsForTextStyle:UIFontTextStyleLargeTitle] scaledFontForFont:[UIFont fontWithDescriptor:serif size:37]];
     label.accessibilityIdentifier=@"wow.title";
@@ -160,16 +206,12 @@ static NSNotificationName const TKForeverLayoutDidChange = @"AKGamepadLayoutDidC
     _refreshItem.accessibilityIdentifier=@"wow.refresh";
     self.navigationItem.leftBarButtonItem=_refreshItem;
 
-    // Four groups, in the order the page is read: the edition, the add-ons,
-    // voice, and the Forever file operations. The mark takes the wordmark's
-    // place at the top of the column.
+    // Identity and the play surface share the top of the page; the four
+    // sections sit in boxes underneath both, so the whole page fits without
+    // scrolling on an iPad instead of a column that has to be scrolled.
     _markView=[self markView];
-    UILabel *editionHeading=[self heading:@"Game edition"];
-    editionHeading.accessibilityIdentifier=@"wow.heading.edition";
     _editionButton=[self button:@"wow.edition" action:@selector(chooseEdition)];
     _preferencesButton=[self button:@"wow.preferences" action:@selector(preferences)];
-    UILabel *addonsHeading=[self heading:@"Add-On Manager"];
-    addonsHeading.accessibilityIdentifier=@"wow.heading.addons";
     _addonsButton=[self button:@"wow.addons.manage" action:@selector(manageAddons)];
     [_addonsButton setTitle:@"Install Addons (Curse & Direct)" forState:UIControlStateNormal];
     // Mac-Ever is a Forever-compatible add-on that is downloaded from CurseForge
@@ -179,8 +221,6 @@ static NSNotificationName const TKForeverLayoutDidChange = @"AKGamepadLayoutDidC
     [_macEverButton setTitle:@"Download Mac-Ever" forState:UIControlStateNormal];
     _addonsDirectoryButton=[self button:@"wow.addons.directory" action:@selector(openAddonDirectory)];
     [_addonsDirectoryButton setTitle:@"Open Add-on Directory" forState:UIControlStateNormal];
-    UILabel *voiceHeading=[self heading:@"Voice Manager"];
-    voiceHeading.accessibilityIdentifier=@"wow.heading.voice";
     // Straight to this app's own page in Settings, which is where the Microphone and Speech Recognition
     // switches live. Available before the game is installed, because it is a setting and not a game
     // action - and it is the only place those switches can be changed.
@@ -191,11 +231,6 @@ static NSNotificationName const TKForeverLayoutDidChange = @"AKGamepadLayoutDidC
     _voiceTestButton=[self button:@"wow.voice.test" action:@selector(testVoice)];
     [_voiceTestButton setTitle:@"Test Voice & Dictation" forState:UIControlStateNormal];
     _compatibilityLabel=Label(12,UIFontWeightRegular,Muted());
-    // The fourth and last group: Forever's own file operations, plus the two
-    // WolkaraForever runtime switches. They come after everything else on the
-    // page, including the compatibility message.
-    UILabel *performanceHeading=[self heading:@"Performance & UI Manager"];
-    performanceHeading.accessibilityIdentifier=@"wow.heading.performance";
     _backupButton=[self button:@"wow.performance.backup" action:@selector(backupUI)];
     [_backupButton setTitle:@"Backup WoW UI Configuration" forState:UIControlStateNormal];
     _resetButton=[self button:@"wow.performance.reset" action:@selector(resetGraphics)];
@@ -208,16 +243,18 @@ static NSNotificationName const TKForeverLayoutDidChange = @"AKGamepadLayoutDidC
     [_overlayButton setTitle:@"Enable Performance Overlay" forState:UIControlStateNormal];
     _settingsFolderButton=[self button:@"wow.performance.settingsFolder" action:@selector(openSettingsFolder)];
     [_settingsFolderButton setTitle:@"Open Settings Folder" forState:UIControlStateNormal];
-    UIStackView *left=Stack(@[_markView,editionHeading,_editionButton,_preferencesButton,
-        addonsHeading,_addonsButton,_macEverButton,_addonsDirectoryButton,
-        voiceHeading,_permissionsButton,_voiceButton,_voiceTestButton,
-        _compatibilityLabel,
-        performanceHeading,_backupButton,_resetButton,_restoreButton,_gamepadButton,
-        _overlayButton,_settingsFolderButton],12);
-    [left setCustomSpacing:24 afterView:_markView];
-    [left setCustomSpacing:24 afterView:_preferencesButton];
-    [left setCustomSpacing:24 afterView:_addonsDirectoryButton];
-    [left setCustomSpacing:24 afterView:_compatibilityLabel];
+
+    // The four sections, as boxes. Their order is the order they are read in.
+    // The compatibility note belongs to the edition it is about, so it lives in
+    // that box rather than loose on the page.
+    UIView *editionBox=[self sectionBoxWithTitle:@"Game Edition" identifier:@"wow.box.edition"
+        rows:@[_editionButton,_preferencesButton,_compatibilityLabel]];
+    UIView *addonsBox=[self sectionBoxWithTitle:@"Add-On Manager" identifier:@"wow.box.addons"
+        rows:@[_addonsButton,_macEverButton,_addonsDirectoryButton]];
+    UIView *voiceBox=[self sectionBoxWithTitle:@"Voice Manager" identifier:@"wow.box.voice"
+        rows:@[_permissionsButton,_voiceButton,_voiceTestButton]];
+    UIView *performanceBox=[self sectionBoxWithTitle:@"Performance & UI Manager" identifier:@"wow.box.performance"
+        rows:@[_backupButton,_resetButton,_restoreButton,_gamepadButton,_overlayButton,_settingsFolderButton]];
 
     _activity=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
     _activity.color=Gold(); _activity.hidesWhenStopped=YES;
@@ -248,9 +285,19 @@ static NSNotificationName const TKForeverLayoutDidChange = @"AKGamepadLayoutDidC
     _updatesLabel.text=@"Updates automatically. Keep this app open while downloading.";
     _startupLabel=Label(12,UIFontWeightRegular,Muted()); _startupLabel.accessibilityIdentifier=@"wow.startup";
     UIStackView *right=Stack(@[status,_primaryButton,_updatesLabel,_startupLabel],12);
-    _columns=Stack(@[left,right],32); _columns.accessibilityIdentifier=@"wow.columns";
-    _columns.alignment=UIStackViewAlignmentTop;
-    _leftWidth=[left.widthAnchor constraintEqualToAnchor:_columns.widthAnchor multiplier:0.38];
+    // The top of the page: the mark on the left, what the launcher is doing and
+    // the Play button on the right. The boxes go underneath both.
+    UIStackView *top=[[UIStackView alloc] initWithArrangedSubviews:@[_markView,right]];
+    top.axis=UILayoutConstraintAxisHorizontal; top.spacing=28; top.alignment=UIStackViewAlignmentTop;
+    top.accessibilityIdentifier=@"wow.top";
+    _markWidth=[_markView.widthAnchor constraintEqualToAnchor:top.widthAnchor multiplier:0.30];
+    _markWidth.active=YES;
+    _gridRow1=[self boxRow:@[editionBox,addonsBox]];
+    _gridRow2=[self boxRow:@[voiceBox,performanceBox]];
+    UIStackView *grid=Stack(@[_gridRow1,_gridRow2],16);
+    grid.accessibilityIdentifier=@"wow.grid";
+    _columns=Stack(@[top,grid],20); _columns.accessibilityIdentifier=@"wow.columns";
+    _columns.alignment=UIStackViewAlignmentFill;
 
     UIScrollView *scroll=[UIScrollView new]; scroll.accessibilityIdentifier=@"wow.scroll";
     scroll.translatesAutoresizingMaskIntoConstraints=NO; [self.view addSubview:scroll];
@@ -292,9 +339,12 @@ static NSNotificationName const TKForeverLayoutDidChange = @"AKGamepadLayoutDidC
     // switched on; once only, because switching it on lays out again.
     if (_markCap && !_markCap.active) _markCap.active=YES;
     BOOL horizontal=self.view.bounds.size.width>=700 && !UIContentSizeCategoryIsAccessibilityCategory(self.traitCollection.preferredContentSizeCategory);
-    _leftWidth.active=horizontal;
-    _columns.axis=horizontal?UILayoutConstraintAxisHorizontal:UILayoutConstraintAxisVertical;
-    _columns.alignment=horizontal?UIStackViewAlignmentTop:UIStackViewAlignmentFill;
+    // Two boxes side by side when there is room, one column otherwise. The page
+    // itself is always a single vertical column, and the boxes keep their order.
+    _gridRow1.axis=horizontal?UILayoutConstraintAxisHorizontal:UILayoutConstraintAxisVertical;
+    _gridRow2.axis=_gridRow1.axis;
+    _gridRow1.distribution=horizontal?UIStackViewDistributionFillEqually:UIStackViewDistributionFill;
+    _gridRow2.distribution=_gridRow1.distribution;
 }
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];

@@ -646,22 +646,54 @@ static void TestAddons(void) {
         UILabel *label = (id)Find(self.controller.view, pair[0]);
         assert(label != nil && [label.text isEqual:pair[1]]);
     }
-    // --- the left column's exact order
+    // --- the page: identity and status on top, then the four boxes in order
     UIStackView *columns = (id)[self.controller valueForKey:@"_columns"];
-    assert(columns != nil);
-    UIStackView *left = columns.arrangedSubviews.firstObject;
-    NSMutableArray *order = [NSMutableArray new];
-    for (UIView *view in left.arrangedSubviews) [order addObject:view.accessibilityIdentifier ?: @""];
+    assert(columns != nil && columns.axis == UILayoutConstraintAxisVertical);
+    assert(columns.arrangedSubviews.count == 2);
+    UIStackView *top = columns.arrangedSubviews[0];
     NSString *mark = Find(self.controller.view, @"wow.logo") ? @"wow.logo" : @"wow.title";
-    NSArray *expectedOrder = @[mark,
-        @"wow.heading.edition", @"wow.edition", @"wow.preferences",
-        @"wow.heading.addons", @"wow.addons.manage", @"wow.addons.macEver", @"wow.addons.directory",
-        @"wow.heading.voice", @"wow.permissions", @"wow.voice", @"wow.voice.test",
-        @"",
-        @"wow.heading.performance", @"wow.performance.backup", @"wow.performance.reset",
-        @"wow.performance.restore", @"wow.performance.gamepad", @"wow.performance.overlay",
-        @"wow.performance.settingsFolder"];
-    assert([order isEqualToArray:expectedOrder]);
+    assert([top.arrangedSubviews.firstObject.accessibilityIdentifier isEqual:mark]);
+    UIStackView *grid = columns.arrangedSubviews[1];
+    assert([grid.accessibilityIdentifier isEqual:@"wow.grid"] && grid.arrangedSubviews.count == 2);
+    NSMutableArray *boxes = [NSMutableArray new];
+    for (UIStackView *row in grid.arrangedSubviews) {
+        assert(row.axis == UILayoutConstraintAxisHorizontal);
+        for (UIView *box in row.arrangedSubviews) {
+            assert([box.accessibilityIdentifier hasPrefix:@"wow.box."]);
+            [boxes addObject:box];
+        }
+    }
+    NSMutableArray *boxOrder = [NSMutableArray new];
+    for (UIView *box in boxes) [boxOrder addObject:box.accessibilityIdentifier];
+    NSArray *expectedBoxes = @[@"wow.box.edition", @"wow.box.addons",
+                               @"wow.box.voice", @"wow.box.performance"];
+    assert([boxOrder isEqualToArray:expectedBoxes]);
+    // --- each box's heading and rows, exactly
+    NSDictionary *expectedRows = @{
+        @"wow.box.edition": @[@"wow.heading.edition", @"wow.edition", @"wow.preferences", @""],
+        @"wow.box.addons": @[@"wow.heading.addons", @"wow.addons.manage", @"wow.addons.macEver",
+                             @"wow.addons.directory"],
+        @"wow.box.voice": @[@"wow.heading.voice", @"wow.permissions", @"wow.voice", @"wow.voice.test"],
+        @"wow.box.performance": @[@"wow.heading.performance", @"wow.performance.backup",
+                                  @"wow.performance.reset", @"wow.performance.restore",
+                                  @"wow.performance.gamepad", @"wow.performance.overlay",
+                                  @"wow.performance.settingsFolder"],
+    };
+    for (UIView *box in boxes) {
+        UIStackView *stack = box.subviews.firstObject;
+        assert([stack isKindOfClass:UIStackView.class]);
+        NSMutableArray *rowOrder = [NSMutableArray new];
+        for (UIView *row in stack.arrangedSubviews) {
+            if ([row.accessibilityIdentifier isEqual:@"wow.box.spacer"]) continue;
+            [rowOrder addObject:row.accessibilityIdentifier ?: @""];
+        }
+        assert([rowOrder isEqualToArray:expectedRows[box.accessibilityIdentifier]]);
+    }
+    // --- and the whole page fits without scrolling on this iPad
+    UIScrollView *scroll = (id)Find(self.controller.view, @"wow.scroll");
+    [scroll layoutIfNeeded];
+    NSLog(@"PAGE_FIT: content=%.0f bounds=%.0f", scroll.contentSize.height, scroll.bounds.size.height);
+    assert(scroll.contentSize.height <= scroll.bounds.size.height + 1);
     // --- labels, exactly
     assert([[(UIButton *)Find(self.controller.view, @"wow.addons.manage") configuration].title isEqual:@"Install Addons (Curse & Direct)"]);
     assert([[(UIButton *)Find(self.controller.view, @"wow.addons.directory") configuration].title isEqual:@"Open Add-on Directory"]);
