@@ -23,6 +23,32 @@ and left the app running. The app's own `dictation-target` self-test also report
 The recorded evidence covers the exercised iPad/controller configuration; it is not a claim
 about every controller model, game field, or device.
 
+## Forever UI operations and the performance HUD (2026-10-22, commit `355b0d8`)
+
+On Dadpad (iPad Pro 12.9-inch, 5th generation, iPadOS 27) with Developer service,
+against the installed Forever client 1.60.1 (70450):
+
+- `--selftest=forever-ui` PASS 16/16 on the real `_classic_beta_` tree. It made a
+  verified UI backup (`WoW-UI-2026-10-22T03-41-37Z.zip` in `WTF/Backups`), reset
+  graphics with every other Config.wtf line byte-identical afterwards, restored
+  that backup to a byte-identical Config.wtf, wrote exactly one
+  `SET GamePadEnable "1"` line without changing any other line, and restored the
+  backup again so the user's files were left as found.
+- The optional performance HUD showed live presentation metrics in the client:
+  `Frame Rate: 60.2 FPS (12.5 ms)`, with the expansion and position the
+  preference store held. `--selftest=forever-ui-clean` then returned the overlay
+  preference to its default off state.
+- The home page rendered the Add-On Manager, Voice Manager and Performance & UI
+  Manager rows in the documented order.
+
+Not verified on the device: the gamepad setting across a full client launch
+(the setting was written and read back, and the client launched with the
+restored file, but the enable-then-launch sequence was not performed), and the
+Files picker presentation (its destination is asserted in the simulator
+fixture). Developer-service enrollment failed at the trusted USB handshake on
+this iPad; the pre-existing enrollment in the game-bearing bundle still allowed
+the client to launch. See `development/validation/355b0d8.md`.
+
 ## Latest WolkaraForever gameplay report (2026-10-07)
 
 The developer reports **60 FPS at graphics quality 4 on an iPhone 16 Pro Max**
