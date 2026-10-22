@@ -342,6 +342,19 @@ final class TKForeverUIArchive: NSObject {
         guard manifest.entries == manifest.files.count else {
             return fail("The archive's manifest is inconsistent.", output)
         }
+        // The manifest is a claim about paths as well as bytes: every path it
+        // names must be one a restore may write, and no path may be listed
+        // twice (two entries could otherwise describe one file).
+        var names = Set<String>()
+        for file in manifest.files {
+            guard pathIsInsideRoots(file.path) else {
+                return fail("The archive's manifest contains a path outside WTF and Interface.", output)
+            }
+            let key = file.path.precomposedStringWithCanonicalMapping.lowercased()
+            guard names.insert(key).inserted else {
+                return fail("The archive's manifest lists a path twice.", output)
+            }
+        }
         return true
     }
 
@@ -486,6 +499,12 @@ final class TKForeverUIArchive: NSObject {
         let archiveURL = backups.appendingPathComponent(name)
         guard FileManager.default.fileExists(atPath: archiveURL.path) else {
             return fail("The selected backup is missing.", output)
+        }
+        // A backup is a regular file. A link in Backups must not make the
+        // restore read a ZIP from somewhere else.
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: archiveURL.path),
+              attributes[.type] as? FileAttributeType == .typeRegular else {
+            return fail("The selected backup is not a regular file.", output)
         }
         guard verifyArchive(at: archiveURL, edition: edition, output) else { return false }
 

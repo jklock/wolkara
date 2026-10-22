@@ -27,6 +27,7 @@ NSString *const AKSelfTestDictationTarget = @"dictation-target";
 NSString *const AKSelfTestForeverUI = @"forever-ui";
 NSString *const AKSelfTestForeverUIClean = @"forever-ui-clean";
 NSString *const AKSelfTestCurseForge = @"curseforge";
+NSString *const AKSelfTestEnrolledDevice = @"enrolled-device";
 
 #pragma mark - Recording what happened
 
@@ -734,6 +735,20 @@ static void AKSelfTestRunCurseForge(AKSelfTestRecorder *recorder) {
                        hash, (unsigned long)projects];
 }
 
+// The Keychain keeps the enrollment across an uninstall; the app's defaults do
+// not. Supplying the identifier through the environment restores only that
+// pointer, and the value is never logged.
+static void AKSelfTestRunEnrolledDevice(AKSelfTestRecorder *recorder) {
+    const char *value = getenv("TK_DEVICE");
+    NSString *device = value ? [NSString stringWithUTF8String:value] : nil;
+    [recorder check:device.length > 0 _:@"the enrolled device identifier was supplied"];
+    if (!device.length) return;
+    [NSUserDefaults.standardUserDefaults setObject:device forKey:@"TKEnrolledDeviceIdentifier"];
+    [recorder check:[[NSUserDefaults.standardUserDefaults stringForKey:@"TKEnrolledDeviceIdentifier"] isEqual:device]
+                 _:@"the enrolled device identifier is stored"];
+    recorder.detail = @"enrolled-device default restored";
+}
+
 static void AKSelfTestLogVerdict(AKSelfTestRecorder *recorder, NSString *name) {    if (recorder.firstFailure) {
         WKLog("selftest", @"selftest: %@ FAIL %lu/%lu checks: %@",
               name, (unsigned long)recorder.passed, (unsigned long)recorder.total, recorder.firstFailure);
@@ -777,6 +792,11 @@ void AKRunSelfTest(NSString *name) {
             AKSelfTestRunDictationTarget(recorder);
             AKSelfTestLogVerdict(recorder, name);
         });
+        return;
+    }
+    if ([name isEqualToString:AKSelfTestEnrolledDevice]) {
+        AKSelfTestRunEnrolledDevice(recorder);
+        AKSelfTestLogVerdict(recorder, name);
         return;
     }
     if ([name isEqualToString:AKSelfTestCurseForge]) {
