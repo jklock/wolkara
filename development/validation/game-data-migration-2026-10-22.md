@@ -45,3 +45,34 @@ migration leftover.
 
 The clean build carries 18 patches (no app-group entitlement) and the temporary
 migration modes are not part of it.
+
+## Enrollment after the move
+
+The first launch from the new bundle failed with *"Local launch could not
+prepare … service returned … execution permission"*. The cause was not the game
+data: uninstalling the old app deleted its container (including the
+`TKEnrolledDeviceIdentifier` default), and the new app had been built for a
+different Keychain access group. The pairing record itself lives in the Keychain
+(`PairingKeychain`, service `local.tolkara.pairing.enrollment.v1`) and survives
+app deletion.
+
+Fix, without re-enrolling:
+
+- The new app is built and installed with
+  `TOLKARA_KEYCHAIN_GROUP=local.wolkara.johnklock.authorization`, the group the
+  surviving item belongs to. `local.env` now records that choice, with a
+  comment, because it cannot be recreated without the USB pairing session.
+- The `TKEnrolledDeviceIdentifier` default was restored once from the device
+  identifier; the one-off self-test used for that was removed from the build.
+
+Verified after the final clean install:
+
+- Play reaches memory preparation and the client's login screen
+  (1.60.1 (70450)).
+- `--selftest=curseforge` PASS 3/3: the stored key (60 characters, core shape)
+  is accepted by the authenticated search (50 projects). The key had to be
+  stored again because the group changed.
+
+An earlier reading blamed the iPad's Wi-Fi transport for the enrollment
+handshake `EOFError`. That was wrong: the bridge only sees USB devices, but the
+enrollment itself was not needed — the old record was still present.
