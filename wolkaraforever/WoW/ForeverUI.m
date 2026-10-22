@@ -48,7 +48,7 @@ static BOOL TKNameIs(NSString *name, NSString *expected) {
 // SavedVariables and any setting not named here - survives untouched. A CVar
 // this list misses is preserved rather than guessed at, which is the safe way to
 // be incomplete.
-static NSSet<NSString *> *TKGraphicsCVars(void) {
+NSSet<NSString *> *TKForeverUIGraphicsCVars(void) {
     static NSSet<NSString *> *set;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
@@ -217,7 +217,7 @@ static BOOL TKWriteConfig(NSString *path, NSString *text, NSError **error) {
     if (![NSFileManager.defaultManager fileExistsAtPath:path]) return YES;   // nothing to reset
     NSString *text = TKReadConfig(path, error);
     if (!text) return NO;
-    NSSet<NSString *> *graphics = TKGraphicsCVars();
+    NSSet<NSString *> *graphics = TKForeverUIGraphicsCVars();
     NSMutableArray<NSString *> *kept = [NSMutableArray new];
     for (NSString *line in [text componentsSeparatedByString:@"\n"]) {
         NSString *name = TKCVarName(line);

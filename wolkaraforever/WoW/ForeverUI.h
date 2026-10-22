@@ -30,6 +30,10 @@ FOUNDATION_EXPORT NSString *const TKForeverUIEdition;
 // cache and unknown settings are preserved byte for byte.
 + (BOOL)resetGraphicsInWorkingDirectory:(NSString *)directory error:(NSError **)error;
 
+// The allowlist itself, for tests and for anyone who needs to say what a reset
+// removes without reading a Config.wtf. Names are compared case-insensitively.
+FOUNDATION_EXPORT NSSet<NSString *> *TKForeverUIGraphicsCVars(void);
+
 // The Forever installation's WTF directory. Creates it only when asked, and
 // only inside the working directory. Nil when the path cannot be resolved.
 + (nullable NSString *)wtfDirectoryInWorkingDirectory:(NSString *)directory
