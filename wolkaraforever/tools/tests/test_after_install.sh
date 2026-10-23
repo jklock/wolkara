@@ -97,6 +97,33 @@ run_mode ""
 check $? "an unset mode should succeed"
 enrolled && check 1 "an unset mode must not enroll"
 
+# Two enrollments that both exit 1, and the difference between them decides whether the
+# install did its job. The bridge not seeing the iPad means nothing was attempted; a
+# rejection means something was, and it failed.
+cat > "$work/tree/tools/enroll.sh" <<SH
+#!/bin/bash
+echo "Enrollment failed at trusted USB handshake (EOFError); no identity accepted or exported."
+exit 1
+SH
+chmod +x "$work/tree/tools/enroll.sh"
+run_mode developer-service
+check $? "an iPad the pairing bridge cannot see must not be reported as a failed install"
+grep -q "enrollment not attempted" "$work/out.txt"
+check $? "and should say the enrollment was not attempted"
+grep -q "cannot prepare memory" "$work/out.txt" && check 1 "and must not call it a failure"
+
+cat > "$work/tree/tools/enroll.sh" <<SH
+#!/bin/bash
+echo "Enrollment rejected: the device answered and refused this identity."
+exit 1
+SH
+chmod +x "$work/tree/tools/enroll.sh"
+run_mode developer-service
+[ $? -ne 0 ]
+check $? "a refusal the device actually answered must fail the install"
+grep -q "enrollment failed" "$work/out.txt"
+check $? "and should say the enrollment failed"
+
 # Anything else is a mistake worth stopping for.
 run_mode "local-signing-but-typo"
 [ $? -eq 2 ]

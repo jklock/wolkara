@@ -332,7 +332,13 @@ stop_app() {
         return 0
     fi
     say "asking pid $pid to stop (SIGTERM, so the client can close its stores)"
-    xcrun devicectl device process signal --device "$DEVICE" --pid "$pid" --signal SIGTERM >/dev/null 2>&1 || true
+    # The signal's own answer is evidence and used to be thrown away with 2>/dev/null || true.
+    # On 2026-10-22 the matrix reported "still running after 20s" with nothing to say why:
+    # whether the signal was refused, delivered to a pid that had already gone, or delivered
+    # to an app that would not leave was unknowable from the output.
+    local signal_out
+    signal_out=$(xcrun devicectl device process signal --device "$DEVICE" --pid "$pid" --signal SIGTERM 2>&1)
+    [ -n "$signal_out" ] && say "  $signal_out"
     local waited=0
     while [ -n "$(app_pid)" ] && [ "$waited" -lt 20 ]; do
         sleep 2
@@ -341,6 +347,30 @@ stop_app() {
     if [ -z "$(app_pid)" ]; then
         say "gone after ${waited}s"
         return 0
+    fi
+    # Still there: say what it is doing before deciding anything. A relaunched instance has a
+    # different pid, and that is a different fact from the same process refusing to leave.
+    local now_pid; now_pid=$(app_pid)
+    say "still running after ${waited}s (pid now ${now_pid:-none}; it was $pid)"
+    say "the app's own last lines:"
+    xcrun devicectl device copy from --device "$DEVICE" --domain-type appDataContainer \
+        --domain-identifier "$BUNDLE" --source Documents/wolkaraforever.log \
+        --destination "$SESSION/stop-app-log" >/dev/null 2>&1 || true
+    tail -6 "$SESSION/stop-app-log" 2>/dev/null | cut -c1-160 | sed 's/^/    /'
+    if [ -n "$now_pid" ] && [ "$now_pid" != "$pid" ]; then
+        # A new instance: the old one did stop, and something started another. Stopping that
+        # one is the same request, not a force-kill.
+        say "that is a new instance, not the one asked to stop; asking it too"
+        xcrun devicectl device process signal --device "$DEVICE" --pid "$now_pid" --signal SIGTERM >/dev/null 2>&1 || true
+        waited=0
+        while [ -n "$(app_pid)" ] && [ "$waited" -lt 20 ]; do
+            sleep 2
+            waited=$((waited + 2))
+        done
+        if [ -z "$(app_pid)" ]; then
+            say "gone after another ${waited}s"
+            return 0
+        fi
     fi
     if [ "$force" != "--force" ]; then
         die "it is still running after 20s. It is not stopped and nothing was installed.

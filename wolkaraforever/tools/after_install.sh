@@ -58,9 +58,23 @@ developer-service)
     printf '%s\n' "$enroll_out"
     if [ "${enroll_rc:-0}" -ne 0 ] &&
        ! printf '%s' "$enroll_out" | grep -q "no existing trust pin was replaced"; then
-        echo "   enrollment failed (exit $enroll_rc): the app is installed, but the developer" >&2
-        echo "   service cannot prepare memory until this succeeds" >&2
-        exit 1
+        # Two different things were being reported as one. "The pairing bridge cannot see
+        # this iPad" means the enrollment was never attempted - nothing was measured, and
+        # the app on the device keeps the enrollment it already had (the pin lives in the
+        # shared Keychain group, so a reinstall does not take it away). "The bridge
+        # answered and refused" is a real failure. Measured 2026-22-10: devicectl reaches
+        # the iPad over the network while usbmuxd lists no device at all (`idevice_id -l`
+        # empty), and the install was being called a failure for it.
+        if printf '%s' "$enroll_out" | grep -qE "Selected device unavailable|Enrollment channel closed|trusted USB handshake \(EOFError\)"; then
+            echo "   enrollment not attempted: the iPad is not visible to the pairing bridge." >&2
+            echo "   That bridge needs a USB link, or Wi-Fi sync enabled in Finder, which needs" >&2
+            echo "   USB once. The app is installed and keeps any enrollment it already has;" >&2
+            echo "   if this iPad has never been enrolled, connect it by USB and run tools/enroll.sh." >&2
+        else
+            echo "   enrollment failed (exit $enroll_rc): the app is installed, but the developer" >&2
+            echo "   service cannot prepare memory until this succeeds" >&2
+            exit 1
+        fi
     fi
     ;;
 
